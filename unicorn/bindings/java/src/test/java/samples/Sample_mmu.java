@@ -54,8 +54,10 @@ public class Sample_mmu implements UnicornConst, X86Const {
         cr4 |= 1l << 5;             //enable physical address extension
         msr.value |= 1l << 8;       //enable long mode
 
-        uc.reg_write(UC_X86_REG_CR0, cr0);
+        // NoVmp (ledger U1964): CR4.PAE before CR0.PG - with IA32_EFER.LME = 1 MOV to CR0 setting PG while
+        // CR4.PAE = 0 is #GP(0) (SDM 253668-093 Vol3A 5.1.2 p. 5-3), and uc_reg_write refuses it since U1962
         uc.reg_write(UC_X86_REG_CR4, cr4);
+        uc.reg_write(UC_X86_REG_CR0, cr0);
         uc.reg_write(UC_X86_REG_MSR, msr);
     }
 

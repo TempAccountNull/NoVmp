@@ -770,7 +770,14 @@ namespace at
 			// FNSTENV, ...) would raise #NM with CR0.TS = 1 (SDM 092 Vol3A 2.5: TS = 1 makes x87 / SSE /
 			// AVX instructions raise #NM), so the engine starts with TS clear and on_ts sets it for the
 			// snippet only
-			if ( cr0 ) { const uint64_t c0 = ts_hooks ? ( cr0 & ~CR0_TS ) : cr0; uc_reg_write( uc_, UC_X86_REG_CR0, &c0 ); }
+			// U1964 (plan 1.K.15): uc_reg_write(CR0) applies the checks of MOV to CR0 since U1962 and refuses a value MOV
+			// to CR0 would #GP for (UC_ERR_ARG): such a --cr0 value is a harness error, not silently ignored
+			if ( cr0 )
+			{
+				const uint64_t c0 = ts_hooks ? ( cr0 & ~CR0_TS ) : cr0;
+				uc_err ce = uc_reg_write( uc_, UC_X86_REG_CR0, &c0 );
+				if ( ce != UC_ERR_OK ) { err = std::string( "uc_reg_write CR0 (--cr0): " ) + uc_strerror( ce ); return false; }
+			}
 			// U1481 (docs/xinuse.md): the XINUSE model chosen for the run (choose_xinuse; 0 = not written: the
 			// engine's default, P-core model for an Intel CPU model)
 			if ( xinuse_model ) { uc_err xe = uc_ctl( uc_, UC_CTL_WRITE( UC_CTL_X86_XINUSE_MODEL, 1 ), xinuse_model ); if ( xe != UC_ERR_OK ) { err = std::string( "UC_CTL_X86_XINUSE_MODEL: " ) + uc_strerror( xe ); return false; } }
@@ -853,9 +860,10 @@ namespace at
 				// the case's registers are loaded later by the thunk): its helper refuses a reserved bit with #GP(0) - CET without
 				// CPUID CET_SS / CET_IBT, or hidden by a strict profile (U1680) - and requires CR0.WP (U114), then
 				// cpu_x86_update_cr4 stores the CR4 the engine uses. The read-back below therefore checks the effective bit.
-				// Before, uc_reg_write(CR4) was used: a raw register write that stores the value as given after
-				// cpu_x86_update_cr4 has dropped the unsupported bits (unicorn.c write_cr64; U1681 keeps that API behaviour),
-				// so the read-back always saw CET = 1 and could never fail (G24 gap B).
+				// Before, uc_reg_write(CR4) was used: then a raw register write that stored the value as given after
+				// cpu_x86_update_cr4 had dropped the unsupported bits (unicorn.c write_cr64), so the read-back always saw
+				// CET = 1 and could never fail (G24 gap B). Since U1962 (plan 1.K.15) uc_reg_write(CR0 / CR4) applies the
+				// checks of MOV to CR itself and stores the effective value; the engine still uses MOV to CR4 here.
 				const uint8_t set_cet[] = { 0x0F, 0x20, 0xE0,               // mov rax, cr4
 											0x48, 0x0F, 0xBA, 0xE8, 0x17,   // bts rax, 23 (CR4.CET)
 											0x0F, 0x22, 0xE0 };             // mov cr4, rax

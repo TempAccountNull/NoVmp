@@ -3902,11 +3902,14 @@ static void test_x86_mmu_prepare_tlb(uc_engine *uc, uint64_t vaddr,
     OK(uc_reg_read(uc, UC_X86_REG_CR4, &cr4));
     OK(uc_reg_read(uc, UC_X86_REG_MSR, &msr));
     cr0 |= 1;
-    cr0 |= 1l << 31;
+    /* NoVmp (ledger U1964): 1ull - "1l << 31" is a 32-bit long on Windows and set CR0[63:32] (sign extension);
+       CR4.PAE before CR0.PG: with IA32_EFER.LME = 1, MOV to CR0 setting PG while CR4.PAE = 0 is #GP(0) and
+       uc_reg_write refuses both since U1962 (plan 1.K.15) */
+    cr0 |= 1ull << 31;
     cr4 |= 1l << 5;
     msr.value |= 1l << 8;
-    OK(uc_reg_write(uc, UC_X86_REG_CR0, &cr0));
     OK(uc_reg_write(uc, UC_X86_REG_CR4, &cr4));
+    OK(uc_reg_write(uc, UC_X86_REG_CR0, &cr0));
     OK(uc_reg_write(uc, UC_X86_REG_MSR, &msr));
 }
 
@@ -7653,24 +7656,29 @@ static void test_x86_smx_pconfig_sgx(void)
     OK(uc_reg_write(r.uc, UC_X86_REG_CR4, &cr4));
     nv_profile7(&r, 0, 0, 0);
     OK(uc_reg_read(r.uc, UC_X86_REG_CR4, &cr4));
-    /* U1681: the strict profile hides SMX, so CR4.SMXE is reserved and installing the profile clears it (U1680);
-       written through the API again (a raw register write keeps it), GETSEC is still #UD */
+    /* U1681: the strict profile hides SMX, so CR4.SMXE is reserved and installing the profile clears it (U1680).
+       U1964 (plan 1.K.15): writing it through the API again is refused like MOV to CR4 (#GP(0) for a reserved bit,
+       SDM 253667-093 Vol2B MOV CR p. 4-34; U1962) - before, the raw register write kept CR4.SMXE = 1, a state the CPU
+       cannot reach; CR4 stays without SMXE and GETSEC is still #UD */
     TEST_CHECK(!(cr4 & 0x4000));
     cr4 |= 0x4000;
-    OK(uc_reg_write(r.uc, UC_X86_REG_CR4, &cr4));
+    uc_assert_err(UC_ERR_ARG, uc_reg_write(r.uc, UC_X86_REG_CR4, &cr4));
     OK(uc_reg_read(r.uc, UC_X86_REG_CR4, &cr4));
-    TEST_CHECK(cr4 & 0x4000);
+    TEST_CHECK(!(cr4 & 0x4000));
     uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x0f\x37"));
     OK(uc_close(r.uc));
 
-    /* a model without SMX (Haswell): MOV CR4 with SMXE is #GP(0); GETSEC #UD even if
-       CR4.SMXE is forced through uc_reg_write (raw register write) */
+    /* a model without SMX (Haswell): MOV CR4 with SMXE is #GP(0); U1964 (plan 1.K.15): uc_reg_write with SMXE is
+       refused the same way (UC_ERR_ARG, U1962; before, the raw register write forced CR4.SMXE = 1), CR4 keeps
+       SMXE = 0 and GETSEC is #UD */
     nv_open(&r, UC_MODE_64, UC_CPU_X86_HASWELL);
     OK(nv_run(&r, "\x0f\x20\xe0\x48\x0f\xba\xe8\x0e\x0f\x22\xe0"));
     TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
     OK(uc_reg_read(r.uc, UC_X86_REG_CR4, &cr4));
     cr4 |= 0x4000;
-    OK(uc_reg_write(r.uc, UC_X86_REG_CR4, &cr4));
+    uc_assert_err(UC_ERR_ARG, uc_reg_write(r.uc, UC_X86_REG_CR4, &cr4));
+    OK(uc_reg_read(r.uc, UC_X86_REG_CR4, &cr4));
+    TEST_CHECK(!(cr4 & 0x4000));
     nv_set(&r, UC_X86_REG_RAX, 0);
     uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x0f\x37"));
     OK(uc_close(r.uc));
@@ -8330,14 +8338,18 @@ static void nv_paging_ss(NvRun *r)
     a = 0x400000;
     OK(uc_reg_write(r->uc, UC_X86_REG_CR3, &a));
     OK(uc_reg_read(r->uc, UC_X86_REG_CR4, &cr4));
-    cr4 |= (1u << 5) | (1u << 23);                    /* PAE, CET */
+    cr4 |= 1u << 5;                                   /* PAE */
     OK(uc_reg_read(r->uc, UC_X86_REG_MSR, &efer));
     efer.value |= 1u << 8;                            /* LME */
     OK(uc_reg_write(r->uc, UC_X86_REG_MSR, &efer));
     OK(uc_reg_read(r->uc, UC_X86_REG_CR0, &cr0));
     cr0 |= 0x80010000ull;                             /* PG, WP */
+    /* NoVmp (ledger U1964): CR4.CET only after CR0.WP (SDM 253668-093 Vol3A 2.5 p. 2-19); before, CR4 = PAE | CET
+       was written while CR0.WP = 0, which uc_reg_write refuses since U1962 (plan 1.K.15) as MOV to CR4 does */
     OK(uc_reg_write(r->uc, UC_X86_REG_CR4, &cr4));
     OK(uc_reg_write(r->uc, UC_X86_REG_CR0, &cr0));
+    cr4 |= 1u << 23;                                  /* CET */
+    OK(uc_reg_write(r->uc, UC_X86_REG_CR4, &cr4));
 }
 
 static void test_x86_cet_shadow_stack_paging(void)
@@ -38759,14 +38771,18 @@ static void test_x86_ig3_frame_cross_la57_64(void)
     ap_cpu c;
 
     i6_open(&c);
+    /* NoVmp (ledger U1964): CR4.PAE and CR4.LA57 before ig2_paging sets CR0.PG - "CR4.PAE and CR4.LA57 cannot be
+       modified while either 4-level paging or 5-level paging is in use" (SDM 253668-093 Vol3A 5.1.2 p. 5-3); before,
+       LA57 was set with paging on, which uc_reg_write refuses since U1962 (plan 1.K.15). No instruction runs before
+       CR3 points to the PML5 table below. */
+    cr4 = ap_get(&c, UC_X86_REG_CR4);
+    ap_set(&c, UC_X86_REG_CR4, cr4 | (1ULL << 5) | (1ULL << 12));
     ig2_paging(&c);
     ig2_pt_w(&c, IG3_PML5 + 0, IG2_PT | 3);
     ig2_pt_w(&c, IG3_PML5 + 8 * 256, IG3_PML4B | 3);
     ig2_pt_w(&c, IG3_PML5 + 8 * 511, IG2_PT | 3);
     ig2_pt_w(&c, IG3_PML4B + 0, (IG2_PT + 0x4000) | 3);
-    cr4 = ap_get(&c, UC_X86_REG_CR4);
     ap_set(&c, UC_X86_REG_CR3, IG3_PML5);
-    ap_set(&c, UC_X86_REG_CR4, cr4 | (1ULL << 12));
     ig3_partial(&c, I6_UD, 0, IG3_LA57HI, IG3_LA57HI + 0x10, 0, "LA57: #UD, RSP FF00000000000010H: #SS(1) after 2 pushes");
     ig3_partial(&c, I6_INTN, 0x50, IG3_LA57HI, IG3_LA57HI + 0x20, 0, "LA57: INT 50h, RSP FF00000000000020H: #SS(0) after 4 pushes");
     ig3_partial(&c, I6_EXTI, 0x61, IG3_LA57HI, IG3_LA57HI, 0, "LA57: SELF IPI 61h, RSP FF00000000000000H: #SS(1), nothing written");
@@ -38782,10 +38798,14 @@ static void test_x86_ig3_frame_cross_la57_64(void)
     ig2_run_sw(&c, &k, 0x50, -1, 2, 1, "LA57: INT 50h, RSP 0000800000000040H: delivered");
     i6_frame(&c, 0x50, f);
     TEST_CHECK_(f[3] == 0x0000800000000040ULL, "LA57: INT 50h frame RSP %" PRIx64, f[3]);
-    ap_set(&c, UC_X86_REG_RSP, AP_STACK);
-    ap_set(&c, UC_X86_REG_CR4, cr4);
-    ap_set(&c, UC_X86_REG_CR3, IG2_PT);
-    ig3_partial(&c, I6_UD, 0, IG2_HI, IG2_HI + 0x10, 0, "CR4.LA57 = 0 again: #UD, RSP FFFF800000000010H: #SS(1)");
+    OK(uc_close(c.uc));
+    /* NoVmp (ledger U1964): CR4.LA57 cannot be cleared while paging is on (Vol3A 5.1.2 p. 5-3) and 64-bit mode cannot
+       clear CR0.PG, so the 4-level check after the LA57 ones runs on a fresh engine with 4-level paging; before, CR4.LA57
+       was cleared through the API with paging on, which uc_reg_write refuses since U1962 (plan 1.K.15) */
+    i6_open(&c);
+    ig2_paging(&c);
+    ig3_partial(&c, I6_UD, 0, IG2_HI, IG2_HI + 0x10, 0,
+                "CR4.LA57 = 0 (fresh engine, 4-level paging): #UD, RSP FFFF800000000010H: #SS(1)");
     OK(uc_close(c.uc));
 }
 
@@ -45010,13 +45030,15 @@ static void cr4p_profile(const uc_x86_cpuid *p, int late, uint64_t reset, uint64
     TEST_CHECK(cr4p_set(&c, 1ull << 32) == 13);
     OK(uc_close(c.uc));
 
-    /* VMXON checks CR4 against FIXED1: a CR4 holding a bit FIXED1 lacks (written through the API) is #GP(0) */
+    /* VMXON checks CR4 against FIXED1. U1964 (plan 1.K.15): a CR4 bit FIXED1 lacks can no longer be planted through
+       the API - uc_reg_write refuses the reserved bit as MOV to CR4 does (#GP(0), U1962), CR4 stays as it was and
+       VMXON succeeds; before, the raw register write kept it and VMXON was #GP(0) */
     cr4p_open(&c, p, VPF_N, late, -1);
     vpf_root(&c, 5);
     cr4 = pc_get(&c, UC_X86_REG_CR4);
-    pc_set(&c, UC_X86_REG_CR4, cr4 | (1ull << 25));    /* UINTR: hidden by both profiles */
-    TEST_CHECK(vmx_vmxon(&c, VMX_VMXON, &fl) == 13);
-    pc_set(&c, UC_X86_REG_CR4, cr4);
+    v = cr4 | (1ull << 25);                             /* UINTR: hidden by both profiles */
+    uc_assert_err(UC_ERR_ARG, uc_reg_write(c.uc, UC_X86_REG_CR4, &v));
+    TEST_CHECK(pc_get(&c, UC_X86_REG_CR4) == cr4);
     TEST_CHECK(vmx_vmxon(&c, VMX_VMXON, &fl) == -1 && fl == 0);
     OK(uc_close(c.uc));
 }
@@ -48150,6 +48172,339 @@ static void test_x86_kk_max_hypervisor_bit(void)
     TEST_CHECK(e >> 31);
     TEST_MSG("MAX 32-bit + synthetic profile with bit 31 = 1: bit 31 = %u", e >> 31);
 }
+
+/*
+ * U1963 (plan 1.K.15, U1962): uc_reg_write / uc_context_reg_write of CR0 / CR4 apply the checks of MOV to CR0 / CR4
+ * (SDM 253667-093 Vol2B MOV-Move to/from Control Registers pp. 4-32 to 4-34; 253668-093 Vol3A 2.5 pp. 2-13 to 2-21,
+ * 5.1.2 p. 5-3, 5.10.1 p. 5-41). A combination MOV to CR raises #GP(0) for is refused with UC_ERR_ARG and changes
+ * nothing; an accepted value is stored as loaded (the register = the effective value). Rule numbers (0)-(15) as in
+ * unicorn.c x86_crw_write / x86_crw_check_cr0 / _cr4.
+ */
+#define KK_PE 0x1ull
+#define KK_TS 0x8ull
+#define KK_ET 0x10ull
+#define KK_NE 0x20ull
+#define KK_WP 0x10000ull
+#define KK_NW 0x20000000ull
+#define KK_CD 0x40000000ull
+#define KK_PG 0x80000000ull
+#define KK_PAE 0x20ull
+#define KK_LA57 0x1000ull
+#define KK_VMXE 0x2000ull
+#define KK_SMXE 0x4000ull
+#define KK_PCIDE 0x20000ull
+#define KK_OSXSAVE 0x40000ull
+#define KK_CET 0x800000ull
+
+static uint64_t kk_rd(uc_engine *uc, int reg)
+{
+    uint64_t v = 0;
+
+    OK(uc_reg_read(uc, reg, &v));
+    return v;
+}
+
+/* the API write must be refused (UC_ERR_ARG) and leave CR0 / CR4 / IA32_EFER unchanged */
+static void kk_refused(uc_engine *uc, int reg, uint64_t v, const char *rule)
+{
+    uc_x86_msr e0 = {0xc0000080, 0}, e1 = {0xc0000080, 0};
+    uint64_t cr0 = kk_rd(uc, UC_X86_REG_CR0), cr4 = kk_rd(uc, UC_X86_REG_CR4);
+    uc_err err;
+
+    OK(uc_reg_read(uc, UC_X86_REG_MSR, &e0));
+    err = uc_reg_write(uc, reg, &v);
+    TEST_CHECK(err == UC_ERR_ARG);
+    TEST_MSG("%s: CR%d <- %016llx returned %s, expected UC_ERR_ARG", rule, reg == UC_X86_REG_CR0 ? 0 : 4,
+             (unsigned long long)v, uc_strerror(err));
+    OK(uc_reg_read(uc, UC_X86_REG_MSR, &e1));
+    TEST_CHECK(kk_rd(uc, UC_X86_REG_CR0) == cr0 && kk_rd(uc, UC_X86_REG_CR4) == cr4 && e1.value == e0.value);
+    TEST_MSG("%s: CR0 %016llx -> %016llx, CR4 %016llx -> %016llx, EFER %llx -> %llx (unchanged expected)", rule,
+             (unsigned long long)cr0, (unsigned long long)kk_rd(uc, UC_X86_REG_CR0), (unsigned long long)cr4,
+             (unsigned long long)kk_rd(uc, UC_X86_REG_CR4), (unsigned long long)e0.value,
+             (unsigned long long)e1.value);
+}
+
+/* the API write must be accepted and the register must then read 'want' (the effective value) */
+static void kk_loaded(uc_engine *uc, int reg, uint64_t v, uint64_t want, const char *rule)
+{
+    uc_err err = uc_reg_write(uc, reg, &v);
+    uint64_t back;
+
+    TEST_CHECK(err == UC_ERR_OK);
+    TEST_MSG("%s: CR%d <- %016llx returned %s, expected UC_ERR_OK", rule, reg == UC_X86_REG_CR0 ? 0 : 4,
+             (unsigned long long)v, uc_strerror(err));
+    back = kk_rd(uc, reg);
+    TEST_CHECK(back == want);
+    TEST_MSG("%s: CR%d reads %016llx, expected %016llx", rule, reg == UC_X86_REG_CR0 ? 0 : 4,
+             (unsigned long long)back, (unsigned long long)want);
+}
+
+static uint64_t kk_efer(uc_engine *uc)
+{
+    uc_x86_msr e = {0xc0000080, 0};
+
+    OK(uc_reg_read(uc, UC_X86_REG_MSR, &e));
+    return e.value;
+}
+
+/* (1) CR0[63:32] reserved; (2) reserved CR0[31:0] bits ignored, CR0.ET stays 1 (64-bit engine, MAX) */
+static void test_x86_kk_cr0_reserved(void)
+{
+    BpCpu c;
+    uint64_t cr0;
+
+    bp_open(&c, UC_MODE_64, UC_CPU_X86_MAX);
+    cr0 = kk_rd(c.uc, UC_X86_REG_CR0);
+    kk_refused(c.uc, UC_X86_REG_CR0, cr0 | (1ull << 32), "(1) CR0[32]");
+    kk_refused(c.uc, UC_X86_REG_CR0, cr0 | (1ull << 63), "(1) CR0[63]");
+    /* bits 15:6, 17 and 28:19 */
+    kk_loaded(c.uc, UC_X86_REG_CR0, cr0 | 0x1ffaffc0ull, cr0, "(2) reserved CR0[31:0] ignored");
+    kk_loaded(c.uc, UC_X86_REG_CR0, cr0 & ~KK_ET, cr0 | KK_ET, "(2) CR0.ET stays set");
+    kk_loaded(c.uc, UC_X86_REG_CR0, cr0 | 0x40022ull, cr0 | 0x40022ull, "defined MP / NE / AM loaded");
+    OK(uc_close(c.uc));
+}
+
+/* (3) PG without PE; (4) NW without CD; (5) WP cleared while CR4.CET = 1; (12) CR4.CET while CR0.WP = 0 */
+static void test_x86_kk_cr0_combinations(void)
+{
+    BpCpu c;
+    uint64_t cr0, cr4;
+
+    bp_open(&c, UC_MODE_64, UC_CPU_X86_MAX);
+    cr0 = kk_rd(c.uc, UC_X86_REG_CR0);
+    cr4 = kk_rd(c.uc, UC_X86_REG_CR4);
+    kk_loaded(c.uc, UC_X86_REG_CR4, cr4 | KK_PAE, cr4 | KK_PAE, "CR4.PAE (so that (8) does not apply)");
+    kk_refused(c.uc, UC_X86_REG_CR0, (cr0 & ~KK_PE) | KK_PG, "(3) CR0.PG with CR0.PE = 0");
+    kk_refused(c.uc, UC_X86_REG_CR0, cr0 | KK_NW, "(4) CR0.NW with CR0.CD = 0");
+    kk_loaded(c.uc, UC_X86_REG_CR0, cr0 | KK_CD, cr0 | KK_CD, "(4) CR0.CD alone");
+    kk_loaded(c.uc, UC_X86_REG_CR0, cr0 | KK_CD | KK_NW, cr0 | KK_CD | KK_NW, "(4) CR0.CD and CR0.NW");
+    kk_refused(c.uc, UC_X86_REG_CR0, cr0 | KK_NW, "(4) CR0.CD cleared with CR0.NW = 1");
+    kk_loaded(c.uc, UC_X86_REG_CR0, cr0, cr0, "CR0 back");
+    kk_refused(c.uc, UC_X86_REG_CR4, cr4 | KK_PAE | KK_CET, "(12) CR4.CET with CR0.WP = 0");
+    kk_loaded(c.uc, UC_X86_REG_CR0, cr0 | KK_WP, cr0 | KK_WP, "CR0.WP");
+    kk_loaded(c.uc, UC_X86_REG_CR4, cr4 | KK_PAE | KK_CET, cr4 | KK_PAE | KK_CET, "(12) CR4.CET with CR0.WP = 1");
+    kk_refused(c.uc, UC_X86_REG_CR0, cr0, "(5) CR0.WP cleared with CR4.CET = 1");
+    kk_loaded(c.uc, UC_X86_REG_CR4, cr4 | KK_PAE, cr4 | KK_PAE, "CR4.CET cleared");
+    kk_loaded(c.uc, UC_X86_REG_CR0, cr0, cr0, "(5) CR0.WP cleared with CR4.CET = 0");
+    OK(uc_close(c.uc));
+}
+
+/*
+ * (6) CR0.PG cleared in 64-bit mode; (8) CR0.PG with IA32_EFER.LME = 1 and CR4.PAE = 0; (14) CR4.PAE / LA57 changed
+ * with CR0.PG = 1 and IA32_EFER.LME = 1. Unicorn's 64-bit reset state is IA-32e mode without paging (LME = LMA = 1,
+ * PG = 0, PAE = 0): PAE (LA57) may change there and CR0.PG may then be set (not an activation).
+ */
+static void test_x86_kk_cr_paging_64(void)
+{
+    BpCpu c;
+    uint64_t cr0, cr4;
+
+    bp_open(&c, UC_MODE_64, UC_CPU_X86_MAX);
+    cr0 = kk_rd(c.uc, UC_X86_REG_CR0);
+    cr4 = kk_rd(c.uc, UC_X86_REG_CR4);
+    TEST_CHECK(!(cr0 & KK_PG) && !(cr4 & KK_PAE) && (kk_efer(c.uc) & 0x500) == 0x500);
+    kk_refused(c.uc, UC_X86_REG_CR0, cr0 | KK_PG, "(8) CR0.PG with LME = 1, PAE = 0");
+    kk_loaded(c.uc, UC_X86_REG_CR4, cr4 | KK_PAE | KK_LA57, cr4 | KK_PAE | KK_LA57, "(14) LA57 with CR0.PG = 0");
+    kk_loaded(c.uc, UC_X86_REG_CR4, cr4 | KK_PAE, cr4 | KK_PAE, "(14) LA57 cleared with CR0.PG = 0");
+    kk_loaded(c.uc, UC_X86_REG_CR0, cr0 | KK_PG, cr0 | KK_PG, "(8) CR0.PG with PAE = 1 (LMA already 1)");
+    TEST_CHECK((kk_efer(c.uc) & 0x500) == 0x500);
+    kk_refused(c.uc, UC_X86_REG_CR0, cr0, "(6) CR0.PG cleared in 64-bit mode");
+    kk_refused(c.uc, UC_X86_REG_CR4, cr4, "(14) CR4.PAE cleared with PG = 1, LME = 1");
+    kk_refused(c.uc, UC_X86_REG_CR4, cr4 | KK_PAE | KK_LA57, "(14) CR4.LA57 set with PG = 1, LME = 1");
+    OK(uc_close(c.uc));
+}
+
+/*
+ * (7) CR0.PG cleared while CR4.PCIDE = 1 (compatibility mode, where (6) does not apply); without PCIDE the write
+ * leaves IA-32e mode (IA32_EFER.LMA = 0)
+ */
+static void test_x86_kk_cr_paging_compat(void)
+{
+    /* push 08h; push BP_CODE+0x10; retfq -> compatibility mode (code32 DPL0) */
+    static const char to_compat[] = "\x6a\x08\x68\x10\x00\x01\x00\x48\xcb";
+    BpCpu c;
+    uint64_t cr0, cr4;
+
+    bp_open(&c, UC_MODE_64, UC_CPU_X86_MAX);
+    bp_set(&c, UC_X86_REG_RSP, BP_STACK);
+    OK(uc_mem_write(c.uc, BP_CODE + 0x10, "\x90", 1));
+    OK(bp_run_at(&c, BP_CODE, to_compat, sizeof(to_compat) - 1, 3));
+    TEST_CHECK(bp_seg(&c, UC_X86_REG_CS) == 0x08 && c.count == 0);
+    cr0 = kk_rd(c.uc, UC_X86_REG_CR0);
+    cr4 = kk_rd(c.uc, UC_X86_REG_CR4);
+    kk_loaded(c.uc, UC_X86_REG_CR4, cr4 | KK_PAE, cr4 | KK_PAE, "CR4.PAE");
+    kk_loaded(c.uc, UC_X86_REG_CR4, cr4 | KK_PAE | KK_PCIDE, cr4 | KK_PAE | KK_PCIDE, "CR4.PCIDE (CR3[11:0] = 0)");
+    kk_loaded(c.uc, UC_X86_REG_CR0, cr0 | KK_PG, cr0 | KK_PG, "CR0.PG");
+    kk_refused(c.uc, UC_X86_REG_CR0, cr0, "(7) CR0.PG cleared with CR4.PCIDE = 1 (compatibility mode)");
+    kk_loaded(c.uc, UC_X86_REG_CR4, cr4 | KK_PAE, cr4 | KK_PAE, "CR4.PCIDE cleared");
+    kk_loaded(c.uc, UC_X86_REG_CR0, cr0, cr0, "CR0.PG cleared in compatibility mode (leaves IA-32e mode)");
+    TEST_CHECK(!(kk_efer(c.uc) & 0x400));
+    TEST_MSG("IA32_EFER %llx: LMA expected 0", (unsigned long long)kk_efer(c.uc));
+    OK(uc_close(c.uc));
+}
+
+/*
+ * (9) CR0.PG with IA32_EFER.LME = 1 activates IA-32e mode (32-bit engine, LMA = 0): refused with a 16-bit TSS in TR
+ * or CS.L = 1; accepted otherwise (LMA = 1 afterwards); (8) also outside IA-32e mode
+ */
+static void test_x86_kk_cr0_activate(void)
+{
+    BpCpu c;
+    uc_x86_msr efer = {0xc0000080, 0x100};
+    uc_x86_mmr tr = {0x40, 0x3000, 0x67, 0x8100};
+    uint64_t cr0, cr4;
+    uint16_t sel;
+
+    bp_open(&c, UC_MODE_32, UC_CPU_X86_MAX);
+    OK(uc_reg_write(c.uc, UC_X86_REG_MSR, &efer));
+    TEST_CHECK((kk_efer(c.uc) & 0x500) == 0x100);
+    cr0 = kk_rd(c.uc, UC_X86_REG_CR0);
+    cr4 = kk_rd(c.uc, UC_X86_REG_CR4);
+    kk_refused(c.uc, UC_X86_REG_CR0, cr0 | KK_PG, "(8) CR0.PG with LME = 1, PAE = 0 (32-bit)");
+    kk_loaded(c.uc, UC_X86_REG_CR4, cr4 | KK_PAE, cr4 | KK_PAE, "CR4.PAE");
+    OK(uc_reg_write(c.uc, UC_X86_REG_TR, &tr));
+    kk_refused(c.uc, UC_X86_REG_CR0, cr0 | KK_PG, "(9) TR references a 16-bit TSS");
+    tr.flags = 0x8b00;
+    OK(uc_reg_write(c.uc, UC_X86_REG_TR, &tr));
+    sel = 0x28;
+    OK(uc_reg_write(c.uc, UC_X86_REG_CS, &sel));
+    kk_refused(c.uc, UC_X86_REG_CR0, cr0 | KK_PG, "(9) CS.L = 1");
+    sel = 0x08;
+    OK(uc_reg_write(c.uc, UC_X86_REG_CS, &sel));
+    kk_loaded(c.uc, UC_X86_REG_CR0, cr0 | KK_PG, cr0 | KK_PG, "(9) IA-32e mode activated");
+    TEST_CHECK((kk_efer(c.uc) & 0x500) == 0x500);
+    TEST_MSG("IA32_EFER %llx: LME and LMA expected", (unsigned long long)kk_efer(c.uc));
+    OK(uc_close(c.uc));
+}
+
+/* the 32-bit engine: (2), (3), (4), (13) (PCIDE outside IA-32e mode); 32-bit paging (LME = 0) on and off */
+static void test_x86_kk_cr_mode32(void)
+{
+    BpCpu c;
+    uint64_t cr0, cr4;
+
+    bp_open(&c, UC_MODE_32, UC_CPU_X86_MAX);
+    cr0 = kk_rd(c.uc, UC_X86_REG_CR0);
+    cr4 = kk_rd(c.uc, UC_X86_REG_CR4);
+    kk_loaded(c.uc, UC_X86_REG_CR0, cr0 | 0x1ffaffc0ull, cr0, "(2) reserved CR0[31:0] ignored (32-bit)");
+    kk_refused(c.uc, UC_X86_REG_CR0, (cr0 & ~KK_PE) | KK_PG, "(3) CR0.PG with CR0.PE = 0 (32-bit)");
+    kk_refused(c.uc, UC_X86_REG_CR0, cr0 | KK_NW, "(4) CR0.NW with CR0.CD = 0 (32-bit)");
+    kk_refused(c.uc, UC_X86_REG_CR4, cr4 | KK_PCIDE, "(13) CR4.PCIDE with IA32_EFER.LMA = 0");
+    kk_loaded(c.uc, UC_X86_REG_CR0, cr0 | KK_PG, cr0 | KK_PG, "32-bit paging on (LME = 0, PAE = 0)");
+    kk_loaded(c.uc, UC_X86_REG_CR0, cr0, cr0, "32-bit paging off");
+    OK(uc_close(c.uc));
+}
+
+/* (11) reserved CR4 bits: always reserved, FRED without its opt-in, a bit the model lacks (Haswell: CET); (13) PCIDE */
+static void test_x86_kk_cr4_reserved_pcide(void)
+{
+    BpCpu c;
+    uint64_t cr0, cr4, cr3;
+
+    bp_open(&c, UC_MODE_64, UC_CPU_X86_MAX);
+    cr4 = kk_rd(c.uc, UC_X86_REG_CR4);
+    kk_refused(c.uc, UC_X86_REG_CR4, cr4 | (1ull << 31), "(11) CR4[31]");
+    kk_refused(c.uc, UC_X86_REG_CR4, cr4 | (1ull << 32), "(11) CR4.FRED without FRED");
+    kk_refused(c.uc, UC_X86_REG_CR4, cr4 | (1ull << 63), "(11) CR4[63]");
+    cr3 = 0x1005;
+    OK(uc_reg_write(c.uc, UC_X86_REG_CR3, &cr3));
+    kk_refused(c.uc, UC_X86_REG_CR4, cr4 | KK_PCIDE, "(13) CR4.PCIDE with CR3[11:0] != 0");
+    cr3 = 0x1000;
+    OK(uc_reg_write(c.uc, UC_X86_REG_CR3, &cr3));
+    kk_loaded(c.uc, UC_X86_REG_CR4, cr4 | KK_PCIDE, cr4 | KK_PCIDE, "(13) CR4.PCIDE with CR3[11:0] = 0");
+    OK(uc_close(c.uc));
+
+    bp_open(&c, UC_MODE_64, UC_CPU_X86_HASWELL);
+    cr0 = kk_rd(c.uc, UC_X86_REG_CR0);
+    cr4 = kk_rd(c.uc, UC_X86_REG_CR4);
+    kk_loaded(c.uc, UC_X86_REG_CR0, cr0 | KK_WP, cr0 | KK_WP, "CR0.WP (Haswell)");
+    kk_refused(c.uc, UC_X86_REG_CR4, cr4 | KK_CET, "(11) CR4.CET on a model without CET");
+    kk_refused(c.uc, UC_X86_REG_CR4, cr4 | KK_SMXE, "(11) CR4.SMXE on a model without SMX");
+    OK(uc_close(c.uc));
+}
+
+/* (11) a CR4 bit a strict CPUID profile hides (U1680): SMXE under the --guest rows (CPUID.01H:ECX.SMX = 0) */
+static void test_x86_kk_cr4_profile_hidden(void)
+{
+    PcCtx c;
+    uint64_t cr4;
+
+    TEST_CHECK(!(vpf_guest[1].ecx & (1u << 6)));
+    vpf_open(&c, UC_CPU_X86_MAX, vpf_guest, VPF_N, 0, -1, 0, 0);
+    cr4 = kk_rd(c.uc, UC_X86_REG_CR4);
+    kk_refused(c.uc, UC_X86_REG_CR4, cr4 | KK_SMXE, "(11) CR4.SMXE hidden by the strict profile");
+    OK(uc_close(c.uc));
+    vpf_open(&c, UC_CPU_X86_MAX, NULL, 0, 0, -1, 0, 0);
+    cr4 = kk_rd(c.uc, UC_X86_REG_CR4);
+    kk_loaded(c.uc, UC_X86_REG_CR4, cr4 | KK_SMXE, cr4 | KK_SMXE, "CR4.SMXE on the MAX model without a profile");
+    OK(uc_close(c.uc));
+}
+
+/* (10) / (15) VMX operation: CR0.NE and CR4.VMXE are fixed to 1 (IA32_VMX_CR0_FIXED0 / CR4_FIXED0) */
+static void test_x86_kk_cr_vmx_fixed(void)
+{
+    PcCtx c;
+    uint64_t fl = 0, cr0, cr4;
+
+    vmx_root_open(&c);
+    TEST_CHECK(vmx_vmxon(&c, VMX_VMXON, &fl) == -1 && fl == 0);
+    cr0 = kk_rd(c.uc, UC_X86_REG_CR0);
+    cr4 = kk_rd(c.uc, UC_X86_REG_CR4);
+    kk_refused(c.uc, UC_X86_REG_CR0, cr0 & ~KK_NE, "(10) CR0.NE cleared in VMX operation");
+    kk_refused(c.uc, UC_X86_REG_CR4, cr4 & ~KK_VMXE, "(15) CR4.VMXE cleared in VMX operation");
+    kk_loaded(c.uc, UC_X86_REG_CR0, cr0 | KK_TS, cr0 | KK_TS, "CR0.TS in VMX operation");
+    OK(uc_close(c.uc));
+}
+
+/* the stored value is the effective one: hflags follow it (CR4.OSXSAVE off: XGETBV #UD; on again: it runs) */
+static void test_x86_kk_cr_effective(void)
+{
+    BpCpu c;
+    uint64_t cr4;
+
+    bp_open(&c, UC_MODE_64, UC_CPU_X86_MAX);
+    cr4 = kk_rd(c.uc, UC_X86_REG_CR4);
+    TEST_CHECK(cr4 & KK_OSXSAVE);
+    bp_set(&c, UC_X86_REG_RCX, 0);
+    kk_loaded(c.uc, UC_X86_REG_CR4, cr4 & ~KK_OSXSAVE, cr4 & ~KK_OSXSAVE, "CR4.OSXSAVE cleared");
+    uc_assert_err(UC_ERR_INSN_INVALID, bp_run(&c, "\x0f\x01\xd0", 3));
+    kk_loaded(c.uc, UC_X86_REG_CR4, cr4, cr4, "CR4.OSXSAVE set");
+    bp_set(&c, UC_X86_REG_RCX, 0);
+    OK(bp_run(&c, "\x0f\x01\xd0", 3));
+    OK(uc_close(c.uc));
+}
+
+/* uc_context_reg_write: the same checks on a saved context, the live CPU not touched; (0) a context never saved */
+static void test_x86_kk_cr_context(void)
+{
+    BpCpu c;
+    uc_context *ctx;
+    uint64_t cr0, v;
+
+    bp_open(&c, UC_MODE_64, UC_CPU_X86_MAX);
+    cr0 = kk_rd(c.uc, UC_X86_REG_CR0);
+    OK(uc_context_alloc(c.uc, &ctx));
+    OK(uc_context_save(c.uc, ctx));
+    v = (cr0 & ~KK_PE) | KK_PG;
+    uc_assert_err(UC_ERR_ARG, uc_context_reg_write(ctx, UC_X86_REG_CR0, &v));
+    v = cr0 | (1ull << 32);
+    uc_assert_err(UC_ERR_ARG, uc_context_reg_write(ctx, UC_X86_REG_CR0, &v));
+    OK(uc_context_reg_read(ctx, UC_X86_REG_CR0, &v));
+    TEST_CHECK(v == cr0);
+    v = cr0 | KK_CD | 0x40ull;
+    OK(uc_context_reg_write(ctx, UC_X86_REG_CR0, &v));
+    OK(uc_context_reg_read(ctx, UC_X86_REG_CR0, &v));
+    TEST_CHECK(v == (cr0 | KK_CD));
+    TEST_CHECK(kk_rd(c.uc, UC_X86_REG_CR0) == cr0);
+    OK(uc_context_free(ctx));
+    /* (0) a context never saved (zeroed, no CPU model): refused (value 0: no TLB-relevant bit changes) */
+    OK(uc_context_alloc(c.uc, &ctx));
+    v = 0;
+    uc_assert_err(UC_ERR_ARG, uc_context_reg_write(ctx, UC_X86_REG_CR0, &v));
+    uc_assert_err(UC_ERR_ARG, uc_context_reg_write(ctx, UC_X86_REG_CR4, &v));
+    OK(uc_context_free(ctx));
+    OK(uc_close(c.uc));
+}
 /* ---- end U1960-U1969 (kk_) ---- */
 
 TEST_LIST = {
@@ -48767,4 +49122,15 @@ TEST_LIST = {
     {"test_x86_ct_vmx_tpause_delay", test_x86_ct_vmx_tpause_delay},
     {"test_x86_ct_rsm_dr6_fixed1", test_x86_ct_rsm_dr6_fixed1},
     {"test_x86_kk_max_hypervisor_bit", test_x86_kk_max_hypervisor_bit},
+    {"test_x86_kk_cr0_reserved", test_x86_kk_cr0_reserved},
+    {"test_x86_kk_cr0_combinations", test_x86_kk_cr0_combinations},
+    {"test_x86_kk_cr_paging_64", test_x86_kk_cr_paging_64},
+    {"test_x86_kk_cr_paging_compat", test_x86_kk_cr_paging_compat},
+    {"test_x86_kk_cr0_activate", test_x86_kk_cr0_activate},
+    {"test_x86_kk_cr_mode32", test_x86_kk_cr_mode32},
+    {"test_x86_kk_cr4_reserved_pcide", test_x86_kk_cr4_reserved_pcide},
+    {"test_x86_kk_cr4_profile_hidden", test_x86_kk_cr4_profile_hidden},
+    {"test_x86_kk_cr_vmx_fixed", test_x86_kk_cr_vmx_fixed},
+    {"test_x86_kk_cr_effective", test_x86_kk_cr_effective},
+    {"test_x86_kk_cr_context", test_x86_kk_cr_context},
     {NULL, NULL}};

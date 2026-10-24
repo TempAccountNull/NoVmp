@@ -79,18 +79,20 @@ static void x86_mmu_prepare_tlb(uc_engine *uc, uint64_t vaddr,
     }
 
     cr0 |= 1;             // enable protected mode
-    cr0 |= 1l << 31;      // enable paging
+    cr0 |= 1ull << 31;    // enable paging (NoVmp U1964: 1ull - a 32-bit long set CR0[63:32] on Windows)
     cr4 |= 1l << 5;       // enable physical address extension
     msr.value |= 1l << 8; // enable long mode
 
-    err = uc_reg_write(uc, UC_X86_REG_CR0, &cr0);
-    if (err) {
-        printf("failed to write CR0\n");
-        exit(1);
-    }
+    /* NoVmp (ledger U1964): CR4.PAE before CR0.PG - with IA32_EFER.LME = 1 MOV to CR0 setting PG while CR4.PAE = 0
+       is #GP(0) (SDM 253668-093 Vol3A 5.1.2 p. 5-3), and uc_reg_write refuses it the same way since U1962 */
     err = uc_reg_write(uc, UC_X86_REG_CR4, &cr4);
     if (err) {
         printf("failed to write CR4\n");
+        exit(1);
+    }
+    err = uc_reg_write(uc, UC_X86_REG_CR0, &cr0);
+    if (err) {
+        printf("failed to write CR0\n");
         exit(1);
     }
     err = uc_reg_write(uc, UC_X86_REG_MSR, &msr);
