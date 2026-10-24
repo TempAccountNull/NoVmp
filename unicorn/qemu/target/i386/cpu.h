@@ -3744,6 +3744,15 @@ bool x86_vmx_msr_exists(CPUX86State *env, uint32_t msr);
 bool x86_vmx_msr_read(CPUX86State *env, uint32_t msr, uint64_t *val);
 int x86_vmx_field_slot(CPUX86State *env, uint64_t enc, int *high);
 bool x86_vmx_cr_write_ok(CPUX86State *env, int reg, uint64_t v);   /* U1302 */
+#if __Use_Original_Qemu != 1 /* ours (U1965) */
+/*
+ * NoVmp (ledger U1965, misc_helper.c): THE checks of MOV to CR0 / CR4 (SDM #GP(0) rules (1)-(15)), shared by the
+ * instruction (helper_write_crN, U1966) and uc_reg_write / uc_context_reg_write (unicorn.c x86_crw_write, U1962). No side
+ * effect; false = #GP(0). x86_mov_cr0_check stores the value MOV to CR0 loads (ignored bits dropped, ET set) in *eff.
+ */
+bool x86_mov_cr0_check(CPUX86State *env, uint64_t v, uint64_t *eff);
+bool x86_mov_cr4_check(CPUX86State *env, uint64_t v);
+#endif /* __Use_Original_Qemu (U1965) */
 bool x86_vmx_eptp_ok(CPUX86State *env, uint64_t eptp);
 /* U1303 */
 G_NORETURN void x86_vmx_insn_exit(CPUX86State *env, uint32_t reason, uint64_t qual,

@@ -48505,6 +48505,340 @@ static void test_x86_kk_cr_context(void)
     OK(uc_context_free(ctx));
     OK(uc_close(c.uc));
 }
+
+/*
+ * U1968 (plan 1.K.15 follow-up, user decision 2026-10-24; U1965-U1967): the MOV to CR0 / CR4 INSTRUCTION applies the
+ * same checks as uc_reg_write - one shared function (x86_mov_cr0_check / x86_mov_cr4_check in misc_helper.c), rule
+ * numbers (1)-(15) as above. At CPL0 an illegal combination raises #GP(0) (UC_CTL_X86_EXCEPTION: vector 13, error code
+ * 0) and changes nothing (CR0, CR3, CR4, IA32_EFER). SDM 253667-093 Vol2B MOV-Move to/from Control Registers pp. 4-32
+ * to 4-34 (Protected / Real-Address / Compatibility / 64-Bit Mode Exceptions), 253668-093 Vol3A 2.5 pp. 2-13 to 2-21,
+ * 5.1.2 p. 5-3, 5.10.1 p. 5-41, 326019-093 Vol3C 26.8 p. 26-3. Every check runs on a fresh engine, so a rule the fork
+ * without U1966 does not apply cannot disturb the next check.
+ */
+#define KK_PT 0x300000ull           /* 4-level paging: PML4 300000h, PDPT 301000h, PD 302000h (0-4 MB, 2 MB pages) */
+#define KK_PD32 0x303000ull         /* 32-bit paging: one 4 MB page (0-4 MB), CR4.PSE */
+#define KK_PSE 0x10ull
+#define KK_S_PAE 1u                 /* CR4.PAE (API) */
+#define KK_S_PAGING 2u              /* CR3 = KK_PT, CR4.PAE, CR0.PG (API; from Unicorn's IA-32e start state) */
+#define KK_S_PCIDE 4u               /* + CR4.PCIDE (API; CR3[11:0] = 0) */
+#define KK_S_COMPAT 8u              /* + far return to compatibility mode (CS 08h) */
+#define KK_S_LME 16u                /* 32-bit engine: IA32_EFER.LME = 1, CR3 = KK_PT */
+#define KK_S_CETWP 32u              /* CR0.WP, then CR4.CET (API) */
+#define KK_MOV_CR0 "\x0f\x22\xc0"   /* mov cr0, rax / eax */
+#define KK_MOV_CR3 "\x0f\x22\xd8"   /* mov cr3, rax / eax */
+#define KK_MOV_CR4 "\x0f\x22\xe0"   /* mov cr4, rax / eax */
+
+static void kk_api(BpCpu *c, int reg, uint64_t v)
+{
+    OK(uc_reg_write(c->uc, reg, &v));
+}
+
+static void kk_fresh(BpCpu *c, uc_mode mode, unsigned s)
+{
+    /* PML4[0] -> PDPT, PDPT[0] -> PD, PD[0] / PD[1]: 2 MB pages 0 / 200000h; the 32-bit PD: a 4 MB page at 0 */
+    static const uint64_t pt[4] = {KK_PT + 0x1003, KK_PT + 0x2003, 0x83, 0x200083};
+    static const uint32_t pd32 = 0x83;
+
+    bp_open(c, mode, UC_CPU_X86_MAX);
+    OK(uc_mem_write(c->uc, KK_PT, &pt[0], 8));
+    OK(uc_mem_write(c->uc, KK_PT + 0x1000, &pt[1], 8));
+    OK(uc_mem_write(c->uc, KK_PT + 0x2000, &pt[2], 16));
+    OK(uc_mem_write(c->uc, KK_PD32, &pd32, 4));
+    if (s & KK_S_LME) {
+        uc_x86_msr efer = {0xc0000080, 0x100};
+
+        OK(uc_reg_write(c->uc, UC_X86_REG_MSR, &efer));
+        kk_api(c, UC_X86_REG_CR3, KK_PT);
+    }
+    if (s & (KK_S_PAE | KK_S_PAGING)) {
+        kk_api(c, UC_X86_REG_CR4, kk_rd(c->uc, UC_X86_REG_CR4) | KK_PAE);
+    }
+    if (s & KK_S_PAGING) {
+        kk_api(c, UC_X86_REG_CR3, KK_PT);
+        kk_api(c, UC_X86_REG_CR0, kk_rd(c->uc, UC_X86_REG_CR0) | KK_PG);
+    }
+    if (s & KK_S_PCIDE) {
+        kk_api(c, UC_X86_REG_CR4, kk_rd(c->uc, UC_X86_REG_CR4) | KK_PCIDE);
+    }
+    if (s & KK_S_CETWP) {
+        kk_api(c, UC_X86_REG_CR0, kk_rd(c->uc, UC_X86_REG_CR0) | KK_WP);
+        kk_api(c, UC_X86_REG_CR4, kk_rd(c->uc, UC_X86_REG_CR4) | KK_CET);
+    }
+    if (s & KK_S_COMPAT) {
+        /* push 08h; push BP_CODE+0x10; retfq -> compatibility mode (code32 DPL0) */
+        static const char to_compat[] = "\x6a\x08\x68\x10\x00\x01\x00\x48\xcb";
+
+        bp_set(c, UC_X86_REG_RSP, BP_STACK);
+        OK(uc_mem_write(c->uc, BP_CODE + 0x10, "\x90", 1));
+        OK(bp_run_at(c, BP_CODE, to_compat, sizeof(to_compat) - 1, 3));
+        TEST_CHECK(bp_seg(c, UC_X86_REG_CS) == 0x08 && c->count == 0);
+    }
+}
+
+/*
+ * run code at CPL0 (addr 0: the next fresh slot) with RAX (EAX on the 32-bit engine) = rax; gp: one #GP(0) and CR0 /
+ * CR3 / CR4 / IA32_EFER unchanged; otherwise no exception
+ */
+static void kk_insn(BpCpu *c, uint64_t addr, const char *code, uint64_t rax, bool gp, const char *rule)
+{
+    uint64_t cr0 = kk_rd(c->uc, UC_X86_REG_CR0), cr3 = kk_rd(c->uc, UC_X86_REG_CR3);
+    uint64_t cr4 = kk_rd(c->uc, UC_X86_REG_CR4), efer = kk_efer(c->uc);
+    uc_err err;
+
+    bp_set(c, c->mode == UC_MODE_64 ? UC_X86_REG_RAX : UC_X86_REG_EAX, rax);
+    err = addr ? bp_run_at(c, addr, code, 3, 0) : bp_run(c, code, 3);
+    if (gp) {
+        TEST_CHECK(err == UC_ERR_OK && c->count == 1 && c->intno == 13);
+        TEST_MSG("%s: %s, %u exception(s), first vector %u; expected #GP(0)", rule, uc_strerror(err), c->count,
+                 c->intno);
+        fx4_is(c->uc, 13, 0, rule);
+        TEST_CHECK(kk_rd(c->uc, UC_X86_REG_CR0) == cr0 && kk_rd(c->uc, UC_X86_REG_CR3) == cr3 &&
+                   kk_rd(c->uc, UC_X86_REG_CR4) == cr4 && kk_efer(c->uc) == efer);
+        TEST_MSG("%s: CR0 %llx -> %llx, CR3 %llx -> %llx, CR4 %llx -> %llx, EFER %llx -> %llx (unchanged expected)", rule,
+                 (unsigned long long)cr0, (unsigned long long)kk_rd(c->uc, UC_X86_REG_CR0), (unsigned long long)cr3,
+                 (unsigned long long)kk_rd(c->uc, UC_X86_REG_CR3), (unsigned long long)cr4,
+                 (unsigned long long)kk_rd(c->uc, UC_X86_REG_CR4), (unsigned long long)efer,
+                 (unsigned long long)kk_efer(c->uc));
+    } else {
+        TEST_CHECK(err == UC_ERR_OK && c->count == 0);
+        TEST_MSG("%s: %s, %u exception(s) (first vector %u); expected none", rule, uc_strerror(err), c->count, c->intno);
+    }
+}
+
+/* the register reads 'want' after an accepted MOV to CR */
+static void kk_reads(BpCpu *c, int reg, uint64_t want, const char *rule)
+{
+    uint64_t v = kk_rd(c->uc, reg);
+
+    TEST_CHECK(v == want);
+    TEST_MSG("%s: reads %016llx, expected %016llx", rule, (unsigned long long)v, (unsigned long long)want);
+}
+
+/* 64-bit engine, IA-32e start state: (1) CR0[63:32], (2) ignored bits / ET, (3), (4), (5), (12) */
+static void test_x86_kk_movcr0_bits(void)
+{
+    BpCpu c;
+    uint64_t cr0, cr4;
+
+    kk_fresh(&c, UC_MODE_64, 0);
+    cr0 = kk_rd(c.uc, UC_X86_REG_CR0);
+    kk_insn(&c, 0, KK_MOV_CR0, cr0 | (1ull << 32), true, "(1) MOV CR0 with CR0[32] = 1");
+    OK(uc_close(c.uc));
+    kk_fresh(&c, UC_MODE_64, 0);
+    kk_insn(&c, 0, KK_MOV_CR0, cr0 | (1ull << 63), true, "(1) MOV CR0 with CR0[63] = 1");
+    OK(uc_close(c.uc));
+    kk_fresh(&c, UC_MODE_64, 0);
+    kk_insn(&c, 0, KK_MOV_CR0, cr0 | 0x1ffaffc0ull, false, "(2) MOV CR0 with reserved CR0[31:0] bits");
+    kk_reads(&c, UC_X86_REG_CR0, cr0, "(2) reserved CR0[31:0] bits ignored");
+    kk_insn(&c, 0, KK_MOV_CR0, cr0 & ~KK_ET, false, "(2) MOV CR0 with CR0.ET = 0");
+    kk_reads(&c, UC_X86_REG_CR0, cr0 | KK_ET, "(2) CR0.ET stays set");
+    OK(uc_close(c.uc));
+    kk_fresh(&c, UC_MODE_64, KK_S_PAE);
+    kk_insn(&c, 0, KK_MOV_CR0, (cr0 & ~KK_PE) | KK_PG, true, "(3) MOV CR0 with PG = 1, PE = 0");
+    OK(uc_close(c.uc));
+    kk_fresh(&c, UC_MODE_64, 0);
+    kk_insn(&c, 0, KK_MOV_CR0, (cr0 & ~KK_CD) | KK_NW, true, "(4) MOV CR0 with NW = 1, CD = 0");
+    OK(uc_close(c.uc));
+    kk_fresh(&c, UC_MODE_64, 0);
+    kk_insn(&c, 0, KK_MOV_CR0, cr0 | KK_CD | KK_NW, false, "(4) MOV CR0 with CD = 1, NW = 1");
+    kk_reads(&c, UC_X86_REG_CR0, cr0 | KK_CD | KK_NW, "(4) CD and NW loaded");
+    kk_insn(&c, 0, KK_MOV_CR0, (cr0 & ~KK_CD) | KK_NW, true, "(4) MOV CR0 clearing CD with NW = 1");
+    OK(uc_close(c.uc));
+    kk_fresh(&c, UC_MODE_64, KK_S_CETWP);
+    kk_insn(&c, 0, KK_MOV_CR0, kk_rd(c.uc, UC_X86_REG_CR0) & ~KK_WP, true, "(5) MOV CR0 clearing WP with CR4.CET = 1");
+    OK(uc_close(c.uc));
+    kk_fresh(&c, UC_MODE_64, 0);
+    cr4 = kk_rd(c.uc, UC_X86_REG_CR4);
+    kk_insn(&c, 0, KK_MOV_CR4, cr4 | KK_CET, true, "(12) MOV CR4 setting CET with CR0.WP = 0");
+    OK(uc_close(c.uc));
+}
+
+/*
+ * 64-bit engine: (8) PG with LME = 1 and PAE = 0; (14) in Unicorn's start state (PG = 0) LA57 may change, with paging
+ * PAE / LA57 may not; (6) PG cleared in 64-bit mode; (13) PCIDE 0 -> 1 needs CR3[11:0] = 0
+ */
+static void test_x86_kk_movcr_paging64(void)
+{
+    BpCpu c;
+    uint64_t cr0, cr4;
+
+    kk_fresh(&c, UC_MODE_64, 0);
+    cr0 = kk_rd(c.uc, UC_X86_REG_CR0);
+    kk_api(&c, UC_X86_REG_CR3, KK_PT);
+    kk_insn(&c, 0, KK_MOV_CR0, cr0 | KK_PG, true, "(8) MOV CR0 setting PG with IA32_EFER.LME = 1, CR4.PAE = 0");
+    OK(uc_close(c.uc));
+    kk_fresh(&c, UC_MODE_64, KK_S_PAE);
+    cr4 = kk_rd(c.uc, UC_X86_REG_CR4);
+    kk_insn(&c, 0, KK_MOV_CR4, cr4 | KK_LA57, false, "(14) MOV CR4 setting LA57 with CR0.PG = 0 (start state)");
+    kk_reads(&c, UC_X86_REG_CR4, cr4 | KK_LA57, "(14) LA57 loaded with CR0.PG = 0");
+    kk_insn(&c, 0, KK_MOV_CR4, cr4, false, "(14) MOV CR4 clearing LA57 with CR0.PG = 0");
+    kk_api(&c, UC_X86_REG_CR3, KK_PT);
+    kk_insn(&c, 0, KK_MOV_CR0, cr0 | KK_PG, false, "MOV CR0 setting PG with CR4.PAE = 1 (paging on)");
+    kk_reads(&c, UC_X86_REG_CR0, cr0 | KK_PG, "CR0.PG loaded");
+    OK(uc_close(c.uc));
+    kk_fresh(&c, UC_MODE_64, KK_S_PAGING);
+    cr0 = kk_rd(c.uc, UC_X86_REG_CR0);
+    kk_insn(&c, 0, KK_MOV_CR0, cr0 & ~KK_PG, true, "(6) MOV CR0 clearing PG in 64-bit mode");
+    OK(uc_close(c.uc));
+    kk_fresh(&c, UC_MODE_64, KK_S_PAGING);
+    cr4 = kk_rd(c.uc, UC_X86_REG_CR4);
+    kk_insn(&c, 0, KK_MOV_CR4, cr4 & ~KK_PAE, true, "(14) MOV CR4 clearing PAE with CR0.PG = 1, LME = 1");
+    OK(uc_close(c.uc));
+    kk_fresh(&c, UC_MODE_64, KK_S_PAGING);
+    kk_insn(&c, 0, KK_MOV_CR4, cr4 | KK_LA57, true, "(14) MOV CR4 setting LA57 with CR0.PG = 1, LME = 1");
+    OK(uc_close(c.uc));
+    kk_fresh(&c, UC_MODE_64, KK_S_PAGING);
+    kk_api(&c, UC_X86_REG_CR3, KK_PT | 0x8);
+    kk_insn(&c, 0, KK_MOV_CR4, cr4 | KK_PCIDE, true, "(13) MOV CR4 setting PCIDE with CR3[11:0] != 0");
+    OK(uc_close(c.uc));
+    kk_fresh(&c, UC_MODE_64, KK_S_PAGING);
+    kk_insn(&c, 0, KK_MOV_CR4, cr4 | KK_PCIDE, false, "(13) MOV CR4 setting PCIDE with CR3[11:0] = 0");
+    kk_reads(&c, UC_X86_REG_CR4, cr4 | KK_PCIDE, "(13) PCIDE loaded");
+    OK(uc_close(c.uc));
+}
+
+/*
+ * compatibility mode (paging, CR4.PCIDE = 1): (7) PG cleared with PCIDE; (14) PAE cleared (leaving IA-32e mode that
+ * way); the operand is 32 bits outside 64-bit mode (Vol2B p. 4-32), so RAX[63:32] neither faults nor loads (CR0,
+ * CR3 (U1967), CR4); without PCIDE, PG cleared leaves IA-32e mode, then (13) PCIDE with IA32_EFER.LMA = 0
+ */
+static void test_x86_kk_movcr_compat(void)
+{
+    BpCpu c;
+    uint64_t cr0, cr4;
+
+    kk_fresh(&c, UC_MODE_64, KK_S_PAGING | KK_S_PCIDE | KK_S_COMPAT);
+    cr0 = kk_rd(c.uc, UC_X86_REG_CR0);
+    cr4 = kk_rd(c.uc, UC_X86_REG_CR4);
+    kk_insn(&c, 0, KK_MOV_CR0, cr0 & ~KK_PG, true, "(7) MOV CR0 clearing PG with CR4.PCIDE = 1 (compatibility mode)");
+    OK(uc_close(c.uc));
+    kk_fresh(&c, UC_MODE_64, KK_S_PAGING | KK_S_PCIDE | KK_S_COMPAT);
+    kk_insn(&c, 0, KK_MOV_CR4, cr4 & ~KK_PAE, true, "(14) MOV CR4 clearing PAE in compatibility mode");
+    OK(uc_close(c.uc));
+    kk_fresh(&c, UC_MODE_64, KK_S_PAGING | KK_S_PCIDE | KK_S_COMPAT);
+    kk_insn(&c, 0, KK_MOV_CR0, (0xdead0000ull << 32) | cr0, false, "MOV CR0, EAX with RAX[63:32] != 0 (compatibility)");
+    kk_reads(&c, UC_X86_REG_CR0, cr0, "CR0 = EAX (32-bit operand)");
+    kk_insn(&c, 0, KK_MOV_CR3, (1ull << 59) | KK_PT, false, "MOV CR3, EAX with RAX[59] = 1 (compatibility)");
+    kk_reads(&c, UC_X86_REG_CR3, KK_PT, "CR3 = EAX (32-bit operand)");
+    kk_insn(&c, 0, KK_MOV_CR4, (1ull << 40) | cr4, false, "MOV CR4, EAX with RAX[40] = 1 (compatibility)");
+    kk_reads(&c, UC_X86_REG_CR4, cr4, "CR4 = EAX (32-bit operand)");
+    OK(uc_close(c.uc));
+    kk_fresh(&c, UC_MODE_64, KK_S_PAGING | KK_S_COMPAT);
+    cr4 = kk_rd(c.uc, UC_X86_REG_CR4);
+    kk_insn(&c, 0, KK_MOV_CR0, cr0 & ~KK_PG, false, "MOV CR0 clearing PG in compatibility mode (CR4.PCIDE = 0)");
+    TEST_CHECK(!(kk_efer(c.uc) & 0x400));
+    TEST_MSG("IA32_EFER %llx: LMA expected 0 (IA-32e mode left)", (unsigned long long)kk_efer(c.uc));
+    kk_insn(&c, 0, KK_MOV_CR4, cr4 | KK_PCIDE, true, "(13) MOV CR4 setting PCIDE with IA32_EFER.LMA = 0");
+    OK(uc_close(c.uc));
+}
+
+/* the 32-bit engine (protected mode, LME = 0): (2), (3), (4), (13); 32-bit paging on and off */
+static void test_x86_kk_movcr_mode32(void)
+{
+    BpCpu c;
+    uint64_t cr0, cr4;
+
+    kk_fresh(&c, UC_MODE_32, 0);
+    cr0 = kk_rd(c.uc, UC_X86_REG_CR0);
+    cr4 = kk_rd(c.uc, UC_X86_REG_CR4);
+    kk_insn(&c, 0, KK_MOV_CR0, cr0 | 0x1ffaffc0ull, false, "(2) MOV CR0 with reserved CR0[31:0] bits (32-bit)");
+    kk_reads(&c, UC_X86_REG_CR0, cr0, "(2) reserved CR0[31:0] bits ignored (32-bit)");
+    OK(uc_close(c.uc));
+    kk_fresh(&c, UC_MODE_32, 0);
+    kk_insn(&c, 0, KK_MOV_CR0, (cr0 & ~KK_PE) | KK_PG, true, "(3) MOV CR0 with PG = 1, PE = 0 (32-bit)");
+    OK(uc_close(c.uc));
+    kk_fresh(&c, UC_MODE_32, 0);
+    kk_insn(&c, 0, KK_MOV_CR0, (cr0 & ~KK_CD) | KK_NW, true, "(4) MOV CR0 with NW = 1, CD = 0 (32-bit)");
+    OK(uc_close(c.uc));
+    kk_fresh(&c, UC_MODE_32, 0);
+    kk_insn(&c, 0, KK_MOV_CR4, cr4 | KK_PCIDE, true, "(13) MOV CR4 setting PCIDE with IA32_EFER.LMA = 0 (32-bit)");
+    OK(uc_close(c.uc));
+    kk_fresh(&c, UC_MODE_32, 0);
+    kk_api(&c, UC_X86_REG_CR4, cr4 | KK_PSE);
+    kk_api(&c, UC_X86_REG_CR3, KK_PD32);
+    kk_insn(&c, 0, KK_MOV_CR0, cr0 | KK_PG, false, "MOV CR0 setting PG (32-bit paging)");
+    kk_reads(&c, UC_X86_REG_CR0, cr0 | KK_PG, "32-bit paging on");
+    kk_insn(&c, 0, KK_MOV_CR0, cr0, false, "MOV CR0 clearing PG (32-bit paging off)");
+    kk_reads(&c, UC_X86_REG_CR0, cr0, "32-bit paging off");
+    OK(uc_close(c.uc));
+}
+
+/*
+ * the 32-bit engine with IA32_EFER.LME = 1: (8) PG with PAE = 0; (9) activating IA-32e mode with a 16-bit TSS in TR or
+ * CS.L = 1 (CS 28h: L = 1, D = 0, so the code runs as 16-bit code below 10000h); otherwise the activation succeeds
+ */
+static void test_x86_kk_movcr0_activate(void)
+{
+    BpCpu c;
+    uc_x86_mmr tr = {0x40, 0x3000, 0x67, 0x8100};
+    uint64_t cr0;
+    uint16_t sel = 0x28;
+
+    kk_fresh(&c, UC_MODE_32, KK_S_LME);
+    cr0 = kk_rd(c.uc, UC_X86_REG_CR0);
+    kk_insn(&c, 0, KK_MOV_CR0, cr0 | KK_PG, true, "(8) MOV CR0 setting PG with LME = 1, PAE = 0 (32-bit)");
+    OK(uc_close(c.uc));
+    kk_fresh(&c, UC_MODE_32, KK_S_LME | KK_S_PAE);
+    OK(uc_reg_write(c.uc, UC_X86_REG_TR, &tr));
+    kk_insn(&c, 0, KK_MOV_CR0, cr0 | KK_PG, true, "(9) MOV CR0 activating IA-32e mode with a 16-bit TSS in TR");
+    OK(uc_close(c.uc));
+    kk_fresh(&c, UC_MODE_32, KK_S_LME | KK_S_PAE);
+    tr.flags = 0x8b00;
+    OK(uc_reg_write(c.uc, UC_X86_REG_TR, &tr));
+    OK(uc_reg_write(c.uc, UC_X86_REG_CS, &sel));
+    kk_insn(&c, 0x8000, KK_MOV_CR0, cr0 | KK_PG, true, "(9) MOV CR0 activating IA-32e mode with CS.L = 1");
+    OK(uc_close(c.uc));
+    kk_fresh(&c, UC_MODE_32, KK_S_LME | KK_S_PAE);
+    OK(uc_reg_write(c.uc, UC_X86_REG_TR, &tr));
+    kk_insn(&c, 0, KK_MOV_CR0, cr0 | KK_PG, false, "MOV CR0 activating IA-32e mode (32-bit TSS, CS.L = 0)");
+    TEST_CHECK((kk_efer(c.uc) & 0x500) == 0x500);
+    TEST_MSG("IA32_EFER %llx: LME and LMA expected", (unsigned long long)kk_efer(c.uc));
+    OK(uc_close(c.uc));
+}
+
+/*
+ * unchanged by U1966 (guards): MOV to / from CR0, CR3, CR4, CR8, LMSW and CLTS at CPL3 raise #GP(0) (Vol2B MOV CR
+ * pp. 4-33 / 4-34, 253666-093 Vol2A CLTS p. 3-152, LMSW pp. 3-560 / 3-561; hardware: cases_lockpriv_hw); at CPL0 LMSW and
+ * pass the shared CR0 checks with paging and CR4.CET on (LMSW loads CR0[3:0] and cannot clear PE; CLTS clears TS)
+ */
+static void test_x86_kk_movcr_cpl3_lmsw_clts(void)
+{
+    static const struct {
+        const char *code;
+        size_t len;
+        const char *what;
+    } cpl3[] = {
+        {"\x0f\x22\xc0", 3, "MOV CR0, RAX"}, {"\x0f\x22\xd8", 3, "MOV CR3, RAX"}, {"\x0f\x22\xe0", 3, "MOV CR4, RAX"},
+        {"\x44\x0f\x22\xc0", 4, "MOV CR8, RAX"}, {"\x0f\x20\xc0", 3, "MOV RAX, CR0"}, {"\x0f\x01\xf0", 3, "LMSW AX"},
+        {"\x0f\x06", 2, "CLTS"},
+    };
+    BpCpu c;
+    uint64_t cr0;
+    size_t i;
+
+    for (i = 0; i < sizeof(cpl3) / sizeof(cpl3[0]); i++) {
+        bp_open(&c, UC_MODE_64, UC_CPU_X86_MAX);
+        cr0 = kk_rd(c.uc, UC_X86_REG_CR0);
+        bp_set(&c, UC_X86_REG_RAX, cr0);
+        OK(bp_run64_cpl3(&c, cpl3[i].code, cpl3[i].len));
+        TEST_CHECK(c.count == 1 && c.intno == 13);
+        TEST_MSG("%s at CPL3: %u exception(s), first vector %u; expected #GP(0)", cpl3[i].what, c.count, c.intno);
+        fx4_is(c.uc, 13, 0, cpl3[i].what);
+        OK(uc_close(c.uc));
+    }
+    kk_fresh(&c, UC_MODE_64, KK_S_PAGING | KK_S_CETWP);
+    cr0 = kk_rd(c.uc, UC_X86_REG_CR0);
+    bp_set(&c, UC_X86_REG_RAX, 0xfffe);
+    OK(bp_run(&c, "\x0f\x01\xf0", 3));
+    TEST_CHECK(c.count == 0);
+    TEST_MSG("LMSW at CPL0: %u exception(s) (vector %u), expected none", c.count, c.intno);
+    kk_reads(&c, UC_X86_REG_CR0, (cr0 & ~0xfull) | 0xf, "LMSW AX = FFFEh: MP / EM / TS loaded, PE kept");
+    OK(bp_run(&c, "\x0f\x06", 2));
+    TEST_CHECK(c.count == 0);
+    TEST_MSG("CLTS at CPL0: %u exception(s) (vector %u), expected none", c.count, c.intno);
+    kk_reads(&c, UC_X86_REG_CR0, (cr0 & ~0xfull) | 0x7, "CLTS: TS cleared");
+    OK(uc_close(c.uc));
+}
 /* ---- end U1960-U1969 (kk_) ---- */
 
 TEST_LIST = {
@@ -49133,4 +49467,10 @@ TEST_LIST = {
     {"test_x86_kk_cr_vmx_fixed", test_x86_kk_cr_vmx_fixed},
     {"test_x86_kk_cr_effective", test_x86_kk_cr_effective},
     {"test_x86_kk_cr_context", test_x86_kk_cr_context},
+    {"test_x86_kk_movcr0_bits", test_x86_kk_movcr0_bits},
+    {"test_x86_kk_movcr_paging64", test_x86_kk_movcr_paging64},
+    {"test_x86_kk_movcr_compat", test_x86_kk_movcr_compat},
+    {"test_x86_kk_movcr_mode32", test_x86_kk_movcr_mode32},
+    {"test_x86_kk_movcr0_activate", test_x86_kk_movcr0_activate},
+    {"test_x86_kk_movcr_cpl3_lmsw_clts", test_x86_kk_movcr_cpl3_lmsw_clts},
     {NULL, NULL}};

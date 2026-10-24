@@ -310,107 +310,16 @@ static void x86_reg_store_dr(CPUX86State *env, int reg, target_ulong v)
  * after the update, so env->cr[] could disagree with hflags (CR4.CET under a profile without CET, CR4.SMXE under a
  * strict profile hiding SMX: U1681), CR0[63:32] and the ignored CR0 bits were stored, CR0.PG could be stored with
  * IA32_EFER.LME = 1 and CR4.PAE = 0 (cpu_x86_update_cr0 then returned early), and CR0.WP was not enforced for CR4.CET.
- * Rules (SDM 253667-093 Vol2B MOV-Move to/from Control Registers pp. 4-32 to 4-34; 253668-093 Vol3A 2.5 pp. 2-13 to
- * 2-21, 5.1.2 p. 5-3, 5.10.1 p. 5-41), numbered as in the kk_ unit tests:
- *  (1) CR0[63:32] reserved: #GP(0) (Vol2B p. 4-32 "Attempting to set any reserved bits in CR0[63:32] results in a
- *      general-protection exception, #GP(0)."; Vol3A 2.5 p. 2-13).
- *  (2) reserved CR0[31:0] bits are ignored ("Attempting to set any reserved bits in CR0[31:0] is ignored.") and CR0.ET
- *      stays 1 ("CR0.ET remains set after any load of CR0"), Vol2B p. 4-32: stored without them / with ET.
- *  (3) CR0.PG = 1 with CR0.PE = 0: #GP (Vol3A 2.5 p. 2-16 CR0.PG; Vol2B pp. 4-33 / 4-34 "invalid bit combinations").
- *  (4) CR0.NW = 1 with CR0.CD = 0: #GP (Vol2B pp. 4-33 / 4-34 "setting the CD flag to 0 when the NW flag is set to 1").
- *  (5) CR0.WP cleared while CR4.CET = 1: #GP (Vol3A 2.5 p. 2-16 CR0.WP, p. 2-19 CR4.CET "it must be clear before
- *      CR0.WP can be cleared").
- *  (6) CR0.PG cleared in 64-bit mode: #GP (Vol2B p. 4-34 "If an attempt is made to clear CR0.PG[bit 31]."; Vol3A 5.1.2
- *      p. 5-3 footnote).
- *  (7) CR0.PG cleared while CR4.PCIDE = 1: #GP (Vol3A 5.10.1 p. 5-41; Vol2B p. 4-33 compatibility mode).
- *  (8) CR0.PG set while IA32_EFER.LME = 1 and CR4.PAE = 0: #GP (Vol3A 5.1.2 p. 5-3 "Paging cannot be enabled ...").
- *  (9) CR0.PG set with IA32_EFER.LME = 1 activates IA-32e mode: #GP if CS.L = 1 or TR references a 16-bit TSS (Vol2B
- *      p. 4-33 "If an attempt is made to activate IA-32e mode and either the current CS has the L-bit set or the TR
- *      references a 16-bit TSS.").
- * (10) / (15) VMX operation: CR0 / CR4 outside IA32_VMX_CR0_FIXED0/1 / CR4_FIXED0/1: #GP(0) (x86_vmx_cr_write_ok, U1302;
- *      Vol3C 26.8).
- * (11) a reserved CR4 bit: #GP(0) (Vol2B p. 4-32 / p. 4-34; Vol3A 2.5 p. 2-13; Vol3A 2.5.1 p. 2-21: CPUID-qualified
- *      bits) - cr4_reserved_bits: the bits the CPU model lacks and the bits a strict CPUID profile hides (U1680).
- * (12) CR4.CET set while CR0.WP = 0: #GP (Vol3A 2.5 p. 2-19 "This flag can be set only if CR0.WP is set").
- * (13) CR4.PCIDE 0 -> 1 while IA32_EFER.LMA = 0 or CR3[11:0] != 0: #GP (Vol3A 5.10.1 p. 5-41; Vol2B pp. 4-33 / 4-34).
- * (14) CR4.PAE or CR4.LA57 changed while CR0.PG = 1 and IA32_EFER.LME = 1: #GP (Vol3A 5.1.2 p. 5-3; Vol3A 2.5 p. 2-20
- *      CR4.LA57; Vol2B pp. 4-33 / 4-34 "leave IA-32e mode by clearing CR4.PAE").
- * The API is not an instruction: the CPL / LOCK / CR-number #UD rules, the VMX non-root guest/host masks and read
- * shadows, SVM intercepts and the PDPTE load of PAE paging are not applied (the API writes the register itself).
+ * U1965 (user decision 2026-10-24): the rules (1)-(15) (SDM citations there) live in ONE function shared with the MOV to
+ * CR0 / CR4 instruction, x86_mov_cr0_check / x86_mov_cr4_check (misc_helper.c); this file keeps only what is specific to
+ * the API: rule (0) below, and that it writes the register as given, so the instruction-only parts are not applied -
+ * the CPL / LOCK / CR-number #UD rules, the 32-bit operand outside 64-bit mode, the VMX non-root guest/host masks and
+ * read shadows, SVM intercepts and the PDPTE load of PAE paging.
  * Unicorn's UC_MODE_64 reset state is IA-32e mode without paging (IA32_EFER.LME = LMA = 1, CR0.PG = 0, CS.L = 1), which
  * no processor reaches: the IA-32e rules use the paging condition of Vol3A 5.1.2 (CR0.PG = 1 and IA32_EFER.LME = 1), so
  * that state can still turn paging on (CR3, CR4.PAE (and LA57), then CR0.PG; with IA32_EFER.LMA already 1 this does
  * not activate IA-32e mode, so (9) does not apply).
  */
-#define X86_CRW_CR0_NW (1U << 29)
-#define X86_CRW_CR0_CD (1U << 30)
-#define X86_CRW_CR0_DEFINED (CR0_PE_MASK | CR0_MP_MASK | CR0_EM_MASK | CR0_TS_MASK | CR0_ET_MASK | CR0_NE_MASK | \
-                             CR0_WP_MASK | CR0_AM_MASK | X86_CRW_CR0_NW | X86_CRW_CR0_CD | CR0_PG_MASK)
-
-/* the value MOV to CR0 would load into *eff, or UC_ERR_ARG where it raises #GP(0); no side effect */
-static uc_err x86_crw_check_cr0(CPUX86State *env, uint64_t v, uint64_t *eff)
-{
-    uint64_t old = env->cr[0];
-    unsigned tss = (env->tr.flags >> DESC_TYPE_SHIFT) & 0xf;
-
-    if (v >> 32) {
-        return UC_ERR_ARG;                                                  /* (1) */
-    }
-    v = (v & X86_CRW_CR0_DEFINED) | CR0_ET_MASK;                            /* (2) */
-    if ((v & CR0_PG_MASK) && !(v & CR0_PE_MASK)) {
-        return UC_ERR_ARG;                                                  /* (3) */
-    }
-    if ((v & X86_CRW_CR0_NW) && !(v & X86_CRW_CR0_CD)) {
-        return UC_ERR_ARG;                                                  /* (4) */
-    }
-    if (!(v & CR0_WP_MASK) && (env->cr[4] & CR4_CET_MASK)) {
-        return UC_ERR_ARG;                                                  /* (5) */
-    }
-    if ((old & CR0_PG_MASK) && !(v & CR0_PG_MASK) &&
-        ((env->hflags & HF_CS64_MASK) || (env->cr[4] & CR4_PCIDE_MASK))) {
-        return UC_ERR_ARG;                                                  /* (6) / (7) */
-    }
-    if (!(old & CR0_PG_MASK) && (v & CR0_PG_MASK) && (env->efer & MSR_EFER_LME)) {
-        if (!(env->cr[4] & CR4_PAE_MASK)) {
-            return UC_ERR_ARG;                                              /* (8) */
-        }
-        if (!(env->efer & MSR_EFER_LMA) &&
-            ((env->segs[R_CS].flags & DESC_L_MASK) ||
-             (!(env->tr.flags & DESC_S_MASK) && (tss == 1 || tss == 3)))) {
-            return UC_ERR_ARG;                                              /* (9) */
-        }
-    }
-    if (!x86_vmx_cr_write_ok(env, 0, v)) {
-        return UC_ERR_ARG;                                                  /* (10) */
-    }
-    *eff = v;
-    return UC_ERR_OK;
-}
-
-/* UC_ERR_ARG where MOV to CR4 raises #GP(0) for v; no side effect */
-static uc_err x86_crw_check_cr4(CPUX86State *env, uint64_t v)
-{
-    uint64_t old = env->cr[4];
-
-    if (v & cr4_reserved_bits(env)) {
-        return UC_ERR_ARG;                                                  /* (11) */
-    }
-    if ((v & CR4_CET_MASK) && !(env->cr[0] & CR0_WP_MASK)) {
-        return UC_ERR_ARG;                                                  /* (12) */
-    }
-    if (!(old & CR4_PCIDE_MASK) && (v & CR4_PCIDE_MASK) &&
-        (!(env->efer & MSR_EFER_LMA) || (env->cr[3] & 0xfff))) {
-        return UC_ERR_ARG;                                                  /* (13) */
-    }
-    if ((env->cr[0] & CR0_PG_MASK) && (env->efer & MSR_EFER_LME) &&
-        ((old ^ v) & (CR4_PAE_MASK | CR4_LA57_MASK))) {
-        return UC_ERR_ARG;                                                  /* (14) */
-    }
-    if (!x86_vmx_cr_write_ok(env, 4, v)) {
-        return UC_ERR_ARG;                                                  /* (15) */
-    }
-    return UC_ERR_OK;
-}
 
 /*
  * uc_reg_write of CR0 (reg 0) / CR4 (reg 4): checked as MOV to CR, then loaded; the register = the effective value.
@@ -421,14 +330,13 @@ static uc_err x86_crw_check_cr4(CPUX86State *env, uint64_t v)
 static uc_err x86_crw_write(CPUX86State *env, int reg, uint64_t v)
 {
     uint64_t eff = v;
-    uc_err err;
 
     if (env->uc == NULL) {
         return UC_ERR_ARG;                                                  /* (0) */
     }
-    err = reg == 0 ? x86_crw_check_cr0(env, v, &eff) : x86_crw_check_cr4(env, v);
-    if (err != UC_ERR_OK) {
-        return err;
+    /* U1965: the shared checks of MOV to CR0 / CR4 (misc_helper.c); false = #GP(0) = refused */
+    if (reg == 0 ? !x86_mov_cr0_check(env, v, &eff) : !x86_mov_cr4_check(env, v)) {
+        return UC_ERR_ARG;
     }
     if (reg == 0) {
         cpu_x86_update_cr0(env, (uint32_t)eff);

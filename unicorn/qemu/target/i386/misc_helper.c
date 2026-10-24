@@ -266,33 +266,162 @@ target_ulong helper_read_crN(CPUX86State *env, int reg)
     return val;
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U1965) */
+/*
+ * NoVmp (ledger U1965, plan 1.K.15 follow-up, user decision 2026-10-24: the MOV to CR0 / CR4 instruction applies the same
+ * SDM #GP(0) checks as uc_reg_write (U1962), with ONE shared check function): the checks of MOV to CR0 / CR4 on the value
+ * v about to be loaded - called by helper_write_crN (the instruction, U1966; LMSW goes through it) and by unicorn.c
+ * x86_crw_write (uc_reg_write / uc_context_reg_write, U1962). No side effect; false = #GP(0). Rules (numbered as in the
+ * kk_ unit tests; SDM 253667-093 Vol2B MOV-Move to/from Control Registers pp. 4-32 to 4-34, 253668-093 Vol3A 2.5
+ * pp. 2-13 to 2-21, 5.1.2 p. 5-3, 5.10.1 p. 5-41, 326019-093 Vol3C 26.8 p. 26-3):
+ *  (1) CR0[63:32] reserved: #GP(0) (Vol2B p. 4-32 "Attempting to set any reserved bits in CR0[63:32] results in a
+ *      general-protection exception, #GP(0)."; Vol3A 2.5 p. 2-13).
+ *  (2) reserved CR0[31:0] bits are ignored ("Attempting to set any reserved bits in CR0[31:0] is ignored.") and CR0.ET
+ *      stays 1 ("CR0.ET remains set after any load of CR0"), Vol2B p. 4-32: *eff without them / with ET.
+ *  (3) CR0.PG = 1 with CR0.PE = 0: #GP (Vol3A 2.5 p. 2-16 CR0.PG; Vol2B pp. 4-33 / 4-34 "invalid bit combinations").
+ *  (4) CR0.NW = 1 with CR0.CD = 0: #GP (Vol2B pp. 4-33 / 4-34 "setting the CD flag to 0 when the NW flag is set to 1").
+ *  (5) CR0.WP cleared while CR4.CET = 1: #GP (Vol3A 2.5 p. 2-16 CR0.WP, p. 2-19 CR4.CET "it must be clear before
+ *      CR0.WP can be cleared"; was U114 in helper_write_crN).
+ *  (6) CR0.PG cleared in 64-bit mode: #GP (Vol2B p. 4-34 "If an attempt is made to clear CR0.PG[bit 31]."; Vol3A 5.1.2
+ *      p. 5-3 footnote).
+ *  (7) CR0.PG cleared while CR4.PCIDE = 1: #GP (Vol3A 5.10.1 p. 5-41; Vol2B p. 4-33 compatibility mode).
+ *  (8) CR0.PG set while IA32_EFER.LME = 1 and CR4.PAE = 0: #GP (Vol3A 5.1.2 p. 5-3 "Paging cannot be enabled ...";
+ *      cpu_x86_update_cr0 used to return early - "XXX: generate an exception").
+ *  (9) CR0.PG set with IA32_EFER.LME = 1 activates IA-32e mode: #GP if CS.L = 1 or TR references a 16-bit TSS (Vol2B
+ *      p. 4-33 "If an attempt is made to activate IA-32e mode and either the current CS has the L-bit set or the TR
+ *      references a 16-bit TSS.").
+ * (10) / (15) VMX operation: CR0 / CR4 outside IA32_VMX_CR0_FIXED0/1 / CR4_FIXED0/1: #GP(0) (x86_vmx_cr_write_ok, U1302;
+ *      Vol3C 26.8 p. 26-3; was U1302 in helper_write_crN).
+ * (11) a reserved CR4 bit: #GP(0) (Vol2B p. 4-32 / p. 4-34; Vol3A 2.5 p. 2-13; Vol3A 2.5.1 p. 2-21: CPUID-qualified
+ *      bits) - cr4_reserved_bits: the bits the CPU model lacks and the bits a strict CPUID profile hides (U1680).
+ * (12) CR4.CET set while CR0.WP = 0: #GP (Vol3A 2.5 p. 2-19 "This flag can be set only if CR0.WP is set"; was U114).
+ * (13) CR4.PCIDE 0 -> 1 while IA32_EFER.LMA = 0 or CR3[11:0] != 0: #GP (Vol3A 5.10.1 p. 5-41; Vol2B pp. 4-33 / 4-34).
+ * (14) CR4.PAE or CR4.LA57 changed while CR0.PG = 1 and IA32_EFER.LME = 1: #GP (Vol3A 5.1.2 p. 5-3; Vol3A 2.5 p. 2-20
+ *      CR4.LA57; Vol2B pp. 4-33 / 4-34 "leave IA-32e mode by clearing CR4.PAE"). The paging condition, not "64-bit mode"
+ *      (upstream's LA57 check, CS.L = 1): the same in every state a processor reaches; Unicorn's UC_MODE_64 start state
+ *      (IA-32e mode without paging, U1962) may change PAE / LA57 before it turns paging on.
+ */
+#define X86_MOVCR_CR0_NW (1U << 29)
+#define X86_MOVCR_CR0_CD (1U << 30)
+#define X86_MOVCR_CR0_DEFINED (CR0_PE_MASK | CR0_MP_MASK | CR0_EM_MASK | CR0_TS_MASK | CR0_ET_MASK | CR0_NE_MASK | \
+                               CR0_WP_MASK | CR0_AM_MASK | X86_MOVCR_CR0_NW | X86_MOVCR_CR0_CD | CR0_PG_MASK)
+
+bool x86_mov_cr0_check(CPUX86State *env, uint64_t v, uint64_t *eff)
+{
+    uint64_t old = env->cr[0];
+    unsigned tss = (env->tr.flags >> DESC_TYPE_SHIFT) & 0xf;
+
+    if (v >> 32) {
+        return false;                                                       /* (1) */
+    }
+    v = (v & X86_MOVCR_CR0_DEFINED) | CR0_ET_MASK;                          /* (2) */
+    if ((v & CR0_PG_MASK) && !(v & CR0_PE_MASK)) {
+        return false;                                                       /* (3) */
+    }
+    if ((v & X86_MOVCR_CR0_NW) && !(v & X86_MOVCR_CR0_CD)) {
+        return false;                                                       /* (4) */
+    }
+    if (!(v & CR0_WP_MASK) && (env->cr[4] & CR4_CET_MASK)) {
+        return false;                                                       /* (5) */
+    }
+    if ((old & CR0_PG_MASK) && !(v & CR0_PG_MASK) &&
+        ((env->hflags & HF_CS64_MASK) || (env->cr[4] & CR4_PCIDE_MASK))) {
+        return false;                                                       /* (6) / (7) */
+    }
+    if (!(old & CR0_PG_MASK) && (v & CR0_PG_MASK) && (env->efer & MSR_EFER_LME)) {
+        if (!(env->cr[4] & CR4_PAE_MASK)) {
+            return false;                                                   /* (8) */
+        }
+        if (!(env->efer & MSR_EFER_LMA) &&
+            ((env->segs[R_CS].flags & DESC_L_MASK) ||
+             (!(env->tr.flags & DESC_S_MASK) && (tss == 1 || tss == 3)))) {
+            return false;                                                   /* (9) */
+        }
+    }
+    if (!x86_vmx_cr_write_ok(env, 0, v)) {
+        return false;                                                       /* (10) */
+    }
+    *eff = v;
+    return true;
+}
+
+bool x86_mov_cr4_check(CPUX86State *env, uint64_t v)
+{
+    uint64_t old = env->cr[4];
+
+    if (v & cr4_reserved_bits(env)) {
+        return false;                                                       /* (11) */
+    }
+    if ((v & CR4_CET_MASK) && !(env->cr[0] & CR0_WP_MASK)) {
+        return false;                                                       /* (12) */
+    }
+    if (!(old & CR4_PCIDE_MASK) && (v & CR4_PCIDE_MASK) &&
+        (!(env->efer & MSR_EFER_LMA) || (env->cr[3] & 0xfff))) {
+        return false;                                                       /* (13) */
+    }
+    if ((env->cr[0] & CR0_PG_MASK) && (env->efer & MSR_EFER_LME) &&
+        ((old ^ v) & (CR4_PAE_MASK | CR4_LA57_MASK))) {
+        return false;                                                       /* (14) */
+    }
+    if (!x86_vmx_cr_write_ok(env, 4, v)) {
+        return false;                                                       /* (15) */
+    }
+    return true;
+}
+
+#endif /* __Use_Original_Qemu (U1965) */
 void helper_write_crN(CPUX86State *env, int reg, target_ulong t0)
 {
+#if __Use_Original_Qemu != 1 /* ours (U1966) */
+    uint64_t eff;
+
+#endif /* __Use_Original_Qemu (U1966) */
     cpu_svm_check_intercept_param(env, SVM_EXIT_WRITE_CR0 + reg, 0, GETPC());
     switch (reg) {
     case 0:
+#if __Use_Original_Qemu != 1 /* ours (U1966) */
+        /*
+         * NoVmp (ledger U1966): "The operand size for these instructions is always 32 bits in non-64-bit modes" (SDM
+         * 253667-093 Vol2B MOV CR p. 4-32): outside 64-bit mode RAX[63:32] (kept from 64-bit mode) is not part of the
+         * source, so rule (1) cannot see it (as U1170 for CR4). LMSW passes a 32-bit value.
+         */
+        if (!(env->hflags & HF_CS64_MASK)) {
+            t0 = (uint32_t)t0;
+        }
+#endif /* __Use_Original_Qemu (U1966) */
 #if __Use_Original_Qemu != 1 /* ours (U1304) */
         /* VMX non-root operation: bits of the CR0 guest/host mask are not modified (Vol3C 28.3) */
         t0 = x86_vmx_cr_write(env, 0, t0);
 #endif /* __Use_Original_Qemu (U1304) */
-#if __Use_Original_Qemu != 1 /* ours (U114) */
-        /* CR0.WP cannot be cleared while CR4.CET = 1 (SDM Vol3 2.5, CR4.CET) */
-        if (!(t0 & CR0_WP_MASK) && (env->cr[4] & CR4_CET_MASK)) {
+#if __Use_Original_Qemu != 1 /* ours (U1966) */
+        /*
+         * NoVmp (ledger U1966, user decision 2026-10-24): the SDM #GP(0) checks of MOV to CR0, the ONE function shared with
+         * uc_reg_write (x86_mov_cr0_check, U1965: rules (1)-(10); (5) and (10) were U114 / U1302 here); t0 = the value
+         * loaded (ignored CR0[31:0] bits dropped, ET set). LMSW and the VMX non-root masking above feed it as well.
+         */
+        if (!x86_mov_cr0_check(env, t0, &eff)) {
             raise_exception_ra(env, EXCP0D_GPF, GETPC());
         }
-#endif /* __Use_Original_Qemu (U114) */
-#if __Use_Original_Qemu != 1 /* ours (U1302) */
-        /* VMX operation: CR0 bits fixed by IA32_VMX_CR0_FIXED0/1 (SDM 092 Vol3C 26.8 p. 26-3) */
-        if (!x86_vmx_cr_write_ok(env, 0, (uint32_t)t0)) {
-            raise_exception_ra(env, EXCP0D_GPF, GETPC());
-        }
-#endif /* __Use_Original_Qemu (U1302) */
+        t0 = eff;
+#endif /* __Use_Original_Qemu (U1966) */
 #if __Use_Original_Qemu != 1 /* ours (U1306) */
         x86_vmx_pdpte_load(env, 0, (uint32_t)t0, GETPC());    /* EPT: PDPTEs (Vol3A 5.4.1) */
 #endif /* __Use_Original_Qemu (U1306) */
         cpu_x86_update_cr0(env, (uint32_t)t0);
         break;
     case 3:
+#if __Use_Original_Qemu != 1 /* ours (U1967) */
+        /*
+         * NoVmp (ledger U1967): outside 64-bit mode the source is 32 bits ("The operand size for these instructions is
+         * always 32 bits in non-64-bit modes", "an execution of MOV to CR outside of 64-bit mode zeros the upper 32 bits
+         * of the control register", SDM 253667-093 Vol2B MOV CR p. 4-32). In compatibility mode (IA32_EFER.LMA = 1) the
+         * translator passed the whole register, so RAX[63:32] kept from 64-bit mode reached the CR3[63:MAXPHYADDR] #GP
+         * below - a 64-Bit Mode exception only (Vol2B p. 4-34; the Compatibility Mode list on p. 4-33 has none) - or CR3.
+         */
+        if (!(env->hflags & HF_CS64_MASK)) {
+            t0 = (uint32_t)t0;
+        }
+#endif /* __Use_Original_Qemu (U1967) */
 #if __Use_Original_Qemu == 1 /* original QEMU (U478) */
         /* backport 3407259b20 + 24d84c7e48 (as upstream: SVM_EXIT_ERR) */
         if ((env->efer & MSR_EFER_LMA) &&
@@ -349,25 +478,26 @@ void helper_write_crN(CPUX86State *env, int reg, target_ulong t0)
         /* VMX non-root operation: bits of the CR4 guest/host mask are not modified (Vol3C 28.3) */
         t0 = x86_vmx_cr_write(env, 4, t0);
 #endif /* __Use_Original_Qemu (U1304) */
+#if __Use_Original_Qemu == 1 /* original QEMU (U1966) */
         if (t0 & cr4_reserved_bits(env)) {
             raise_exception_ra(env, EXCP0D_GPF, GETPC());
         }
-#if __Use_Original_Qemu != 1 /* ours (U1302) */
-        /* VMX operation: CR4.VMXE fixed to 1 (IA32_VMX_CR4_FIXED0, Vol3C 26.8 p. 26-3) */
-        if (!x86_vmx_cr_write_ok(env, 4, t0)) {
-            raise_exception_ra(env, EXCP0D_GPF, GETPC());
-        }
-#endif /* __Use_Original_Qemu (U1302) */
-#if __Use_Original_Qemu != 1 /* ours (U114) */
-        /* CR4.CET can be set only if CR0.WP = 1 */
-        if ((t0 & CR4_CET_MASK) && !(env->cr[0] & CR0_WP_MASK)) {
-            raise_exception_ra(env, EXCP0D_GPF, GETPC());
-        }
-#endif /* __Use_Original_Qemu (U114) */
         if (((t0 ^ env->cr[4]) & CR4_LA57_MASK) &&
             (env->hflags & HF_CS64_MASK)) {
             raise_exception_ra(env, EXCP0D_GPF, GETPC());
         }
+#else /* ours (U1966) */
+        /*
+         * NoVmp (ledger U1966, user decision 2026-10-24): the SDM #GP(0) checks of MOV to CR4, the ONE function shared with
+         * uc_reg_write (x86_mov_cr4_check, U1965): (11) reserved bits (upstream's check), (12) CET without CR0.WP (was
+         * U114 here), (13) PCIDE 0 -> 1 with IA32_EFER.LMA = 0 or CR3[11:0] != 0 (new), (14) PAE / LA57 changed with
+         * CR0.PG = 1 and IA32_EFER.LME = 1 (replaces upstream's "LA57 changed in 64-bit mode"; clearing PAE is new),
+         * (15) VMX fixed bits (was U1302 here)
+         */
+        if (!x86_mov_cr4_check(env, t0)) {
+            raise_exception_ra(env, EXCP0D_GPF, GETPC());
+        }
+#endif /* __Use_Original_Qemu (U1966) */
 #if __Use_Original_Qemu == 1 /* original QEMU (U1170) */
         cpu_x86_update_cr4(env, (uint32_t)t0);
 #else /* ours (U1170) */
