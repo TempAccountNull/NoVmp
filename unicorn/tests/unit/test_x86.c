@@ -48140,7 +48140,8 @@ static uint32_t kk_ecx1(uc_mode mode, int model, const uc_x86_cpuid *p, size_t n
  * emulation.") in 64- and 32-bit
  * mode; a CPUID profile (--host / --guest) still returns its captured leaf 01H: the --guest / --host rows of vpf_ (both
  * captured with bit 31 = 0) and a synthetic one-leaf profile with bit 31 = 1 (not a capture: it shows that the profile,
- * not the model, decides). Other built-in models keep the upstream bit (Haswell: 1; not part of the decision).
+ * not the model, decides). U1971 (U1970, user decision 2026-10-24): every other built-in model reports 0 too (Haswell
+ * here; all models in the hb_ block); before U1970 Haswell kept the upstream 1.
  */
 static void test_x86_kk_max_hypervisor_bit(void)
 {
@@ -48157,8 +48158,8 @@ static void test_x86_kk_max_hypervisor_bit(void)
     TEST_CHECK(!(e >> 31));
     TEST_MSG("MAX 32-bit: CPUID.01H:ECX[31] = %u, expected 0", e >> 31);
     e = kk_ecx1(UC_MODE_64, UC_CPU_X86_HASWELL, NULL, 0);
-    TEST_CHECK(e >> 31);
-    TEST_MSG("Haswell: CPUID.01H:ECX[31] = %u, expected 1 (upstream bit kept)", e >> 31);
+    TEST_CHECK(!(e >> 31));
+    TEST_MSG("Haswell: CPUID.01H:ECX[31] = %u, expected 0 (U1970: every built-in model)", e >> 31);
     e = kk_ecx1(UC_MODE_64, UC_CPU_X86_MAX, vpf_guest, VPF_N);
     TEST_CHECK((e >> 31) == (vpf_guest[1].ecx >> 31));
     TEST_MSG("MAX + --guest rows: bit 31 = %u, profile %u", e >> 31, vpf_guest[1].ecx >> 31);
@@ -48841,6 +48842,117 @@ static void test_x86_kk_movcr_cpl3_lmsw_clts(void)
 }
 /* ---- end U1960-U1969 (kk_) ---- */
 
+/*
+ * ---- NoVmp U1970-U1971: plan 1.K.9 extended to every built-in CPU model - CPUID.01H:ECX[31] = 0 (hb_) ----
+ */
+
+/* CPUID.01H:ECX of a fresh engine (mode, model) at CPL0; the n rows of p installed as a CPUID profile at uc_open (n = 0: none) */
+static uint32_t hb_ecx1(uc_mode mode, int model, const uc_x86_cpuid *p, size_t n)
+{
+    uc_engine *uc;
+    uint32_t v = 1, ecx = 0;
+
+    OK(uc_open(UC_ARCH_X86, mode, &uc));
+    OK(uc_ctl_set_cpu_model(uc, model));
+    if (n) {
+        OK(uc_ctl_set_x86_cpuid(uc, p, n));
+    }
+    OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_write(uc, code_start, "\x0f\xa2", 2));
+    OK(uc_reg_write(uc, UC_X86_REG_EAX, &v));
+    v = 0;
+    OK(uc_reg_write(uc, UC_X86_REG_ECX, &v));
+    OK(uc_emu_start(uc, code_start, code_start + 2, 0, 0));
+    OK(uc_reg_read(uc, UC_X86_REG_ECX, &ecx));
+    OK(uc_close(uc));
+    return ecx;
+}
+
+/*
+ * U1971 (U1970, user decision 2026-10-24): one test per built-in model (UC_CPU_X86_QEMU64 .. UC_CPU_X86_MAX). Each model
+ * reports CPUID.01H:ECX[31] = 0 in 64- and 32-bit mode - Intel: SDM 253665-093 Vol1 Table 21-9 (pp. 21-10 / 21-11), ECX[31]
+ * "Not Used", p. 21-11: "Intel processors always return 0. Allocated for use by software emulation."; AMD models: AMD64 APM
+ * Vol3 (24594 r3.38) CPUID Fn0000_0001_ECX bit 31: "RAZ. Reserved for use by hypervisor to indicate guest status."
+ * A CPUID profile still decides: with the captured --guest / --host rows the captured bit (both 0), with a synthetic
+ * one-leaf profile that sets the bit (not a capture) 1. RED before U1970: every model but MAX read 1 (x86_cpu_load_model).
+ */
+static const uc_x86_cpuid hb_synth[] = {
+    {0, 0, 1, 0x756e6547, 0x6c65746e, 0x49656e69},
+    {1, 0, 0x000b0671, 0, 0x80000000, 0},
+};
+
+static void hb_model(int model, const char *name)
+{
+    uint32_t e;
+
+    e = hb_ecx1(UC_MODE_64, model, NULL, 0);
+    TEST_CHECK(!(e >> 31));
+    TEST_MSG("%s 64-bit: CPUID.01H:ECX[31] = %u, expected 0", name, e >> 31);
+    e = hb_ecx1(UC_MODE_32, model, NULL, 0);
+    TEST_CHECK(!(e >> 31));
+    TEST_MSG("%s 32-bit: CPUID.01H:ECX[31] = %u, expected 0", name, e >> 31);
+    e = hb_ecx1(UC_MODE_64, model, vpf_guest, VPF_N);
+    TEST_CHECK((e >> 31) == (vpf_guest[1].ecx >> 31));
+    TEST_MSG("%s + --guest rows: bit 31 = %u, profile %u", name, e >> 31, vpf_guest[1].ecx >> 31);
+    e = hb_ecx1(UC_MODE_64, model, vpf_host, VPF_N);
+    TEST_CHECK((e >> 31) == (vpf_host[1].ecx >> 31));
+    TEST_MSG("%s + --host rows: bit 31 = %u, profile %u", name, e >> 31, vpf_host[1].ecx >> 31);
+    e = hb_ecx1(UC_MODE_64, model, hb_synth, 2);
+    TEST_CHECK(e >> 31);
+    TEST_MSG("%s + synthetic profile with bit 31 = 1: bit 31 = %u, expected 1", name, e >> 31);
+}
+
+#define HB_MODEL_TEST(M)                                                                                                    \
+    static void test_x86_hb_##M(void) { hb_model(UC_CPU_X86_##M, #M); }
+HB_MODEL_TEST(QEMU64)
+HB_MODEL_TEST(PHENOM)
+HB_MODEL_TEST(CORE2DUO)
+HB_MODEL_TEST(KVM64)
+HB_MODEL_TEST(QEMU32)
+HB_MODEL_TEST(KVM32)
+HB_MODEL_TEST(COREDUO)
+HB_MODEL_TEST(486)
+HB_MODEL_TEST(PENTIUM)
+HB_MODEL_TEST(PENTIUM2)
+HB_MODEL_TEST(PENTIUM3)
+HB_MODEL_TEST(ATHLON)
+HB_MODEL_TEST(N270)
+HB_MODEL_TEST(CONROE)
+HB_MODEL_TEST(PENRYN)
+HB_MODEL_TEST(NEHALEM)
+HB_MODEL_TEST(WESTMERE)
+HB_MODEL_TEST(SANDYBRIDGE)
+HB_MODEL_TEST(IVYBRIDGE)
+HB_MODEL_TEST(HASWELL)
+HB_MODEL_TEST(BROADWELL)
+HB_MODEL_TEST(SKYLAKE_CLIENT)
+HB_MODEL_TEST(SKYLAKE_SERVER)
+HB_MODEL_TEST(CASCADELAKE_SERVER)
+HB_MODEL_TEST(COOPERLAKE)
+HB_MODEL_TEST(ICELAKE_CLIENT)
+HB_MODEL_TEST(ICELAKE_SERVER)
+HB_MODEL_TEST(DENVERTON)
+HB_MODEL_TEST(SNOWRIDGE)
+HB_MODEL_TEST(KNIGHTSMILL)
+HB_MODEL_TEST(OPTERON_G1)
+HB_MODEL_TEST(OPTERON_G2)
+HB_MODEL_TEST(OPTERON_G3)
+HB_MODEL_TEST(OPTERON_G4)
+HB_MODEL_TEST(OPTERON_G5)
+HB_MODEL_TEST(EPYC)
+HB_MODEL_TEST(DHYANA)
+HB_MODEL_TEST(EPYC_ROME)
+HB_MODEL_TEST(MAX)
+
+/* the list above covers every model: UC_CPU_X86_MAX + 1 = UC_CPU_X86_ENDING tests (a new model fails here first) */
+static void test_x86_hb_model_count(void)
+{
+    TEST_CHECK(UC_CPU_X86_MAX == 38 && UC_CPU_X86_ENDING == 39);
+    TEST_MSG("UC_CPU_X86_MAX = %d, UC_CPU_X86_ENDING = %d: the hb_ list names 39 models (QEMU64 .. MAX); add a test for a new one",
+             (int)UC_CPU_X86_MAX, (int)UC_CPU_X86_ENDING);
+}
+/* ---- end U1970-U1971 (hb_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -49473,4 +49585,44 @@ TEST_LIST = {
     {"test_x86_kk_movcr_mode32", test_x86_kk_movcr_mode32},
     {"test_x86_kk_movcr0_activate", test_x86_kk_movcr0_activate},
     {"test_x86_kk_movcr_cpl3_lmsw_clts", test_x86_kk_movcr_cpl3_lmsw_clts},
+    {"test_x86_hb_QEMU64", test_x86_hb_QEMU64},
+    {"test_x86_hb_PHENOM", test_x86_hb_PHENOM},
+    {"test_x86_hb_CORE2DUO", test_x86_hb_CORE2DUO},
+    {"test_x86_hb_KVM64", test_x86_hb_KVM64},
+    {"test_x86_hb_QEMU32", test_x86_hb_QEMU32},
+    {"test_x86_hb_KVM32", test_x86_hb_KVM32},
+    {"test_x86_hb_COREDUO", test_x86_hb_COREDUO},
+    {"test_x86_hb_486", test_x86_hb_486},
+    {"test_x86_hb_PENTIUM", test_x86_hb_PENTIUM},
+    {"test_x86_hb_PENTIUM2", test_x86_hb_PENTIUM2},
+    {"test_x86_hb_PENTIUM3", test_x86_hb_PENTIUM3},
+    {"test_x86_hb_ATHLON", test_x86_hb_ATHLON},
+    {"test_x86_hb_N270", test_x86_hb_N270},
+    {"test_x86_hb_CONROE", test_x86_hb_CONROE},
+    {"test_x86_hb_PENRYN", test_x86_hb_PENRYN},
+    {"test_x86_hb_NEHALEM", test_x86_hb_NEHALEM},
+    {"test_x86_hb_WESTMERE", test_x86_hb_WESTMERE},
+    {"test_x86_hb_SANDYBRIDGE", test_x86_hb_SANDYBRIDGE},
+    {"test_x86_hb_IVYBRIDGE", test_x86_hb_IVYBRIDGE},
+    {"test_x86_hb_HASWELL", test_x86_hb_HASWELL},
+    {"test_x86_hb_BROADWELL", test_x86_hb_BROADWELL},
+    {"test_x86_hb_SKYLAKE_CLIENT", test_x86_hb_SKYLAKE_CLIENT},
+    {"test_x86_hb_SKYLAKE_SERVER", test_x86_hb_SKYLAKE_SERVER},
+    {"test_x86_hb_CASCADELAKE_SERVER", test_x86_hb_CASCADELAKE_SERVER},
+    {"test_x86_hb_COOPERLAKE", test_x86_hb_COOPERLAKE},
+    {"test_x86_hb_ICELAKE_CLIENT", test_x86_hb_ICELAKE_CLIENT},
+    {"test_x86_hb_ICELAKE_SERVER", test_x86_hb_ICELAKE_SERVER},
+    {"test_x86_hb_DENVERTON", test_x86_hb_DENVERTON},
+    {"test_x86_hb_SNOWRIDGE", test_x86_hb_SNOWRIDGE},
+    {"test_x86_hb_KNIGHTSMILL", test_x86_hb_KNIGHTSMILL},
+    {"test_x86_hb_OPTERON_G1", test_x86_hb_OPTERON_G1},
+    {"test_x86_hb_OPTERON_G2", test_x86_hb_OPTERON_G2},
+    {"test_x86_hb_OPTERON_G3", test_x86_hb_OPTERON_G3},
+    {"test_x86_hb_OPTERON_G4", test_x86_hb_OPTERON_G4},
+    {"test_x86_hb_OPTERON_G5", test_x86_hb_OPTERON_G5},
+    {"test_x86_hb_EPYC", test_x86_hb_EPYC},
+    {"test_x86_hb_DHYANA", test_x86_hb_DHYANA},
+    {"test_x86_hb_EPYC_ROME", test_x86_hb_EPYC_ROME},
+    {"test_x86_hb_MAX", test_x86_hb_MAX},
+    {"test_x86_hb_model_count", test_x86_hb_model_count},
     {NULL, NULL}};

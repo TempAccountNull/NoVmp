@@ -4155,7 +4155,18 @@ static void x86_cpu_load_model(X86CPU *cpu, X86CPUModel *model)
     /* legacy-cache defaults to 'off' if CPU model provides cache info */
     cpu->legacy_cache = !def->cache_info;
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U1970) */
     env->features[FEAT_1_ECX] |= CPUID_EXT_HYPERVISOR;
+#else /* ours (U1970) */
+    /*
+     * NoVmp (ledger U1970, plan 1.K.9 extended to every built-in model, user decision 2026-10-24): the built-in
+     * models model real CPUs, so CPUID.01H:ECX[31] (hypervisor-present) stays 0 - SDM 253665-093 Vol1 Table 21-9
+     * (pp. 21-10 / 21-11), ECX[31] "Not Used", p. 21-11: "Intel processors always return 0. Allocated for use by
+     * software emulation." Upstream QEMU sets the bit on every model here. The MAX model's TCG feature set
+     * (TCG_EXT_FEATURES, ORed in by x86_cpu_expand_features) still contains the bit; U1960 clears it there. A
+     * CPUID profile (UC_CTL_X86_CPUID: --host / --guest, a synthetic profile) returns its own leaf 01H.
+     */
+#endif /* __Use_Original_Qemu (U1970) */
 
     /* sysenter isn't supported in compatibility mode on AMD,
      * syscall isn't supported in compatibility mode on Intel.
@@ -6106,8 +6117,9 @@ static void x86_cpu_expand_features(X86CPU *cpu)
      * model with max_features) reports CPUID.01H:ECX[31] = 0. SDM 253665-093 Vol1 Table 21-9 (pp. 21-10 / 21-11),
      * ECX[31] "Not Used", p. 21-11: "Intel processors always return 0. Allocated for use by software emulation."
      * Upstream QEMU sets the bit on every model (x86_cpu_load_model) and in TCG_EXT_FEATURES, which max_features ORs
-     * in above. A CPUID profile (--host / --guest, UC_CTL_X86_CPUID) still returns its captured leaf 01H; the other
-     * built-in models keep the upstream bit (not part of the decision).
+     * in above. A CPUID profile (--host / --guest, UC_CTL_X86_CPUID) still returns its captured leaf 01H. Since
+     * U1970 (user decision 2026-10-24) no built-in model sets the bit in x86_cpu_load_model; this block removes the
+     * one TCG_EXT_FEATURES adds for MAX.
      */
     if (cpu->max_features) {
         env->features[FEAT_1_ECX] &= ~CPUID_EXT_HYPERVISOR;
