@@ -1,4 +1,4 @@
-// emu-selftest (plan 3.M1 / 3.A 2.2, ledger U1940-U1941; plan 3.M2, ledger U1951-U1954): the Emulator lib's self-tests (Gate 2 = G3.A: "build.cmd builds
+// emu-selftest (plan 3.M1 / 3.A 2.2, ledger U1940-U1941; plan 3.M2, ledger U1951-U1954; plan 3.M3, ledger U1976): the Emulator lib's self-tests (Gate 2 = G3.A: "build.cmd builds
 // everything with 0 errors, and the emu-selftest self-tests pass"). Suite emu_selftest runs every case; the no_native_check
 // suite runs the case no_native_runtime on its own. Own test code only: nothing from a sample is read or executed, and no
 // test process is started (no CreateProcess; the acutest runner is not used for that reason).
@@ -12,6 +12,10 @@
 #include <emu/options.hpp>
 #include <emu/profile.hpp>
 #include <emu/reg.hpp>
+#include <emu/assemble.hpp>
+#include <emu/input_file.hpp>
+#include <emu/json.hpp>
+#include <emu/snippet.hpp>
 
 #include <algorithm>
 #include <cstdio>
@@ -168,11 +172,11 @@ namespace
 		CHECK( has_line( d, "out-dir: outd (recorded, not created)" ), "out-dir recorded, not created" );
 		CHECK( has_line( d, "cpu profile: host (default, decision 3.0.3" ), "default profile named" );
 		CHECK( has_line( d, "max-insns: 4096 (0x1000)" ), "max-insns decimal + hex" );
-		CHECK( has_line( d, "milestone: M2" ), "milestone" );
+		CHECK( has_line( d, "milestone: M3" ), "milestone" );
 		auto s = parse( emu::tool_kind::snippet, { "--hex", "00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 10", "--expect", "rax=1" } );
 		auto ds = emu::describe( s.options );
 		CHECK( has_line( ds, "snippet input: hex (17 bytes: 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f ...)" ), "hex summary" );
-		CHECK( has_line( ds, "expect rax = 0x1 (checked from milestone M3 on)" ), "expect line" );
+		CHECK( has_line( ds, "  expect rax=1" ), "expect line (U1975: as given)" );
 		CHECK( emu::usage( emu::tool_kind::oep ).find( "--cpuid-runtime" ) != std::string::npos, "usage names the explicit runtime CPUID option" );
 	}
 
@@ -182,7 +186,7 @@ namespace
 		std::cout << "  deps: " << s << "\n";
 		CHECK( s.find( "unicorn 2." ) == 0, "Unicorn 2 headers" );
 		CHECK( s.find( "capstone 6." ) != std::string::npos, "Capstone 6 headers" );
-		CHECK( std::string( emu::milestone() ) == "M2", "milestone M2" );
+		CHECK( std::string( emu::milestone() ) == "M3", "milestone M3" );
 	}
 
 	// ------------------------------------------------------------------------------------------------ M2 engine (U1951-U1954)
@@ -534,7 +538,7 @@ namespace
 		auto e = open_engine( emu::cpu_profile_choice::guest );
 		if ( !e ) return;
 		for ( auto& l : e->log() ) std::cout << "  log: " << l << "\n";
-		for ( auto key : { "milestone M2", "cpu profile: guest", "cpuid profile file:", "uc_open(UC_ARCH_X86, UC_MODE_64) ok", "cpu model: UC_CPU_X86_MAX",
+		for ( auto key : { "milestone M3", "cpu profile: guest", "cpuid profile file:", "uc_open(UC_ARCH_X86, UC_MODE_64) ok", "cpu model: UC_CPU_X86_MAX",
 						   "CPUID profile installed at uc_open", "rng: --seeded", "reset state (fork values): rip", "engine controls read back" } )
 			CHECK( std::any_of( e->log().begin(), e->log().end(), [ & ]( const std::string& l ) { return l.find( key ) != std::string::npos; } ),
 				   std::string( "log line with \"" ) + key + "\"" );
@@ -632,6 +636,359 @@ namespace
 		CHECK( after.empty(), "uc_close released every executable region the engine had (all of them were the engine's)" );
 	}
 
+	// ------------------------------------------------------------------------------------------------ M3 emu-snippet v1 (U1976)
+	// Plan 3.M3: "--expect selftests fail before the executor exists" (RED on the stub executor), then pass. Every case runs
+	// self-generated snippets on emu::snippet::run (one emu::engine each, decision 3.0.3 default --host unless a case says --max).
+	emu::snippet::spec sn_spec( const std::string& asm_text, std::initializer_list<const char*> sets = {} )
+	{
+		emu::snippet::spec s;
+		s.name = asm_text;
+		s.auto_stack = true;
+		std::string err;
+		CHECK( emu::assemble( asm_text, s.code_address, s.code, err ), "assemble \"" + asm_text + "\": " + err );
+		for ( auto a : sets )
+		{
+			emu::snippet::field_value f;
+			CHECK( emu::snippet::parse_assignment( a, f, err ), std::string( a ) + ": " + err );
+			s.regs.push_back( f );
+		}
+		return s;
+	}
+	void sn_expect( emu::snippet::spec& s, std::initializer_list<const char*> exps )
+	{
+		std::string err;
+		for ( auto a : exps )
+		{
+			emu::snippet::field_value f;
+			CHECK( emu::snippet::parse_assignment( a, f, err ), std::string( a ) + ": " + err );
+			s.expect.regs.push_back( f );
+		}
+		s.expect.present = true;
+		s.expect.label = "expect";
+	}
+	bool sn_run( const emu::snippet::spec& s, emu::snippet::result& r, const std::string& what )
+	{
+		const bool ok = emu::snippet::run( s, r );
+		for ( auto& l : emu::snippet::format_result( s, r, false ) ) std::cout << "  [" << what << "] " << l << "\n";
+		CHECK( ok, what + ": run: " + r.error );
+		return ok;
+	}
+	uint64_t sn_u64( const emu::snippet::result& r, const char* name, bool final = true )
+	{
+		const auto& m = final ? r.final : r.start;
+		auto it = m.find( name );
+		uint64_t v = 0;
+		if ( it != m.end() )
+			for ( size_t i = 0; i < it->second.size() && i < 8; i++ ) v |= uint64_t( it->second[ i ] ) << ( 8 * i );
+		return v;
+	}
+
+	// --expect passes on a right value and differs on a wrong one (loose and strict)
+	void t_snippet_expect()
+	{
+		auto s = sn_spec( "mov eax, 5; add rax, rcx", { "rcx=7" } );
+		sn_expect( s, { "rax=12", "rcx=7" } );
+		emu::snippet::result r;
+		if ( sn_run( s, r, "pass" ) )
+		{
+			CHECK( r.reason == emu::snippet::stop_reason::end && r.rip == s.code_address + s.code.size(), "stopped at the end of the code" );
+			CHECK( r.expect_checked && r.expect_ok, "rax = 12 expected and found" );
+			CHECK( sn_u64( r, "rcx", false ) == 7, "--set rcx=7 is the start value" );
+			CHECK( r.counted && r.insns == 2, "two instructions counted" );
+		}
+		auto w = sn_spec( "mov eax, 5; add rax, rcx", { "rcx=7" } );
+		sn_expect( w, { "rax=13" } );
+		emu::snippet::result rw;
+		if ( sn_run( w, rw, "wrong" ) )
+			CHECK( rw.expect_checked && !rw.expect_ok && rw.expect_diffs.size() == 1 && rw.expect_diffs[ 0 ].find( "rax" ) == 0, "a wrong --expect is a DIFF naming rax" );
+		// strict: an unlisted change (rdx) is a difference; listing it passes
+		auto st = sn_spec( "mov eax, 1; mov edx, 2" );
+		sn_expect( st, { "rax=1" } );
+		st.expect.strict = true;
+		emu::snippet::result rs;
+		if ( sn_run( st, rs, "strict" ) )
+			CHECK( !rs.expect_ok && rs.expect_diffs.size() == 1 && rs.expect_diffs[ 0 ].find( "rdx" ) == 0, "strict: the unlisted rdx change is reported" );
+		sn_expect( st, { "rdx=2" } );
+		emu::snippet::result rs2;
+		if ( sn_run( st, rs2, "strict listed" ) ) CHECK( rs2.expect_ok, "strict with rdx listed passes" );
+		// vector registers: byte form, xmm alias of zmm, partial bytes
+		auto v = sn_spec( "movdqa xmm1, xmm0; pxor xmm2, xmm2", { "xmm0=00112233445566778899aabbccddeeff", "xmm2=ffff" } );
+		sn_expect( v, { "xmm1=00112233445566778899aabbccddeeff", "zmm2=0000" } );
+		emu::snippet::result rv;
+		if ( sn_run( v, rv, "vector" ) ) CHECK( rv.expect_ok, "xmm1 copied, xmm2 cleared" );
+	}
+
+	// faults: the vector, the error code, the state at the faulting instruction; #PF access type and address
+	void t_snippet_faults()
+	{
+		struct fcase { const char* code; const char* set; int vector; int64_t ec; int access; } cases[] = {
+			{ "ud2", nullptr, 6, -1, -1 },
+			{ "xor ecx, ecx; div rcx", nullptr, 0, -1, -1 },
+			{ "int3", nullptr, 3, -1, -1 },
+			{ "mov rax, qword ptr [rbx]", "rbx=0x12345000", 14, -1, 0 },
+			{ "mov qword ptr [rbx], rax", "rbx=0x12345008", 14, -1, 1 },
+			{ "cli", nullptr, -1, -1, -1 },   // CPL0 by default: allowed
+		};
+		for ( auto& c : cases )
+		{
+			auto s = c.set ? sn_spec( c.code, { c.set } ) : sn_spec( c.code );
+			emu::snippet::result r;
+			if ( !sn_run( s, r, c.code ) ) continue;
+			if ( c.vector < 0 )
+				CHECK( !r.faulted && r.reason == emu::snippet::stop_reason::end, std::string( c.code ) + ": no fault" );
+			else
+			{
+				CHECK( r.faulted && r.reason == emu::snippet::stop_reason::fault && r.vector == c.vector, std::string( c.code ) + ": vector " + std::to_string( c.vector ) );
+				if ( c.access >= 0 ) CHECK( r.pf_access == c.access && ( r.pf_address == 0x12345000 || r.pf_address == 0x12345008 ), std::string( c.code ) + ": #PF access / address" );
+			}
+		}
+		// --expect-fault: right and wrong; #GP(0) with its error code (a non-canonical memory operand)
+		auto g = sn_spec( "mov rax, qword ptr [rbx]", { "rbx=0x8000000000000000" } );
+		std::string err;
+		g.expect.present = true;
+		g.expect.fault_given = true;
+		CHECK( emu::snippet::parse_fault( "#GP(0)", g.expect.vector, g.expect.error_code, err ) && g.expect.vector == 13 && g.expect.error_code == 0, "parse #GP(0)" );
+		emu::snippet::result rg;
+		if ( sn_run( g, rg, "#GP(0)" ) ) CHECK( rg.expect_ok && rg.error_code == 0, "non-canonical load: #GP(0)" );
+		g.expect.vector = 6;
+		emu::snippet::result rg2;
+		if ( sn_run( g, rg2, "#UD expected" ) ) CHECK( !rg2.expect_ok, "a wrong expected fault is a DIFF" );
+		int vec = 0;
+		int64_t ec = 0;
+		for ( auto bad : { "#XX", "#GP(", "#GP(0x100000000)", "300" } ) CHECK( !emu::snippet::parse_fault( bad, vec, ec, err ), std::string( "bad fault token " ) + bad );
+	}
+
+	// SYSCALL / SYSENTER / INT n: policy stop = reported BEFORE they execute (nothing forwarded to the host); policy cpu = the
+	// emulated CPU executes SYSCALL to the guest's own IA32_LSTAR
+	void t_snippet_syscall()
+	{
+		for ( auto code : { "mov eax, 0x55; syscall; mov eax, 1", "mov eax, 0x55; sysenter; mov eax, 1", "mov eax, 0x55; int 0x2e; mov eax, 1" } )
+		{
+			auto s = sn_spec( code, { "rcx=0x1234" } );
+			emu::snippet::result r;
+			if ( !sn_run( s, r, code ) ) continue;
+			CHECK( r.reason == emu::snippet::stop_reason::syscall && r.rip == s.code_address + 5 && r.syscall_number == 0x55, std::string( code ) + ": stopped at the instruction" );
+			CHECK( sn_u64( r, "rip" ) == s.code_address + 5 && sn_u64( r, "rcx" ) == 0x1234 && sn_u64( r, "rax" ) == 0x55, "not executed: RIP at it, RCX / RAX unchanged" );
+		}
+		// cpu: SYSCALL with IA32_LSTAR = the label k inside the snippet (CPL0 engine, IA32_EFER.SCE set at reset)
+		auto c = sn_spec( "mov ecx, 0xC0000082; lea rax, [rip + k]; mov rdx, rax; shr rdx, 32; wrmsr; syscall; k: mov ebx, 7" );
+		c.syscall = emu::snippet::syscall_policy::cpu;
+		sn_expect( c, { "rbx=7" } );
+		emu::snippet::result r;
+		if ( sn_run( c, r, "syscall cpu" ) )
+			CHECK( r.reason == emu::snippet::stop_reason::end && r.expect_ok && sn_u64( r, "rcx" ) == c.code_address + c.code.size() - 5, "SYSCALL ran inside the engine: RCX = the return address, then k" );
+	}
+
+	// external transfers stop (policy stop) or fault (policy fault); a RET to the return sentinel is "returned"; ret depth; count;
+	// stop address
+	void t_snippet_stops()
+	{
+		auto x = sn_spec( "mov rax, 0x700000000000; call rax" );
+		emu::snippet::result rx;
+		if ( sn_run( x, rx, "external call" ) )
+			CHECK( rx.reason == emu::snippet::stop_reason::external && rx.external_target == 0x700000000000ull && sn_u64( rx, "rsp" ) + 8 == sn_u64( rx, "rsp", false ),
+				   "call to an unmapped address: external transfer, the return address pushed" );
+		x.external = emu::snippet::external_policy::fault;
+		emu::snippet::result rf;
+		if ( sn_run( x, rf, "external fault" ) ) CHECK( rf.faulted && rf.vector == 14 && rf.pf_access == 8, "policy fault: #PF execute" );
+		// a jump into mapped but not executable memory
+		auto d = sn_spec( "mov rax, 0x500000; jmp rax" );
+		emu::snippet::region rg;
+		std::string err;
+		CHECK( emu::snippet::parse_map( "0x500000:0x1000:rw", rg, err ), err );
+		d.regions.push_back( rg );
+		emu::snippet::result rd;
+		if ( sn_run( d, rd, "non-exec jump" ) ) CHECK( rd.reason == emu::snippet::stop_reason::external && rd.external_target == 0x500000, "jump into rw- memory: external" );
+		// ret depth 1: call f; f returns; then the outer ret ends the run (depth -1)
+		auto rt = sn_spec( "call f; mov eax, 2; ret; f: mov eax, 1; ret" );
+		rt.ret_depth_given = true;
+		rt.ret_depth = 1;
+		emu::snippet::result rr;
+		if ( sn_run( rt, rr, "ret depth" ) ) CHECK( rr.reason == emu::snippet::stop_reason::ret_depth && sn_u64( rr, "rax" ) == 2 && rr.insns == 5, "stopped after the outer ret" );
+		rt.ret_depth_given = false;
+		emu::snippet::result rn;
+		if ( sn_run( rt, rn, "returned" ) ) CHECK( rn.reason == emu::snippet::stop_reason::returned, "without --stop-ret-depth the outer ret returns to the sentinel" );
+		auto lp = sn_spec( "l: inc rax; jmp l" );
+		lp.max_insns = 100;
+		emu::snippet::result rl;
+		if ( sn_run( lp, rl, "count" ) ) CHECK( rl.reason == emu::snippet::stop_reason::count && sn_u64( rl, "rax" ) == 50, "the instruction bound stops an endless loop" );
+		auto sa = sn_spec( "mov eax, 1; mov eax, 2; mov eax, 3" );
+		sa.stop_at_given = true;
+		sa.stop_at = sa.code_address + 5;
+		emu::snippet::result ra;
+		if ( sn_run( sa, ra, "stop at" ) ) CHECK( ra.reason == emu::snippet::stop_reason::end && sn_u64( ra, "rax" ) == 1, "--stop-at after the first instruction" );
+	}
+
+	// the per-instruction trace: address, bytes, disassembly, changed registers / flags, memory reads / writes
+	void t_snippet_trace()
+	{
+		auto s = sn_spec( "mov rax, 5; push rax; pop rbx; add rbx, rax" );
+		s.trace = true;
+		emu::snippet::result r;
+		if ( !sn_run( s, r, "trace" ) ) return;
+		for ( auto& l : emu::snippet::format_result( s, r, false ) ) std::cout << "  " << l << "\n";
+		CHECK( r.trace.size() == 4, "four trace entries" );
+		if ( r.trace.size() == 4 )
+		{
+			CHECK( r.trace[ 0 ].address == s.code_address && r.trace[ 0 ].text.find( "mov rax, 5" ) == 0 && !r.trace[ 0 ].changes.empty() &&
+					   r.trace[ 0 ].changes[ 0 ].find( "rax:" ) == 0, "entry 0: mov rax, 5 changes rax" );
+			CHECK( !r.trace[ 1 ].mem.empty() && r.trace[ 1 ].mem[ 0 ].find( "write" ) == 0, "entry 1: push writes memory" );
+			CHECK( !r.trace[ 2 ].mem.empty() && r.trace[ 2 ].mem[ 0 ].find( "read" ) == 0, "entry 2: pop reads memory" );
+			bool flags = false;
+			for ( auto& c : r.trace[ 3 ].changes )
+				if ( c.find( "rflags:" ) == 0 && c.find( "PF" ) != std::string::npos ) flags = true;
+			CHECK( flags, "entry 3: the changed flag is named" );
+		}
+	}
+
+	// the state: x87 / SSE / AVX through the XRSTOR64 loader (XINUSE reports them in use), AVX-512 / K through the API, CPL3 by IRETQ
+	void t_snippet_state()
+	{
+		// XGETBV(ECX = 1) = XCR0 AND XINUSE (253665-093 Vol1 13.6 p. 13-18: "Executing XGETBV with ECX = 1 returns in EDX:EAX the
+		// logical-AND of XCR0 and the current value of the XINUSE state-component bitmap."); the loader's XRSTOR64 with XSTATE_BV = RFBM marks x87 / SSE / AVX in use
+		auto s = sn_spec( "mov ecx, 1; xgetbv", { "xmm3=0102030405060708090a0b0c0d0e0f10", "ymm4=00000000000000000000000000000000c1c2c3c4c5c6c7c8d1d2d3d4d5d6d7d8",
+												  "st1=4000:c000000000000000", "fpsw=0x3800", "mxcsr=0x9fc0" } );
+		emu::snippet::result r;
+		if ( sn_run( s, r, "xinuse" ) )
+		{
+			CHECK( ( sn_u64( r, "rax" ) & 7 ) == 7, "XINUSE[2:0] = 7 after the loader (x87, SSE, AVX in use)" );
+			CHECK( sn_u64( r, "mxcsr", false ) == 0x9fc0 && sn_u64( r, "fpsw", false ) == 0x3800, "MXCSR and FSW (TOP = 7) loaded" );
+			auto st1 = r.start.find( "st1" );
+			CHECK( st1 != r.start.end() && st1->second[ 9 ] == 0x40 && st1->second[ 7 ] == 0xc0, "ST(1) = 4000:C000000000000000 relative to TOP" );
+			CHECK( ( sn_u64( r, "ftw", false ) >> ( ( 7 + 1 ) & 7 ) ) & 1, "ST(1) given: its physical register (TOP + 1) tagged valid" );
+		}
+		auto z = sn_spec( "nop", { "k1=0xf0f0", "zmm17=" "0102030405060708091011121314151617181920212223242526272829303132"
+														 "3334353637383940414243444546474849505152535455565758596061626364" } );
+		emu::run_options zo;
+		zo.avx512 = 1;
+		z.config.profile = emu::cpu_profile_choice::max;
+		z.config.avx512 = emu::config_from( zo ).avx512;   // the emu-alltest --avx512 mask
+		sn_expect( z, { "k1=0xf0f0", "zmm17=0102030405060708091011121314151617181920212223242526272829303132"
+											"3334353637383940414243444546474849505152535455565758596061626364" } );
+		emu::snippet::result rz;
+		if ( sn_run( z, rz, "avx512" ) ) CHECK( rz.expect_ok && sn_u64( rz, "k1", false ) == 0xf0f0, "K1 and ZMM17 (AVX-512 state) set through the API" );
+		// CPL3: a Windows x64 GDT (as emu-alltest's cpl=3 page), entered by IRETQ with CS = 33h / SS = 2Bh
+		auto c = sn_spec( "mov ax, cs; mov bx, ss; cli", { "cs=0x33", "ss=0x2b", "gdtr_base=0x600000", "gdtr_limit=0x37" } );
+		c.cpl3 = true;
+		emu::snippet::region g;
+		std::string err;
+		CHECK( emu::snippet::parse_map( "0x600000:0x1000:rw", g, err ), err );
+		const uint64_t gdt[ 7 ] = { 0, 0, 0x00209B0000000000ull, 0x00CF93000000FFFFull, 0x00CFFB000000FFFFull, 0x00CFF3000000FFFFull, 0x0020FB0000000000ull };
+		emu::snippet::mem_bytes b;
+		b.address = 0x600000;
+		b.bytes.assign( reinterpret_cast<const uint8_t*>( gdt ), reinterpret_cast<const uint8_t*>( gdt ) + sizeof( gdt ) );
+		g.data.push_back( b );
+		c.regions.push_back( g );
+		emu::snippet::result rc;
+		if ( sn_run( c, rc, "cpl3" ) )
+		{
+			CHECK( ( sn_u64( rc, "rax" ) & 0xFFFF ) == 0x33 && ( sn_u64( rc, "rbx" ) & 0xFFFF ) == 0x2b, "CS = 33h, SS = 2Bh at the snippet" );
+			CHECK( rc.faulted && rc.vector == 13 && rc.error_code == 0, "CLI at CPL3 (IOPL 0): #GP(0)" );
+		}
+		// refusals: APX registers without APX, cs without cpl3, an unknown register
+		emu::snippet::field_value f;
+		CHECK( !emu::snippet::parse_assignment( "foo=1", f, err ), "unknown register refused" );
+		CHECK( !emu::snippet::parse_assignment( "eflags=1", f, err ), "eflags is not a snippet register name (rflags)" );
+		CHECK( !emu::snippet::parse_assignment( "ftw=0x100", f, err ), "a value wider than the register refused" );
+		auto a = sn_spec( "nop", { "r20=1" } );
+		emu::snippet::result ra;
+		CHECK( !emu::snippet::run( a, ra ) && ra.error.find( "APX" ) != std::string::npos, "R20 without --apx refused: " + ra.error );
+		auto cs = sn_spec( "nop", { "cs=0x33" } );
+		emu::snippet::result rcs;
+		CHECK( !emu::snippet::run( cs, rcs ) && rcs.error.find( "cpl3" ) != std::string::npos, "cs without state.cpl3 refused: " + rcs.error );
+	}
+
+	// JSON: the spec format, strict parsing and limits
+	void t_snippet_json()
+	{
+		const char* doc = R"({"spec": 1, "name": "json case", "config": {"profile": "max"},
+			"code": {"address": "0x401000", "asm": "mov rax, qword ptr [rsi]; add rax, 1; mov qword ptr [rsi + 8], rax"},
+			"regions": [{"address": "0x800000", "size": "0x1000", "prot": "rw", "name": "data", "data": [{"offset": 0, "hex": "0807060504030201"}]}],
+			"state": {"rsi": "0x800000", "rsp": "0x800800"},
+			"stop": {"max_insns": 10}, "syscall": "stop",
+			"expect": {"mode": "strict", "fault": null, "regs": {"rax": "0x0102030405060709", "rflags": "0x6"},
+					   "mem": [{"address": "0x800008", "hex": "0907060504030201"}], "checked_mem": [{"address": "0x800000", "size": "0x1000"}]},
+			"reference": {"source": "self", "fault": {"vector": -1}, "regs": {"rax": {"value": "0x0102030405060709", "mask": "0xffffffffffffffff"}},
+						  "mem": [{"address": "0x800000", "hex": "08070605040302010907060504030201"}], "full_mem": [{"address": "0x800000", "size": "0x1000"}]}})";
+		emu::json::value v;
+		std::string err;
+		CHECK( emu::json::parse( doc, v, err ), "parse: " + err );
+		emu::snippet::spec s;
+		CHECK( emu::snippet::spec_from_json( v, s, err ), "spec: " + err );
+		emu::snippet::result r;
+		if ( sn_run( s, r, "json" ) )
+		{
+			CHECK( r.expect_ok, "strict expectation from JSON passes" );
+			CHECK( r.reference_ok, "reference (registers + full memory range) passes" );
+		}
+		// a reference that differs in one memory byte
+		auto s2 = s;
+		emu::snippet::result r2;
+		CHECK( !s2.reference.mem.empty() && s2.reference.mem[ 0 ].bytes.size() > 8, "the reference memory was read from the JSON" );
+		if ( !s2.reference.mem.empty() && s2.reference.mem[ 0 ].bytes.size() > 8 && ( s2.reference.mem[ 0 ].bytes[ 8 ] ^= 1, sn_run( s2, r2, "json ref diff" ) ) ) CHECK( !r2.reference_ok && r2.reference_diffs.size() == 1, "a one-byte reference memory difference is found" );
+		// strict JSON
+		const char* bad[] = { "{\"a\": 1,}", "{\"a\": 1.5}", "{\"a\": 1, \"a\": 2}", "[1 2]", "{\"a\": \"\\x\"}", "{\"a\": 01}", "{} x", "",
+							  "{\"a\": \"\x01\"}", "{\"a\": tru}" };
+		for ( auto b : bad )
+		{
+			emu::json::value x;
+			CHECK( !emu::json::parse( b, x, err ) && err.find( "offset" ) != std::string::npos, std::string( "refused: " ) + b + " - " + err );
+		}
+		std::string deep( 100, '[' );
+		deep += std::string( 100, ']' );
+		emu::json::value dv;
+		CHECK( !emu::json::parse( deep, dv, err ) && err.find( "nesting" ) != std::string::npos, "nesting depth limited: " + err );
+		// spec refusals
+		for ( auto b : { R"({"bogus": 1})", R"({"code": {"hex": "zz"}})", R"({"state": {"rax": "0x1g"}})", R"({"state": {"xmm40": "00"}})",
+						 R"({"stop": {"max_insns": 0}})", R"({"expect": {"mode": "fuzzy"}})", R"({"spec": 2})", R"({"code": {"hex": "90", "asm": "nop"}})" } )
+		{
+			emu::json::value x;
+			emu::snippet::spec t;
+			CHECK( emu::json::parse( b, x, err ) && !emu::snippet::spec_from_json( x, t, err ), std::string( "spec refused: " ) + b + " - " + err );
+		}
+		uint64_t u = 0;
+		emu::json::value n;
+		CHECK( emu::json::parse( "18446744073709551615", n, err ) && emu::json::get_u64( n, u, err ) && u == UINT64_MAX, "2^64-1 as a JSON integer" );
+		CHECK( emu::json::parse( "18446744073709551616", n, err ) && !emu::json::get_u64( n, u, err ), "2^64 refused" );
+	}
+
+	// the audited file input (emu::read_input_file / read_input_lines): read-only, bounded, loud
+	void t_snippet_input_file()
+	{
+		std::string dir, err, text;
+		if ( !emu::default_data_dir( dir, err ) ) { CHECK( false, err ); return; }
+		const std::string prof = dir + "\\" + emu::profile_file_name( emu::cpu_profile_choice::host );
+		CHECK( emu::read_input_file( prof, emu::max_profile_bytes, text, err ) && !text.empty(), "the bare-host profile read: " + err );
+		CHECK( !emu::read_input_file( prof, 16, text, err ) && err.find( "outside" ) != std::string::npos, "a file above the bound refused: " + err );
+		CHECK( !emu::read_input_file( dir + "\\no_such_file_for_emu_selftest.json", 1024, text, err ) && err.find( "cannot open" ) != std::string::npos, "missing file: " + err );
+		uint64_t lines = 0;
+		CHECK( emu::read_input_lines( prof, 4096, emu::max_profile_bytes, [ & ]( std::string_view, uint64_t ) { lines++; return true; }, err ) && lines > 10,
+			   "read_input_lines: " + std::to_string( lines ) + " lines " + err );
+		CHECK( !emu::read_input_lines( prof, 8, emu::max_profile_bytes, []( std::string_view, uint64_t ) { return true; }, err ) && err.find( "longer than" ) != std::string::npos,
+			   "a line above the bound refused: " + err );
+	}
+
+	// the emu-snippet v1 options
+	void t_snippet_options()
+	{
+		auto a = parse( emu::tool_kind::snippet, { "--asm", "nop", "--set", "rax=1", "--set", "xmm0=00ff", "--map", "0x1000:0x1000:rw", "--mem", "0x1000=0102", "--trace",
+												   "--syscall", "cpu", "--external", "fault", "--expect-fault", "#UD", "--expect-strict", "--dump-mem", "0x1000:16", "--at", "0x401000",
+												   "--avx512", "--apx", "--avx10", "2" } );
+		CHECK( a.ok, a.error );
+		auto& o = a.options;
+		CHECK( o.sets.size() == 2 && o.maps.size() == 1 && o.mems.size() == 1 && o.trace && o.syscall == "cpu" && o.external == "fault" && o.expect_fault == "#UD" &&
+				   o.expect_strict && o.dump_mems.size() == 1 && o.code_address_given && o.code_address == 0x401000 && o.avx512 && o.apx && o.avx10 == 2,
+			   "every v1 option recorded" );
+		const auto c = emu::config_from( o );
+		CHECK( c.avx512 != 0 && c.apx == UC_X86_APX_F && c.avx10 == 2, "opt-ins mapped to the emu-alltest masks" );
+		CHECK( parse( emu::tool_kind::snippet, { "--batch", "x.jsonl", "--quiet" } ).ok, "--batch with --quiet" );
+		CHECK( !parse( emu::tool_kind::snippet, { "--batch", "x.jsonl", "--hex", "90" } ).ok, "--batch takes everything from its file" );
+		CHECK( !parse( emu::tool_kind::snippet, { "--hex", "90", "--syscall", "maybe" } ).ok, "--syscall stop|cpu" );
+		CHECK( parse( emu::tool_kind::snippet, { "--state", "x.json" } ).ok, "--state alone gives the code" );
+		CHECK( !parse( emu::tool_kind::snippet, { "--hex", "90", "--set", "rax=zz" } ).ok, "bad --set value" );
+		CHECK( parse( emu::tool_kind::snippet, { "--hex", "90", "--expect", "st0=3fff:8000000000000000" } ).ok, "st SEXP:MANT form" );
+	}
+
 	struct test_case { const char* name; void ( *fn )(); };
 	const test_case cases[] = {
 		{ "options_oep_defaults", t_options_oep_defaults },
@@ -655,6 +1012,15 @@ namespace
 		{ "reg_dump_round_trip", t_reg_dump_round_trip },
 		{ "host_guard_regions", t_host_guard_regions },
 		{ "no_native_runtime", t_no_native_runtime },
+		{ "snippet_expect", t_snippet_expect },
+		{ "snippet_faults", t_snippet_faults },
+		{ "snippet_syscall", t_snippet_syscall },
+		{ "snippet_stops", t_snippet_stops },
+		{ "snippet_trace", t_snippet_trace },
+		{ "snippet_state", t_snippet_state },
+		{ "snippet_json", t_snippet_json },
+		{ "snippet_input_file", t_snippet_input_file },
+		{ "snippet_options", t_snippet_options },
 	};
 }
 

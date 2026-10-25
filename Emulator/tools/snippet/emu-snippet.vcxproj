@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Plan 3.M1 / 3.A 2.7 (ledger U1940): emu-snippet - emulate isolated pieces of code on the Emulator lib. M1 skeleton: options only; the executor arrives with milestone M3. Opens nothing, emulates nothing. -->
+<!-- Plan 3.M1 / 3.A 2.7 (ledger U1940): emu-snippet - emulate isolated pieces of code on the Emulator lib. Plan 3.M3 (ledger U1975): emu-snippet v1 - hex / Keystone input, state by flags or JSON, stops, per-instruction trace, final state, expectations, system calls / external transfers stopped and reported (never forwarded to the host), batch replay. Reads its inputs only through emu::read_input_file; writes no file. -->
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|x64"><Configuration>Debug</Configuration><Platform>x64</Platform></ProjectConfiguration>

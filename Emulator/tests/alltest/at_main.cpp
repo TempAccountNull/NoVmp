@@ -56,7 +56,11 @@
 //                    Emulator\data); none = no evidence (self-test harness_selftest_tags_unknown)
 //   --tag-show       with --cases (U1894): print "tag: observed [...]" - the observed difference of every tagged line, and
 //                    of every --hw-repeat outcome, in the statement form NAME=HW~UC (deriving statements)
-//   --events         with --cases: print both engines' event lines for every case (U1741): vector, RIP,
+//   --snippet-export FILE  with --cases (U1977, plan 3.M3): every case line Unicorn ran as one emu-snippet spec (JSON
+//                    lines: the engine settings, the regions and registers at the snippet's first instruction, the "=>"
+//                    expectation, this engine's final state as the reference; at_export.hpp); emu-snippet --batch FILE
+//                    replays them on the Emulator lib. Reads nothing back; the verdicts of the run are unchanged
+//   --events        with --cases: print both engines' event lines for every case (U1741): vector, RIP,
 //                    the EFLAGS image (native CONTEXT.EFlags of the exception: RF / TF), DR6, the #PF
 //                    access type (native ExceptionInformation[0], Unicorn the unmapped hook's uc_mem_type);
 //                    a case with dr0..dr7 tokens (U1740) always prints them
@@ -641,13 +645,14 @@ int main( int argc, char** argv )
 		}
 		else if ( a == "--tag-profiles" ) copt.tag_profiles = val();   // U1893: where the environment's captured CPUID profiles are read (DIR or none)
 		else if ( a == "--tag-show" ) copt.tag_show = true;   // U1894: print the observed difference of every tagged line (statement form)
+		else if ( a == "--snippet-export" ) copt.snippet_export = val();   // U1977 (plan 3.M3): with --cases, every case as an emu-snippet spec (at_export.hpp)
 		else if ( a == "--bench" ) bench = true;
 		else if ( a == "--reps" ) bench_reps = std::stoi( val() );
 		else if ( a == "--scale" ) bench_scale = std::stod( val() );
 		else if ( a == "--bench-cpu" ) bench_cpu = std::stoi( val() );
 		else if ( a == "--csv" ) bench_csv = val();
 		else if ( a == "--profile" ) bench_profile = std::stoi( val() );
-		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--rebuild] [--cases FILE [--cpuid FILE] [--strict|--no-strict] [--xcr0 V] [--cr0 V] [--avx512] [--xeonphi] [--amx] [--amx-tf32] [--avx10 N] [--apx] [--x86-features N] [--seeded [--rdrand-seed N] | --HostSeed] [--host [--host-core P|E] | --guest | --vm | --AMD] [--expect-only] [--shard K/N] [--hw-repeat N] [--hw-cpu SPEC] [--hw-load N] [--events] [--tag-env guest|host|hostP|hostE] [--tag-profiles DIR|none] [--tag-show] [--native-under-sde FILE] [--sde-results FILE]] | --bench [--reps N] [--filter S] [--scale F] [--bench-cpu C] [--csv FILE] [--profile N]\n" ); return 2; }
+		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--rebuild] [--cases FILE [--cpuid FILE] [--strict|--no-strict] [--xcr0 V] [--cr0 V] [--avx512] [--xeonphi] [--amx] [--amx-tf32] [--avx10 N] [--apx] [--x86-features N] [--seeded [--rdrand-seed N] | --HostSeed] [--host [--host-core P|E] | --guest | --vm | --AMD] [--expect-only] [--shard K/N] [--hw-repeat N] [--hw-cpu SPEC] [--hw-load N] [--events] [--tag-env guest|host|hostP|hostE] [--tag-profiles DIR|none] [--tag-show] [--native-under-sde FILE] [--sde-results FILE] [--snippet-export FILE]] | --bench [--reps N] [--filter S] [--scale F] [--bench-cpu C] [--csv FILE] [--profile N]\n" ); return 2; }
 	}
 	// U1491 (user requirement 2026-10-15: emulate the VMware guest OR the bare host, each from its own
 	// captures): the platform switch also selects the CPUID profile (with its "#@ microcode" line) - --host the

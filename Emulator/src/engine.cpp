@@ -1,4 +1,4 @@
-// emu::engine (plan 3.M2, ledger U1952): see include/emu/engine.hpp.
+// emu::engine (plan 3.M2, ledger U1952; plan 3.M3, ledger U1973: the emu-alltest machine settings): see include/emu/engine.hpp.
 #include <emu/engine.hpp>
 #include <emu/reg.hpp>
 
@@ -33,6 +33,14 @@ namespace emu
 		engine_config c;
 		c.profile = o.profile;
 		c.rng = o.rng;
+		// U1973: emu-snippet's opt-ins, with the masks of the emu-alltest options of the same name (at_main.cpp)
+		if ( o.avx512 )
+			c.avx512 = UC_X86_AVX512_F | UC_X86_AVX512_DQ | UC_X86_AVX512_BW | UC_X86_AVX512_VL | UC_X86_AVX512_CD | UC_X86_AVX512_IFMA | UC_X86_AVX512_VPOPCNTDQ |
+					   UC_X86_AVX512_BITALG | UC_X86_AVX512_VBMI | UC_X86_AVX512_FP16 | UC_X86_AVX512_VP2INTERSECT | UC_X86_AVX512_VBMI2 | UC_X86_AVX512_VNNI |
+					   UC_X86_AVX512_BF16;
+		if ( o.amx ) c.amx = UC_X86_AMX_ALL;
+		if ( o.apx ) c.apx = UC_X86_APX_F;
+		c.avx10 = o.avx10;
 		return c;
 	}
 
@@ -51,32 +59,36 @@ namespace emu
 		e->log_line( "Emulator lib milestone " + std::string( milestone() ) + "; Unicorn " + std::to_string( maj ) + "." +
 					 std::to_string( min ) + " (the NoVmp fork), x86-64" );
 
-		// 1. the CPU profile (decision 3.0.3)
+		// 1. the CPU profile (decision 3.0.3); U1973: an explicit file (emu-alltest --cpuid / --host-core E) overrides the choice's
 		e->log_line( std::string( "cpu profile: " ) + name_of( cfg.profile ) + ( cfg.profile == cpu_profile_choice::host ? " (default)" : "" ) +
 					 " = " + profile_description( cfg.profile ) );
 		if ( cfg.profile == cpu_profile_choice::runtime_cpuid )
 		{
-			error = "--cpuid-runtime is not implemented in milestone M2 (the running machine's CPUID needs an explicit, allow-listed "
-					"host-CPU path; decision 3.0.3) - use --host (default), --guest or --max";
+			error = "--cpuid-runtime is not implemented (the running machine's CPUID needs an explicit, allow-listed host-CPU path; "
+					"decision 3.0.3) - use --host (default), --guest or --max";
 			e->log_line( "REFUSED: " + error );
 			return nullptr;
 		}
-		if ( cfg.profile == cpu_profile_choice::host || cfg.profile == cpu_profile_choice::guest )
+		if ( !cfg.cpuid_file.empty() || cfg.profile == cpu_profile_choice::host || cfg.profile == cpu_profile_choice::guest )
 		{
-			std::string dir = cfg.data_dir;
-			if ( dir.empty() && !default_data_dir( dir, error ) )
+			std::string path = cfg.cpuid_file;
+			if ( path.empty() )
 			{
-				e->log_line( "REFUSED: " + error );
-				return nullptr;
+				std::string dir = cfg.data_dir;
+				if ( dir.empty() && !default_data_dir( dir, error ) )
+				{
+					e->log_line( "REFUSED: " + error );
+					return nullptr;
+				}
+				path = ( std::filesystem::path( dir ) / profile_file_name( cfg.profile ) ).string();
 			}
-			const std::string path = ( std::filesystem::path( dir ) / profile_file_name( cfg.profile ) ).string();
 			if ( !load_cpuid_profile_file( path, e->profile_, error ) )
 			{
 				e->log_line( "REFUSED: " + error );
 				return nullptr;
 			}
-			e->log_line( "cpuid profile file: " + path + " (" + std::to_string( e->profile_.file_bytes ) + " bytes, " +
-						 std::to_string( e->profile_.leaves.size() ) + " (leaf, sub-leaf) rows, microcode line " +
+			e->log_line( "cpuid profile file: " + path + ( cfg.cpuid_file.empty() ? "" : " (explicit file, overrides the choice)" ) + " (" +
+						 std::to_string( e->profile_.file_bytes ) + " bytes, " + std::to_string( e->profile_.leaves.size() ) + " (leaf, sub-leaf) rows, microcode line " +
 						 ( e->profile_.has_microcode ? "present" : "absent" ) + "; values not printed)" );
 		}
 
@@ -90,41 +102,32 @@ namespace emu
 			return nullptr;
 		}
 		e->log_line( "uc_open(UC_ARCH_X86, UC_MODE_64) ok" );
-		ue = uc_ctl_set_cpu_model( e->uc_, UC_CPU_X86_MAX );
-		if ( ue != UC_ERR_OK )
-		{
-			error = std::string( "UC_CTL_CPU_MODEL UC_CPU_X86_MAX: " ) + uc_strerror( ue );
+		auto step = [ & ]( uc_err r, const std::string& what ) {
+			if ( r == UC_ERR_OK )
+			{
+				e->log_line( what + " ok" );
+				return true;
+			}
+			error = what + ": " + uc_strerror( r );
 			e->log_line( "FAILED: " + error );
+			return false;
+		};
+		if ( cfg.cpu_model < 0 || cfg.cpu_model >= UC_CPU_X86_ENDING )
+		{
+			error = "cpu model " + std::to_string( cfg.cpu_model ) + " is not a built-in UC_CPU_X86_* model";
+			e->log_line( "REFUSED: " + error );
 			return nullptr;
 		}
-		e->log_line( "cpu model: UC_CPU_X86_MAX" );
+		if ( !step( uc_ctl_set_cpu_model( e->uc_, cfg.cpu_model ), "cpu model: " + std::string( cfg.cpu_model == UC_CPU_X86_MAX ? "UC_CPU_X86_MAX" : "UC_CPU_X86 model " + std::to_string( cfg.cpu_model ) ) ) )
+			return nullptr;
 
-		// 3. the CPUID profile at uc_open (1.J.47.a), before any memory map / register access
-		if ( e->has_profile() )
-		{
-			ue = uc_ctl_set_x86_cpuid( e->uc_, e->profile_.leaves.data(), e->profile_.leaves.size() );
-			if ( ue != UC_ERR_OK )
-			{
-				error = std::string( "UC_CTL_X86_CPUID: " ) + uc_strerror( ue );
-				e->log_line( "FAILED: " + error );
-				return nullptr;
-			}
-			e->log_line( "CPUID profile installed at uc_open (plan 1.J.47.a, fork U1580): " + std::to_string( e->profile_.leaves.size() ) +
-						 " rows; UC_CTL_X86_CPUID_STRICT not written = the fork's default (strict while a profile is installed, U435)" );
-			if ( e->profile_.has_microcode )
-			{
-				ue = uc_ctl_set_x86_microcode( e->uc_, e->profile_.microcode_rev, e->profile_.microcode_platform_id );
-				if ( ue != UC_ERR_OK )
-				{
-					error = std::string( "UC_CTL_X86_MICROCODE: " ) + uc_strerror( ue );
-					e->log_line( "FAILED: " + error );
-					return nullptr;
-				}
-				e->log_line( "microcode revision / platform ID from the profile's \"#@ microcode\" line installed (U1473; value not printed)" );
-			}
-		}
-		else
-			e->log_line( "no CPUID profile (--max): CPUID returns the UC_CPU_X86_MAX model's values; strict off" );
+		// U1973: the opt-ins, only before the engine initialises (emu-alltest at_engine.hpp open_configured order)
+		if ( cfg.avx512 && !step( uc_ctl_set_x86_avx512( e->uc_, cfg.avx512 ), "UC_CTL_X86_AVX512 " + hex( uint64_t( uint32_t( cfg.avx512 ) ) ) ) ) return nullptr;
+		if ( cfg.amx && !step( uc_ctl_set_x86_amx( e->uc_, cfg.amx ), "UC_CTL_X86_AMX " + hex( uint64_t( uint32_t( cfg.amx ) ) ) ) ) return nullptr;
+		if ( cfg.avx10 && !step( uc_ctl_set_x86_avx10( e->uc_, cfg.avx10 ), "UC_CTL_X86_AVX10 " + hex( uint64_t( uint32_t( cfg.avx10 ) ) ) ) ) return nullptr;
+		if ( cfg.apx && !step( uc_ctl_set_x86_apx( e->uc_, cfg.apx ), "UC_CTL_X86_APX " + hex( uint64_t( uint32_t( cfg.apx ) ) ) ) ) return nullptr;
+		if ( cfg.x86_features && !step( uc_ctl_set_x86_features( e->uc_, cfg.x86_features ), "UC_CTL_X86_FEATURES " + hex( uint64_t( uint32_t( cfg.x86_features ) ) ) ) )
+			return nullptr;
 
 		// 4. RDRAND / RDSEED source (D8)
 		const int mode = cfg.rng == rng_source::host_seed ? UC_X86_RDRAND_HOST : UC_X86_RDRAND_SEEDED;
@@ -139,6 +142,50 @@ namespace emu
 						 ? std::string( "rng: --HostSeed (decision D8): RDRAND / RDSEED from the host DRNG, executed by the fork (U835)" )
 						 : "rng: --seeded (default, decision D8): deterministic model, seed " + hex( cfg.rng_seed ) +
 							   " (fork U835: value n = SplitMix64(seed + n * 9E3779B97F4A7C15H), CF = 1)" );
+
+		// 3. the CPUID profile at uc_open (1.J.47.a), before any memory map / register access
+		if ( e->has_profile() )
+		{
+			ue = uc_ctl_set_x86_cpuid( e->uc_, e->profile_.leaves.data(), e->profile_.leaves.size() );
+			if ( ue != UC_ERR_OK )
+			{
+				error = std::string( "UC_CTL_X86_CPUID: " ) + uc_strerror( ue );
+				e->log_line( "FAILED: " + error );
+				return nullptr;
+			}
+			e->log_line( "CPUID profile installed at uc_open (plan 1.J.47.a, fork U1580): " + std::to_string( e->profile_.leaves.size() ) +
+						 " rows; " + ( cfg.strict < 0 ? std::string( "UC_CTL_X86_CPUID_STRICT not written = the fork's default (strict while a profile is installed, U435)" )
+													   : std::string( "UC_CTL_X86_CPUID_STRICT written below" ) ) );
+		}
+		else
+			e->log_line( "no CPUID profile (--max): CPUID returns the model's values" );
+		if ( cfg.strict >= 0 && !step( uc_ctl_set_x86_cpuid_strict( e->uc_, cfg.strict ), "UC_CTL_X86_CPUID_STRICT " + std::to_string( cfg.strict ) ) ) return nullptr;
+		if ( e->has_profile() && e->profile_.has_microcode )
+		{
+			ue = uc_ctl_set_x86_microcode( e->uc_, e->profile_.microcode_rev, e->profile_.microcode_platform_id );
+			if ( ue != UC_ERR_OK )
+			{
+				error = std::string( "UC_CTL_X86_MICROCODE: " ) + uc_strerror( ue );
+				e->log_line( "FAILED: " + error );
+				return nullptr;
+			}
+			e->log_line( "microcode revision / platform ID from the profile's \"#@ microcode\" line installed (U1473; value not printed)" );
+		}
+
+		// U1973: the platform settings (the engine initialises with the first of them), then XCR0 / CR0 / XINUSE model
+		if ( cfg.smm_revision &&
+			 !step( uc_ctl( e->uc_, UC_CTL_WRITE( UC_CTL_X86_SMM_REVISION, 1 ), cfg.smm_revision ), "UC_CTL_X86_SMM_REVISION " + hex( cfg.smm_revision ) ) )
+			return nullptr;
+		if ( cfg.feature_control )
+		{
+			uc_x86_msr m{ 0x3a, cfg.feature_control };
+			if ( !step( uc_reg_write( e->uc_, UC_X86_REG_MSR, &m ), "IA32_FEATURE_CONTROL " + hex( cfg.feature_control ) ) ) return nullptr;
+		}
+		if ( cfg.xcr0 && !step( uc_reg_write( e->uc_, UC_X86_REG_XCR0, &cfg.xcr0 ), "XCR0 " + hex( cfg.xcr0 ) ) ) return nullptr;
+		if ( cfg.cr0 && !step( uc_reg_write( e->uc_, UC_X86_REG_CR0, &cfg.cr0 ), "CR0 " + hex( cfg.cr0 ) + " (U1962: refused where MOV to CR0 would #GP)" ) ) return nullptr;
+		if ( cfg.xinuse_model &&
+			 !step( uc_ctl( e->uc_, UC_CTL_WRITE( UC_CTL_X86_XINUSE_MODEL, 1 ), cfg.xinuse_model ), "UC_CTL_X86_XINUSE_MODEL " + std::to_string( cfg.xinuse_model ) ) )
+			return nullptr;
 
 		// 5. the reset state, read back (the first register access initialises the engine)
 		reg::dump d;

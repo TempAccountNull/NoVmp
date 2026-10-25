@@ -13,6 +13,10 @@
 //   4. RDRAND / RDSEED source (decision D8, fork U835): --seeded (DEFAULT; deterministic, seed config.rng_seed) or
 //      --HostSeed (the host DRNG, executed by the fork)
 //   5. the reset machine state (RIP, RSP, RFLAGS, CR0, CR4, XCR0, strict, profile rows, XINUSE model) read back and logged
+// U1973 (plan 3.M3): the settings emu-alltest applies to its Unicorn engine, in emu-alltest's order (at_engine.hpp
+// open_configured): CPU model, the opt-ins (AVX-512, AMX, AVX10, APX, platform features), the RNG source, the CPUID profile,
+// strict, microcode, then (the engine initialises) SMM revision, IA32_FEATURE_CONTROL, XCR0, CR0, XINUSE model - so emu-snippet
+// replays an emu-alltest case on the same machine without a second engine set-up path.
 // After open, install_cpuid_profile() passes a later profile change to the fork: accepted before the first instruction,
 // UC_ERR_ARG once guest code ran (a strict profile is part of the machine the guest starts on, 1.J.47.a).
 //
@@ -49,6 +53,19 @@ namespace emu
 		std::string data_dir;                                    // "" = default_data_dir() (Emulator\data of this build)
 		uint64_t max_mapped_bytes = 1ull << 30;                  // 1 GiB of guest memory at most
 		bool echo_log = false;                                   // also print every log line to stdout as it is written
+		// U1973 (plan 3.M3): the machine settings emu-snippet needs to replay an emu-alltest run (each one is an emu-alltest
+		// option with the same fork control; 0 / -1 / "" = not written, the fork's default):
+		int cpu_model = UC_CPU_X86_MAX;                          // the built-in model (emu-alltest: always UC_CPU_X86_MAX)
+		std::string cpuid_file;                                  // an explicit CPUID profile file (emu-alltest --cpuid / --host-core E):
+																 // overrides the profile choice's file; with --max it adds a profile
+		int strict = -1;                                         // UC_CTL_X86_CPUID_STRICT: -1 = the fork's default (strict with a profile)
+		int avx512 = 0, amx = 0, avx10 = 0, apx = 0;             // UC_CTL_X86_AVX512 / AMX / AVX10 / APX opt-ins (before the engine initialises)
+		int x86_features = 0;                                    // UC_CTL_X86_FEATURES (U1181)
+		uint32_t smm_revision = 0;                               // UC_CTL_X86_SMM_REVISION (U1465)
+		uint64_t feature_control = 0;                            // IA32_FEATURE_CONTROL (MSR 3AH) at the start (U1661)
+		uint64_t xcr0 = 0;                                       // XCR0 at the start (uc_reg_write)
+		uint64_t cr0 = 0;                                        // CR0 at the start (uc_reg_write; U1962: refused like MOV to CR0)
+		int xinuse_model = 0;                                    // UC_CTL_X86_XINUSE_MODEL (U1481)
 	};
 
 	// the engine settings of a parsed command line (profile, rng); the rest keeps the defaults

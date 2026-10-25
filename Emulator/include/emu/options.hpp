@@ -25,7 +25,8 @@ namespace emu
 	enum class rng_source { seeded, host_seed };
 	enum class snippet_input_kind { none, hex, asm_text, image };
 
-	// --expect REG=VALUE (emu-snippet; checked from milestone M3 on, M1 only validates the syntax)
+	// --expect REG=VALUE (emu-snippet; checked since milestone M3; value = the number when VALUE is one, else 0: byte-field values
+	// are hex bytes, kept in run_options::expect_raw)
 	struct expect_item
 	{
 		std::string reg;
@@ -62,6 +63,26 @@ namespace emu
 		bool stop_ret_depth_given = false;
 		std::vector<expect_item> expects;    // --expect REG=VALUE (repeatable)
 
+		// U1975 (plan 3.M3, emu-snippet v1): the executor's options; values are kept as given and parsed by emu::snippet
+		// (register names / sizes: emu/snippet.hpp)
+		std::vector<std::string> expect_raw;   // every --expect as given (REG=VALUE; VALUE a number or hex bytes)
+		std::vector<std::string> sets;         // --set REG=VALUE
+		std::vector<std::string> mems;         // --mem ADDR=HEXBYTES
+		std::vector<std::string> maps;         // --map ADDR:SIZE[:PROT]
+		std::vector<std::string> expect_mems;  // --expect-mem ADDR=HEXBYTES
+		std::string expect_fault;              // --expect-fault none | #UD | #GP(0) | N
+		bool expect_strict = false;            // --expect-strict
+		std::string state_file;                // --state FILE.json (read only, through emu::read_input_file)
+		std::string batch_file;                // --batch FILE.jsonl
+		bool trace = false;                    // --trace
+		bool quiet = false;                    // --quiet: verdict lines only
+		std::string syscall;                   // --syscall stop | cpu ("" = stop)
+		std::string external;                  // --external stop | fault ("" = stop)
+		uint64_t code_address = 0;             // --at ADDR (default 140001000H)
+		bool code_address_given = false;
+		std::vector<std::string> dump_mems;    // --dump-mem ADDR:LEN
+		int avx512 = 0, amx = 0, avx10 = 0, apx = 0;   // --avx512 / --amx / --avx10 N / --apx (engine opt-ins, as emu-alltest)
+
 		bool help = false;
 	};
 
@@ -95,7 +116,7 @@ namespace emu
 
 	std::string usage( tool_kind tool );
 
-	// the Phase 3 milestone this lib implements (the tools print it): "M2" = the engine core (emu::engine, emu::reg, emu::profile;
-	// U1951-U1954); emu-oep / emu-snippet still parse options only (their executors arrive with M3 / M4)
+	// the Phase 3 milestone this lib implements (the tools print it): "M3" = emu-snippet v1 on the engine core (emu::snippet,
+	// U1972-U1975; M2: emu::engine, emu::reg, emu::profile, U1951-U1954); emu-oep still parses options only (M4 / M5)
 	const char* milestone();
 }

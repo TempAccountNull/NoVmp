@@ -180,6 +180,7 @@
 // requires "differing: 0" for its hardware files and "cases: N" = its own count of the case lines).
 #pragma once
 #include "at_engine.hpp"
+#include "at_export.hpp"   // U1977: --snippet-export
 #include <algorithm>
 #include <cctype>
 #include <cerrno>
@@ -492,7 +493,8 @@ namespace at
 					   bool events = false;   /* U1741: --events prints both engines' event lines for every case */
 					   std::string tag_env;   /* U1875: --tag-env guest|host|hostP|hostE (empty: detected) */
 					   std::string tag_profiles;   /* U1893: --tag-profiles DIR|none (empty: the exe's folder, then Emulator\data) */
-					   bool tag_show = false;   /* U1894: --tag-show prints the observed difference of every tagged line / outcome */ };
+					   bool tag_show = false;   /* U1894: --tag-show prints the observed difference of every tagged line / outcome */
+					   std::string snippet_export;   /* U1977 (plan 3.M3): --snippet-export FILE - every case Unicorn ran as an emu-snippet spec (at_export.hpp) */ };
 
 	// U1491: the core type the loaded CPUID profile reports (logged; the bare-host P-/E-core profiles,
 	// emu-alltest --host [--host-core P|E]): CPUID.1AH:EAX[31:24] is valid only with 07H.0:EDX[15] Hybrid = 1
@@ -1734,6 +1736,19 @@ namespace at
 			xinuse_pin = hw_pin_list( opt.hw_cpu, hc, perr );
 		}
 		const xinuse_choice xinuse = choose_xinuse( opt.platform, opt.xinuse_override, opt.cpuid, !opt.expect_only, xinuse_pin );
+		// U1977 (plan 3.M3): --snippet-export FILE (one emu-snippet spec per case line Unicorn ran; emu-snippet --batch replays them)
+		snippet_exporter xp;
+		if ( !opt.snippet_export.empty() )
+		{
+			std::error_code ec;
+			const std::filesystem::path xpath( opt.snippet_export );
+			if ( xpath.has_parent_path() ) std::filesystem::create_directories( xpath.parent_path(), ec );
+			xp.f.open( opt.snippet_export, std::ios::binary | std::ios::trunc );
+			if ( !xp.f ) { std::printf( "--snippet-export %s: cannot create the file\n", opt.snippet_export.c_str() ); return 2; }
+			xp.open = true;
+			xp.path = opt.snippet_export;
+			xp.f << "# emu-alltest --snippet-export (U1977): one emu-snippet spec per case line Unicorn ran, from " << path << "\n";
+		}
 		print_xinuse( xinuse );
 		{
 			// the effective values as an engine of this run starts with them (reset values included)
@@ -2186,6 +2201,8 @@ namespace at
 			uc.ts_hooks = true;   // U1200: CR0.TS (--cr0) acts on the snippet only, never on the thunk
 			const dbg_regs dbg_uc = dbg_resolve( dspec, p_uc ), dbg_hw = dbg_resolve( dspec, p );   // U1740
 			uc.dbg = dbg_uc;
+			start_capture cap;   // U1977
+			uc.capture = xp.open ? &cap : nullptr;
 			// U1740: a hardware case's enabled breakpoints must stay on the snippet's bytes / MEM (dbg_native_unsafe)
 			if ( !expect && dspec.any )
 			{
@@ -2206,6 +2223,13 @@ namespace at
 				continue;
 			}
 			if ( !native_only ) uc.run( *st_in, u );
+			// U1977: the case as an emu-snippet spec (state at the snippet start, expectation, this engine's final state)
+			if ( xp.open && !native_only &&
+				 !export_case( xp, std::filesystem::path( path ).filename().string() + " case line " + std::to_string( line_no + 1 ) + " [" + std::to_string( n ) + "] " +
+								  line.substr( 0, 120 ),
+							  opt.cpuid_path, uc, p_uc, cap, u, expect, loose, expect ? st_exp.get() : nullptr, expect ? &listed : nullptr, exp_fault, exp_vector, exp_ec,
+							  exp_dr6_set, exp_dr6 ) )
+				++xp.skipped;
 			if ( expect )
 			{
 				// compare only the checked bytes: copy Unicorn's bytes into the expected image where
@@ -2553,6 +2577,15 @@ namespace at
 			std::printf( "sde cases: %d, uc agrees with sde: %d, uc disagrees with sde: %d, exp agrees with sde: %d, not checked: %d, errors: %d\n", sde_n,
 						 sde_agree, sde_disagree, sde_exp_agree, sde_skip_n, sde_errors );
 		for ( auto& [ k, v ] : sde_skip ) std::printf( "sde not checked: %s: %d\n", k.c_str(), v );
+		if ( xp.open )   // U1977
+		{
+			xp.f.flush();
+			std::printf( "snippet export: %zu record(s), %zu not exported (Unicorn run error / no start state), %zu without a reference (the thunk did not reach its end), %zu without a reference (guest "
+						 "paging on: the epilogue's stores set A / D bits in the snippet's page tables) -> %s%s\n",
+						 xp.records, xp.skipped, xp.no_reference, xp.no_reference_paging, xp.path.c_str(),
+						 xp.f ? "" : " (WRITE ERROR)" );
+			if ( !xp.f ) return 1;
+		}
 		return ( exp_differ || exp_errors || hw_errors || !accounted ) ? 1 : 0;   // U1840: + hardware harness errors, accounting
 	}
 }

@@ -1,12 +1,12 @@
 // emu::profile (plan 3.M2, ledger U1951): see include/emu/profile.hpp. Reads the captured CPUID profile files (read-only,
-// bounded); the one std::ifstream below is the allow-listed read of decision 3.0.3 (Emulator\data\no_native_allowlist.tsv,
-// rule opens_file, until the M1-only "opens" group is retired at M3 / M4).
+// bounded) - since U1972 (plan 3.M3) through emu::read_input_file, the one audited file input of the Emulator lib (the M2
+// std::ifstream here was allow-listed until the M1-only "opens" rule group was retired; no_native_check rule group "fileio").
+#include <emu/input_file.hpp>
 #include <emu/profile.hpp>
 
 #include <windows.h>
 
 #include <filesystem>
-#include <fstream>
 #include <set>
 #include <utility>
 
@@ -137,26 +137,8 @@ namespace emu
 
 	bool load_cpuid_profile_file( const std::string& path, cpuid_profile& out, std::string& error )
 	{
-		std::ifstream in( path, std::ios::binary );
-		if ( !in )
-		{
-			error = "cannot open " + path;
-			return false;
-		}
-		in.seekg( 0, std::ios::end );
-		const std::streamoff size = in.tellg();
-		if ( size < 0 || uint64_t( size ) > max_profile_bytes )
-		{
-			error = path + ": size " + std::to_string( (long long)size ) + " outside 0.." + std::to_string( max_profile_bytes );
-			return false;
-		}
-		in.seekg( 0, std::ios::beg );
-		std::string text( size_t( size ), '\0' );
-		if ( size > 0 && !in.read( text.data(), size ) )
-		{
-			error = "cannot read " + path;
-			return false;
-		}
+		std::string text;
+		if ( !read_input_file( path, max_profile_bytes, text, error ) ) return false;
 		std::string why;
 		if ( !parse_cpuid_profile( text, out, why ) )
 		{
@@ -164,7 +146,7 @@ namespace emu
 			return false;
 		}
 		out.path = path;
-		out.file_bytes = uint64_t( size );
+		out.file_bytes = uint64_t( text.size() );
 		return true;
 	}
 

@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -135,6 +136,8 @@ namespace at
 		uint64_t dr6_end = 0;
 		std::string dbg_note;       // U1740: a stray #DB outside the snippet (native), SetThreadContext failure, ...
 		int db_count = 0;           // U1771: every #DB of the run (native: on the debug-register thread; Unicorn: UC_HOOK_INTR 1)
+		bool uc_complete = false;   // U1977: Unicorn ran the thunk to its end (the epilogue saved the state; --snippet-export reference)
+		bool uc_guest_paging = false;   // U1977: CR0.PG = 1 after the run: the epilogue ran through the snippet's own page tables
 		std::string err;
 	};
 
@@ -722,6 +725,18 @@ namespace at
 		}
 	}
 
+	// U1977 (plan 3.M3, --snippet-export): the Unicorn engine's machine state at the snippet's first instruction - the state the
+	// prologue and the code hooks (ZMM / K / R16-R31, CR0.TS) built - for emu-snippet's replay of the case (at_export.hpp):
+	// registers by emu-snippet field name (uc_reg_read), the CODE / DATA / MEM regions and, with cpl=3, the system page.
+	struct start_capture
+	{
+		bool done = false;
+		std::map<std::string, std::vector<uint8_t>> regs;
+		std::vector<uint8_t> code, data, mem, sys;
+		uint64_t efer = 0;
+		std::string err;
+	};
+
 	class unicorn_engine
 	{
 	public:
@@ -900,6 +915,8 @@ namespace at
 				if ( p.epilogue_at != p.snippet_begin )
 					uc_hook_add( uc_, &h, UC_HOOK_CODE, ( void* ) on_ts, this, p.epilogue_at, p.epilogue_at );
 			}
+			// U1977: added last, so it runs after on_ext / on_ts at the snippet's first instruction (hooks run in the order added)
+			if ( capture ) uc_hook_add( uc_, &h, UC_HOOK_CODE, ( void* ) on_capture, this, p.snippet_begin, p.snippet_begin );
 			prog_ = &p;
 			return true;
 		}
@@ -949,6 +966,14 @@ namespace at
 				e = uc_emu_start( uc_, resume_target(), prog_->ret_at, 0, 0 );
 			}
 			if ( e ) r.err = std::string( "uc_emu_start: " ) + uc_strerror( e );
+			{
+				uint64_t end_rip = 0;   // U1977: the run stopped at the thunk's last byte (else e.g. an epilogue instruction faulted)
+				uc_reg_read( uc_, UC_X86_REG_RIP, &end_rip );
+				r.uc_complete = !e && end_rip == prog_->ret_at;
+				uint64_t end_cr0 = 0;
+				uc_reg_read( uc_, UC_X86_REG_CR0, &end_cr0 );
+				r.uc_guest_paging = ( end_cr0 >> 31 ) & 1;
+			}
 			// U1740: DR6 after the run (a debug-register case's expectation "dr6=V")
 			if ( dbg.any ) r.dr6_end_valid = uc_reg_read( uc_, UC_X86_REG_DR6, &r.dr6_end ) == UC_ERR_OK;
 			uc_mem_read( uc_, DATA, data.data(), data.size() );
@@ -1120,6 +1145,74 @@ namespace at
 			if ( uc_reg_write( uc, UC_X86_REG_CR0, &want ) != UC_ERR_OK || uc_reg_write( uc, UC_X86_REG_RIP, &rip ) != UC_ERR_OK )
 				self->ext_err( "uc_reg_write CR0/RIP (ts hook)" );
 		}
+		// U1977: the state at the snippet's first instruction (the last visit wins: on_ts re-translates the block once)
+		static void on_capture( uc_engine* uc, uint64_t, uint32_t, void* user )
+		{
+			auto* self = ( unicorn_engine* ) user;
+			if ( !self->cur_ || !self->capture ) return;
+			start_capture& c = *self->capture;
+			c.regs.clear();
+			c.err.clear();
+			auto rd = [ & ]( int id, size_t n, const std::string& name ) {
+				std::vector<uint8_t> b( 64, 0 );
+				size_t sz = b.size();
+				if ( uc_reg_read2( uc, id, b.data(), &sz ) != UC_ERR_OK ) { if ( c.err.empty() ) c.err = "uc_reg_read " + name; return; }
+				b.resize( n );
+				c.regs[ name ] = b;
+			};
+			static const int gid[ 16 ] = { UC_X86_REG_RAX, UC_X86_REG_RCX, UC_X86_REG_RDX, UC_X86_REG_RBX, UC_X86_REG_RSP, UC_X86_REG_RBP, UC_X86_REG_RSI,
+											UC_X86_REG_RDI, UC_X86_REG_R8, UC_X86_REG_R9, UC_X86_REG_R10, UC_X86_REG_R11, UC_X86_REG_R12, UC_X86_REG_R13,
+											UC_X86_REG_R14, UC_X86_REG_R15 };
+			for ( int i = 0; i < 16; i++ ) rd( gid[ i ], 8, reg_name( i ) );
+			rd( UC_X86_REG_RIP, 8, "rip" );
+			rd( UC_X86_REG_RFLAGS, 8, "rflags" );
+			rd( UC_X86_REG_FS_BASE, 8, "fs_base" );
+			rd( UC_X86_REG_GS_BASE, 8, "gs_base" );
+			rd( UC_X86_REG_CS, 2, "cs" );
+			rd( UC_X86_REG_SS, 2, "ss" );
+			rd( UC_X86_REG_CR0, 8, "cr0" );
+			rd( UC_X86_REG_CR4, 8, "cr4" );
+			rd( UC_X86_REG_FPCW, 2, "fpcw" );
+			rd( UC_X86_REG_FPSW, 2, "fpsw" );
+			rd( UC_X86_REG_FPTAG, 2, "fptag" );
+			rd( UC_X86_REG_FOP, 2, "fop" );
+			rd( UC_X86_REG_FIP, 8, "fip" );
+			rd( UC_X86_REG_FDP, 8, "fdp" );
+			rd( UC_X86_REG_FCS, 2, "fcs" );
+			rd( UC_X86_REG_FDS, 2, "fds" );
+			rd( UC_X86_REG_MXCSR, 4, "mxcsr" );
+			for ( int i = 0; i < 8; i++ ) rd( UC_X86_REG_ST0 + i, 10, "st" + std::to_string( i ) );
+			for ( int i = 0; i < 32; i++ ) rd( UC_X86_REG_ZMM0 + i, 64, "zmm" + std::to_string( i ) );
+			for ( int i = 0; i < 8; i++ ) rd( UC_X86_REG_K0 + i, 8, "k" + std::to_string( i ) );
+			for ( int i : { 0, 1, 2, 3, 6, 7 } ) rd( UC_X86_REG_DR0 + i, 8, "dr" + std::to_string( i ) );
+			if ( self->apx )
+				for ( int i = 0; i < 16; i++ ) rd( UC_X86_REG_R16 + i, 8, "r" + std::to_string( 16 + i ) );
+			uc_x86_mmr g{};
+			if ( uc_reg_read( uc, UC_X86_REG_GDTR, &g ) == UC_ERR_OK )
+			{
+				std::vector<uint8_t> b( 8 ), l( 4 );
+				std::memcpy( b.data(), &g.base, 8 );
+				std::memcpy( l.data(), &g.limit, 4 );
+				c.regs[ "gdtr_base" ] = b;
+				c.regs[ "gdtr_limit" ] = l;
+			}
+			uc_x86_msr efer{ 0xC0000080, 0 };
+			uc_reg_read( uc, UC_X86_REG_MSR, &efer );
+			c.efer = efer.value;
+			c.code.assign( CODE_SIZE, 0 );
+			c.data.assign( DATA_SIZE, 0 );
+			c.mem.assign( MEM_SIZE, 0 );
+			uc_mem_read( uc, CODE, c.code.data(), c.code.size() );
+			uc_mem_read( uc, DATA, c.data.data(), c.data.size() );
+			uc_mem_read( uc, MEM, c.mem.data(), c.mem.size() );
+			c.sys.clear();
+			if ( self->cpl3 )
+			{
+				c.sys.assign( SYS_SIZE, 0 );
+				uc_mem_read( uc, SYS_PAGE, c.sys.data(), c.sys.size() );
+			}
+			c.done = c.err.empty();
+		}
 		void ext_err( const std::string& e ) { if ( cur_ && cur_->err.empty() ) cur_->err = e; }
 		bool ts_in_done_ = false;   // U1200
 		bool pending_epilogue_ = false, ext_in_done_ = false, ext_out_done_ = false;
@@ -1151,6 +1244,7 @@ namespace at
 		static constexpr uint64_t CR0_WP = 1ull << 16;   // CR0.WP, bit 16 (SDM 093 Vol3A 2.5)
 		static constexpr uint64_t CR4_CET = 1ull << 23;  // CR4.CET, bit 23 (SDM 093 Vol3A 2.5 p. 2-19)
 		dbg_regs dbg;            // U1740: the case's debug registers (written by run(); !any = none written)
+		start_capture* capture = nullptr;   // U1977: --snippet-export (nullptr = no capture hook)
 		// U1200: CR0.TS only inside the snippet (on_ts); set by the --cases runner only, so the --full
 		// sweep (CR0 11h, never TS) is untouched
 		bool ts_hooks = false;

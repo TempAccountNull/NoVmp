@@ -4,8 +4,9 @@
      projects and includes linux-pe; deps pristine. Milestone M1: the command-line options (emu::parse_options), the
      dependency headers and the runtime no-native check (emu::host_guard). Milestone M2 (ledger U1951-U1954): the engine core
      emu::engine (CPUID profile at uc_open, D8 RNG source, memory map, verbose log), emu::reg (register dump) and
-     emu::profile (the captured CPUID profiles, read-only). No native execution of guest code, no host-kernel
-     pass-through (AGENT_RULES "Host safety"; suite no_native_check). -->
+     emu::profile (the captured CPUID profiles, read-only). Milestone M3 (ledger U1972-U1975): emu::snippet (the emu-snippet v1
+     executor), emu::json, emu::input_file (the one audited, read-only file input), emu::assemble (Keystone / Capstone). No native
+     execution of guest code, no host-kernel pass-through (AGENT_RULES "Host safety"; suite no_native_check). -->
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|x64"><Configuration>Debug</Configuration><Platform>x64</Platform></ProjectConfiguration>
@@ -73,18 +74,26 @@
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="src\assemble.cpp" />
     <ClCompile Include="src\deps.cpp" />
     <ClCompile Include="src\engine.cpp" />
     <ClCompile Include="src\host_guard.cpp" />
+    <ClCompile Include="src\input_file.cpp" />
+    <ClCompile Include="src\json.cpp" />
     <ClCompile Include="src\options.cpp" />
     <ClCompile Include="src\profile.cpp" />
     <ClCompile Include="src\reg.cpp" />
+    <ClCompile Include="src\snippet.cpp" />
+    <ClInclude Include="include\emu\assemble.hpp" />
     <ClInclude Include="include\emu\deps.hpp" />
     <ClInclude Include="include\emu\engine.hpp" />
     <ClInclude Include="include\emu\host_guard.hpp" />
+    <ClInclude Include="include\emu\input_file.hpp" />
+    <ClInclude Include="include\emu\json.hpp" />
     <ClInclude Include="include\emu\options.hpp" />
     <ClInclude Include="include\emu\profile.hpp" />
     <ClInclude Include="include\emu\reg.hpp" />
+    <ClInclude Include="include\emu\snippet.hpp" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\msvc\unicorn.vcxproj"><Project>{5F160114-1B96-585D-9629-47B21D8F1CC0}</Project></ProjectReference>

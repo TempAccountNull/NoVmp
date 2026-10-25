@@ -71,6 +71,7 @@ $Cpuid = Join-Path $D 'cpuid_i5-13600k.txt'
 #       every other line run; no native-only line is allowed in any other suite).
 #       tagsel = harness_selftest_tags (U1877: the exact stated differences under --tag-env guest / hostE; the summary and
 #       the not-observed count must be exactly the suite's expected ones, exit 0).
+#       snip / snipbad / snipcli1 = the emu-snippet replay suites and the --expect negative control (U1978, Add-Snip).
 # U1841: every emu-alltest --cases suite (except herr) must also report "cases: N" with N = the number of case lines this
 # runner counts in the file itself (Get-ExpectedCases).
 $Suites = New-Object System.Collections.Generic.List[object]
@@ -104,9 +105,33 @@ function Add-Hw( [string]$Name, [string]$Groups, [string[]]$Extra = @(), [switch
 	}
 }
 # an expected-value file: Unicorn only vs the SDM model (U540: Unicorn's reset XCR0, from the opt-ins)
+# U1978 (plan 3.M3): the run also writes every case as an emu-snippet spec (emu-alltest --snippet-export, U1977), and the suite
+# "<Id>-snip" replays them on the Emulator lib (Add-Snip)
 function Add-Exp( [string]$Id, [string]$File, [string]$Groups, [string[]]$Extra = @() )
 {
-	Add-Suite $Id $Groups 'exit' 'emu-alltest' ( @( '--cases', ( CaseFile $File ) ) + $Extra + @( '--expect-only' ) )
+	Add-Suite $Id $Groups 'exit' 'emu-alltest' ( @( '--cases', ( CaseFile $File ) ) + $Extra + @( '--expect-only' ) + ( SnipExport $Id ) )
+	Add-Snip $Id $Groups
+}
+# U1978 (plan 3.M3 "the expected-value case files replayed through emu-snippet, 0 differing"): emu-snippet --batch replays the
+# specs suite $Of exported, after $Of has finished. Verdict (kind snip): every expected-value case line of $Of replayed (the
+# "snippets:" count = Get-ExpectedCases of $Of), "expect differing: 0", "errors: 0", and the Unicorn engine state of the line
+# ("reference") equal except the lines $SnipReferenceKnown names for $Of, by exact count: values that come from the host
+# (RDTSC / the TSC MSR read the host clock until the virtual time base of milestone M6; --HostSeed RDRAND; PBNDKB's random IV /
+# key) differ between two engines by design. Kind snipbad (expect_selftest_bad): every one of its 7 wrong expectations is a
+# DIFF in emu-snippet too. A passing suite removes its spec file (build\x64\<config>\tests\snippet_replay\<id>.jsonl).
+function SnipExport( [string]$Id ) { return @( '--snippet-export', ( Join-Path $T "snippet_replay\$Id.jsonl" ) ) }
+function Add-Snip( [string]$Of, [string]$Groups, [string]$Kind = 'snip' )
+{
+	Add-Suite "$Of-snip" ( "$Groups snippet" ) $Kind 'emu-snippet' @( '--batch', ( Join-Path $T "snippet_replay\$Of.jsonl" ), '--quiet' )
+	$Suites[ $Suites.Count - 1 ] | Add-Member -NotePropertyName After -NotePropertyValue $Of
+	$Suites[ $Suites.Count - 1 ] | Add-Member -NotePropertyName SnipOf -NotePropertyValue $Of
+}
+$SnipReferenceKnown = @{
+	# cases_tscadj.txt: 7 lines read RDTSC / IA32_TIME_STAMP_COUNTER (the host clock) into a compared register
+	'tscadj_host_p' = 7; 'tscadj_host_e' = 7; 'tscadj_guest' = 7; 'tscadj_vm' = 7; 'tscadj_max' = 7
+	'cases_rdrand_host' = 3   # --HostSeed: the host DRNG
+	'cases_sysins' = 2        # PBNDKB (U807): IV, MAC and ciphertext random
+	'cases_sysmsr' = 1        # RDMSR IA32_TIME_STAMP_COUNTER (10H)
 }
 # a model's self-test (python MODEL --selftest, exit status 0)
 function Add-PySelftest( [string]$Id, [string]$Groups, [string]$Model )
@@ -153,7 +178,8 @@ $Suites[ $Suites.Count - 1 ] | Add-Member -NotePropertyName After -NotePropertyV
 # where the i5-13600K deviates from the SDM ("# known deviation: NAME", docs\quirks.md); the same tag
 # marks the VMware-guest artifacts PTWRITE / HRESET "hidden by the guest CPUID" (not CPU deviations).
 Add-Exp 'expect_selftest' 'expect_selftest' 'selftest expect'
-Add-Suite 'expect_selftest_bad' 'selftest expect' 'bad' 'emu-alltest' @( '--cases', ( CaseFile 'expect_selftest_bad' ), '--expect-only' )
+Add-Suite 'expect_selftest_bad' 'selftest expect' 'bad' 'emu-alltest' ( @( '--cases', ( CaseFile 'expect_selftest_bad' ), '--expect-only' ) + ( SnipExport 'expect_selftest_bad' ) )
+Add-Snip 'expect_selftest_bad' 'selftest expect' 'snipbad'   # U1978: the 7 wrong expectations are wrong in emu-snippet too
 # U1840 / U1841 (plan 1.F.13.b A): a case line that cannot be parsed, assembled, loaded or run natively is a harness error
 # (exit 1, never counted in "cases:"); every line of harness_selftest_bad.txt is broken on purpose (kind herr: all of them
 # reported as harness errors, "cases: 0", exit 1). No line of it reaches the native engine or runs on Unicorn.
@@ -380,7 +406,8 @@ Add-Hw 'cases_fixes' 'hw'
 Add-Hw 'cases_backport_t2' 'hw backport x87'
 # The CPL0-only parts of the same backports as expected-value cases from the SDM text (the file has
 # only "=>" lines; it runs without --expect-only as before).
-Add-Suite 'cases_backport_t2_sdm' 'backport expect' 'exit' 'emu-alltest' @( '--cases', ( CaseFile 'cases_backport_t2_sdm' ) )
+Add-Suite 'cases_backport_t2_sdm' 'backport expect' 'exit' 'emu-alltest' ( @( '--cases', ( CaseFile 'cases_backport_t2_sdm' ) ) + ( SnipExport 'cases_backport_t2_sdm' ) )
+Add-Snip 'cases_backport_t2_sdm' 'backport expect'   # U1978
 # U468: Tier 1 upstream QEMU backports (U453-U467): hardware lines (cpl=3 = Unicorn at CPL3 with the
 # Windows GDT, U452; compatibility mode via CS 23h) and SDM expected values (STI/LSS + TF, MOV DR,
 # compatibility-mode SYSCALL); known deviations LOCK PREFETCHW, SYSRET at CPL3 in compatibility mode.
@@ -686,6 +713,13 @@ Add-Suite 'emu_snippet_options' 'emulator' 'exit' 'emu-snippet' @( '--hex', '48 
 # in Emulator\data\no_native_allowlist.tsv, PENDING until M8 / 3.C), S3 project graph, S4 imports of the built emu-* executables,
 # R emu-selftest no_native_runtime; in-memory negative controls; reads only.
 Add-Suite 'no_native_check' 'emulator safety tools' 'py' ( Join-Path $Root 'Emulator\tools\check_no_native.py' ) @( $Root, '--build', $T )
+# U1975-U1978 (agent p3m3, plan 3.M3, notes\eread\P33_phase3_m3.md): emu-snippet v1. emu_snippet_options (above) now runs its snippet
+# (xor rax, rax; ret) and checks --expect rax=0; emu_snippet_expect_bad = the negative control: a wrong --expect must be a DIFF
+# (exit 1). The *-snip suites (Add-Snip) replay every expected-value file through emu-snippet. emu_snippet_hw_sample: a fixed
+# sample of untagged hardware case lines (>= 200, every family of the hardware files), under the captured VMware-guest and
+# bare-host profiles: emu-snippet's final state must equal emu-alltest's Unicorn engine state on every line (reference SAME).
+Add-Suite 'emu_snippet_expect_bad' 'emulator snippet' 'snipcli1' 'emu-snippet' @( '--hex', '48 c7 c0 05 00 00 00', '--expect', 'rax=6', '--quiet' )
+Add-Suite 'emu_snippet_hw_sample' 'emulator snippet hw' 'py' ( Join-Path $Root 'Emulator\tools\snippet_hw_sample.py' ) @( $Root, $T )
 
 # ---------------------------------------------------------------------------------------- selection
 $Groups = [ordered]@{}
@@ -715,7 +749,7 @@ else
 	{
 		$hit = $false
 		if ( $Groups.Contains( $n ) ) { foreach ( $id in $Groups[ $n ] ) { [void]$selected.Add( $id ) }; $hit = $true }
-		foreach ( $s in $Suites ) { if ( $s.Id.ToLowerInvariant() -eq $n -or $s.Parent.ToLowerInvariant() -eq $n ) { [void]$selected.Add( $s.Id ); $hit = $true } }
+		foreach ( $s in $Suites ) { if ( $s.Id.ToLowerInvariant() -eq $n -or $s.Parent.ToLowerInvariant() -eq $n -or ( $s.PSObject.Properties[ 'SnipOf' ] -and $s.SnipOf.ToLowerInvariant() -eq $n ) ) { [void]$selected.Add( $s.Id ); $hit = $true } }   # U1978: NAME also selects NAME-snip
 		if ( -not $hit ) { Write-Output "[test] unknown suite or group ""$n"" (test.cmd list)"; Write-Output $Usage; exit 2 }
 	}
 }
@@ -846,7 +880,7 @@ function Complete-Suite( $s )
 	$lines = Read-LogLines $s.Log
 	if ( $s.Kind -eq 'py' ) { $s.Lines = @( $s.Lines ) + @( $lines | Select-Object -Last 20 ) }
 	$s.Lines = @( $s.Lines ) + @( $lines | Where-Object {
-			$_ -match '^(machine state: |cases: |expected-value cases: |case lines: |ERROR: |known deviation: |host state: |tagged but not observed|  not observed |cpuid: |SUCCESS:|FAILED:|  machine state: |  buckets:|  report: )' -or
+			$_ -match '^(machine state: |cases: |expected-value cases: |case lines: |ERROR: |known deviation: |host state: |tagged but not observed|  not observed |cpuid: |SUCCESS:|FAILED:|  machine state: |  buckets:|  report: |snippet export: |snippets: |\[emu-snippet\] result: |hw sample)' -or
 			$_ -match '^    [a-z].{49} +[0-9]+$' } )
 	$sum = @( $lines | Where-Object { $_ -match '^cases: [0-9]+, differing: [0-9]+, known deviations: [0-9]+, host state: [0-9]+' } )
 	switch ( $s.Kind )
@@ -910,6 +944,35 @@ function Complete-Suite( $s )
 			elseif ( -not ( $lines | Where-Object { $_ -ceq $s.Expect[ 1 ] } ) ) { $s.Reason = 'expected "' + $s.Expect[ 1 ] + '"' }
 			elseif ( $s.Exit -ne 0 ) { $s.Reason = "exit status $( $s.Exit )" }
 		}
+		'snip'
+		{
+			# U1978: every expected-value line of the exporting suite replayed, every expectation met, no error, the reference
+			# differences exactly the known host-value lines ($SnipReferenceKnown)
+			$want = Get-ExpectedCases ( $Suites | Where-Object { $_.Id -eq $s.SnipOf } | Select-Object -First 1 )
+			$known = if ( $SnipReferenceKnown.ContainsKey( $s.SnipOf ) ) { $SnipReferenceKnown[ $s.SnipOf ] } else { 0 }
+			$sl = @( $lines | Where-Object { $_ -match '^snippets: ([0-9]+), expect checked: ([0-9]+), expect differing: ([0-9]+), reference checked: ([0-9]+), reference differing: ([0-9]+), errors: ([0-9]+)' } )
+			if ( $sl.Count -ne 1 ) { $s.Reason = 'no "snippets:" summary line (emu-snippet --batch)' }
+			else
+			{
+				[void]( $sl[ 0 ] -match '^snippets: ([0-9]+), expect checked: ([0-9]+), expect differing: ([0-9]+), reference checked: ([0-9]+), reference differing: ([0-9]+), errors: ([0-9]+)' )
+				$m = $Matches
+				if ( [long]$m[ 1 ] -ne $want -or [long]$m[ 2 ] -ne $want ) { $s.Reason = "$( $m[ 1 ] ) snippets / $( $m[ 2 ] ) expectations replayed, the case file has $want expected-value lines" }
+				elseif ( [long]$m[ 3 ] -ne 0 ) { $s.Reason = "$( $m[ 3 ] ) expectation(s) differ in emu-snippet" }
+				elseif ( [long]$m[ 6 ] -ne 0 ) { $s.Reason = "$( $m[ 6 ] ) error(s)" }
+				elseif ( [long]$m[ 5 ] -ne $known ) { $s.Reason = "$( $m[ 5 ] ) line(s) differ from emu-alltest's Unicorn engine state, $known known (host values)" }
+				elseif ( $s.Exit -ne $( if ( $known ) { 1 } else { 0 } ) ) { $s.Reason = "exit status $( $s.Exit )" }
+			}
+		}
+		'snipbad'
+		{
+			if ( -not ( $lines | Where-Object { $_ -match '^snippets: 7, expect checked: 7, expect differing: 7, reference checked: 7, reference differing: 0, errors: 0' } ) ) { $s.Reason = 'the 7 wrong expectations were not all reported by emu-snippet' }
+			elseif ( $s.Exit -ne 1 ) { $s.Reason = "exit status $( $s.Exit ), expected 1" }
+		}
+		'snipcli1'
+		{
+			if ( -not ( $lines | Where-Object { $_ -match '^\[emu-snippet\] result: DIFF' } ) ) { $s.Reason = 'the wrong --expect was not reported as DIFF' }
+			elseif ( $s.Exit -ne 1 ) { $s.Reason = "exit status $( $s.Exit ), expected 1" }
+		}
 		default { if ( $s.Exit -ne 0 ) { $s.Reason = "exit status $( $s.Exit )" } }
 	}
 	# U1871 (plan 1.F.13.f): "# native only:" belongs to measurement files - a test.cmd suite compares both engines on
@@ -927,6 +990,12 @@ function Complete-Suite( $s )
 		{ $s.Reason = "$( $sum[ 0 ].Split( ',' )[ 0 ] ) but the case file has $want case lines for this run (a line was not run: harness error, see the log)" }
 	}
 	$s.Pass = -not $s.Reason
+	# U1978: a passing replay suite removes the spec file it read (written by its exporting suite; up to ~60 MB each)
+	if ( $s.Pass -and $s.Kind -in @( 'snip', 'snipbad' ) )
+	{
+		$jf = [string]$s.Args[ 1 ]
+		if ( $jf.EndsWith( '.jsonl' ) -and ( Test-Path -LiteralPath $jf -PathType Leaf ) ) { Remove-Item -LiteralPath $jf -Force }
+	}
 	if ( -not $s.Pass )
 	{
 		# the differing cases and the end of the log
@@ -1026,6 +1095,14 @@ function Get-Stats( $s )
 			if ( $name -like 'known deviation (*' ) { $known = $v }
 		}
 		$r.cases = $total; $r.differing = $diff; $r.known = $known
+		return $r
+	}
+	# U1978: an emu-snippet replay: snippets / expect differing / reference differing (shown in the "known" column)
+	$sn = @( $lines | Where-Object { $_ -match '^snippets: ([0-9]+), expect checked: [0-9]+, expect differing: ([0-9]+), reference checked: [0-9]+, reference differing: ([0-9]+)' } | Select-Object -First 1 )
+	if ( $sn.Count )
+	{
+		[void]( $sn[ 0 ] -match '^snippets: ([0-9]+), expect checked: [0-9]+, expect differing: ([0-9]+), reference checked: [0-9]+, reference differing: ([0-9]+)' )
+		$r.cases = $Matches[ 1 ]; $r.differing = $Matches[ 2 ]; $r.known = $Matches[ 3 ]
 		return $r
 	}
 	$all = @( [IO.File]::ReadAllLines( $s.Log ) | Where-Object { $_ -match '^Test .*\[ *(OK|FAILED|SKIPPED) *\]' } )

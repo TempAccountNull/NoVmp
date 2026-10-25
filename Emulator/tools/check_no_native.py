@@ -27,9 +27,11 @@ syscall, an I/O request or a memory access to the real host kernel. emu-alltest 
        hostcpu   host CPU queries (decision 3.0.3: runtime CPUID only as the explicit option --cpuid-runtime; D8 --HostSeed):
                  __cpuid / __cpuidex / _xgetbv / __readmsr / __rdpmc / _rdrand*_step / _rdseed*_step - each use needs an
                  allow-list row naming the explicit option
-       opens     [M1 only; retired when M3 / M4 read their inputs] the skeleton opens nothing: fopen* / _wfopen* /
-                 CreateFile* / OpenFile / _open / _wopen / _sopen*, std::(i|o)fstream, std::filesystem create / remove /
-                 rename / copy
+       fileio    (U1979, plan 3.M3; replaces the M1-only group "opens") file access: fopen* / _wfopen* / CreateFile* /
+                 OpenFile / _open / _wopen / _sopen*, std::(i|o)fstream, std::filesystem create / remove / rename / copy are
+                 findings everywhere except in the ONE audited reader Emulator/src/input_file.cpp (emu::read_input_file /
+                 read_input_lines: read-only, bounded), where exactly std::ifstream is allowed and every other match is a
+                 finding (a write, a create, another open) - the lib and its tools only ever READ their inputs
   S2 NoVmp native path - the NoVmp project's own sources (NoVmp/NoVmp.vcxproj ClCompile / ClInclude) through the rule groups
      exec, fnptr, loader, kernel (not process: main.cpp's interactive system( "pause" ) runs no guest code); plus "compiled_native_executor": emulator\\emulator.cpp / emulator\\rwx_allocator.cpp
      as ClCompile items of NoVmp.vcxproj. Known findings are listed in Emulator/data/no_native_allowlist.tsv (count per file
@@ -83,13 +85,15 @@ RULES = [
     ('host_time_std', 'hosttime', r'\bstd::(?:chrono|this_thread)\b|' + CALL + r'time\s*\(\s*(?:NULL|nullptr|0)\s*\)|' + CALL + r'clock\s*\(\s*\)'),
     ('host_cpuid', 'hostcpu', CALL + r'(?:__cpuid(?:ex)?|_xgetbv|__readmsr|__rdpmc)\s*\('),
     ('host_rng', 'hostcpu', CALL + r'(?:_rdrand\d+_step|_rdseed\d+_step)\s*\('),
-    ('opens_file', 'opens', CALL + r'(?:fopen\w*|_wfopen\w*|CreateFile\w*|OpenFile|_open|_wopen|_sopen\w*)\s*\(|\bstd::(?:i|o)?fstream\b|'
-                            r'\bstd::filesystem::(?:create_director\w*|remove\w*|rename|copy\w*)\b'),
+    ('opens_file', 'fileio', CALL + r'(?:fopen\w*|_wfopen\w*|CreateFile\w*|OpenFile|_open|_wopen|_sopen\w*)\s*\(|\bstd::(?:i|o)?fstream\b|'
+                             r'\bstd::filesystem::(?:create_director\w*|remove\w*|rename|copy\w*)\b'),
 ]
 RAW_RULES = [
     ('ntdll_pragma', 'loader', r'(?i)#\s*pragma\s+comment\s*\(\s*lib\s*,\s*"[^"]*ntdll'),
 ]
-EMU_GROUPS = ('exec', 'fnptr', 'loader', 'process', 'kernel', 'hosttime', 'hostcpu', 'opens')
+EMU_GROUPS = ('exec', 'fnptr', 'loader', 'process', 'kernel', 'hosttime', 'hostcpu', 'fileio')
+AUDITED_READER = 'Emulator/src/input_file.cpp'   # U1979: the one place a file is opened (read-only std::ifstream)
+READER_ALLOWED = re.compile(r'^std::ifstream$')
 NOVMP_GROUPS = ('exec', 'fnptr', 'loader', 'kernel')   # not 'process': NoVmp's CLI system( "pause" ) is no guest code
 
 EMU_PROJECTS = [
@@ -145,14 +149,16 @@ def strip_code(text):
     return ''.join(out)
 
 
-def scan_text(text, groups):
-    """[(rule, line, snippet)] for the rule groups given."""
+def scan_text(text, groups, reader=False):
+    """[(rule, line, snippet)] for the rule groups given; reader = the audited file reader (only std::ifstream exempt)."""
     hits = []
     code = strip_code(text)
     for rid, grp, rx in RULES:
         if grp not in groups:
             continue
         for m in re.finditer(rx, code):
+            if reader and rid == 'opens_file' and READER_ALLOWED.match(m.group(0).strip()):
+                continue
             line = code.count('\n', 0, m.start()) + 1
             hits.append((rid, line, text.split('\n')[line - 1].strip()[:110]))
     for rid, grp, rx in RAW_RULES:
@@ -301,6 +307,12 @@ def run_controls():
         got = scan_text(text, EMU_GROUPS)
         if got:
             fails.append('false hit %s on: %s' % ([g[0] for g in got], text))
+    # U1979: the audited reader may hold std::ifstream only; a write / another open there still fires
+    if scan_text('std::ifstream in( p, std::ios::binary );', EMU_GROUPS, reader=True):
+        fails.append('the audited reader\'s std::ifstream was not exempt')
+    for bad in ('std::ofstream out( p );', 'std::fstream io( p );', 'FILE* f = fopen( p, "rb" );', 'std::filesystem::remove( p );'):
+        if 'opens_file' not in [h[0] for h in scan_text(bad, EMU_GROUPS, reader=True)]:
+            fails.append('file access in the audited reader not refused: ' + bad)
     _root, items = project_items(None, BAD_PROJECT)
     if not any('novmp' in i.lower() for i in items.get('ClCompile', [])) or 'MASM' not in items:
         fails.append('synthetic bad project items not seen')
@@ -396,7 +408,7 @@ def check_emulator_sources(root, files, report):
         if not os.path.isfile(ap):
             fails.append('S1 listed file missing: %s' % relp(root, ap)); continue
         text = open(ap, encoding='utf-8', errors='replace').read()
-        for rid, line, snip in scan_text(text, EMU_GROUPS):
+        for rid, line, snip in scan_text(text, EMU_GROUPS, reader=relp(root, ap) == AUDITED_READER):
             found.setdefault((relp(root, ap), rid), []).append((line, snip))
     report.append('S1 scanned %d emulator files (%s), rule groups %s' % (len(files), ', '.join(relp(root, f) for f in files), ' '.join(EMU_GROUPS)))
     return fails, found

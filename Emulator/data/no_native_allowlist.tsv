@@ -4,13 +4,12 @@
 # Today: NoVmp's native executor (emulator::invoke + the RWX heap) is still compiled into NoVmp.exe; its shellcode call is
 # unreachable behind the N6 guard (vtil::logger::error is [[noreturn]], CHANGES_LEDGER N6). Milestone M8 (plan 3.C 7.2:
 # emu::snippet_executor replaces it, the two files leave NoVmp.vcxproj) removes every row below; the list is then empty.
-# U1954 (plan 3.M2): the Emulator lib reads the captured CPUID profile (decision 3.0.3) - the one read-only std::ifstream in
-# Emulator/src/profile.cpp (bounded to max_profile_bytes, parsed strictly); allow-listed until the M1-only "opens" rule group is
-# retired when M3 / M4 read their inputs.
+# U1954 (plan 3.M2) allow-listed the read-only std::ifstream of Emulator/src/profile.cpp until the M1-only "opens" rule group was
+# retired; U1979 (plan 3.M3) retired it: rule group "fileio" - every file is read through the one audited reader
+# Emulator/src/input_file.cpp (std::ifstream only), so the row is gone.
 # Columns (tab-separated): scope	file	rule	count	until	reason
 NoVmp	NoVmp/NoVmp.vcxproj	compiled_native_executor	2	M8 (3.C 7.2)	emulator\emulator.cpp and emulator\rwx_allocator.cpp are ClCompile items of NoVmp.vcxproj
 NoVmp	NoVmp/emulator/emulator.cpp	fnptr_cast	1	M8 (3.C 7.2)	emulator::invoke casts the RWX shellcode buffer to a function pointer; unreachable behind N6
 NoVmp	NoVmp/emulator/rwx_allocator.cpp	exec_heap	1	M8 (3.C 7.2)	HeapCreate( HEAP_CREATE_ENABLE_EXECUTE ) - the RWX heap of the native executor
 NoVmp	NoVmp/emulator/rwx_allocator.cpp	exec_mapping	1	M8 (3.C 7.2)	mmap( PROT_EXEC ) in the non-Windows branch (not compiled on Win64)
 NoVmp	NoVmp/emulator/rwx_allocator.cpp	host_page_api	1	M8 (3.C 7.2)	the same mmap call (non-Windows branch)
-Emulator	Emulator/src/profile.cpp	opens_file	1	M3 / M4 (opens group retired)	read-only std::ifstream of the captured CPUID profile file (decision 3.0.3), at most max_profile_bytes, parsed strictly
