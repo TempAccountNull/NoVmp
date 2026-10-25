@@ -218,7 +218,8 @@ namespace emu::win
 			return false;
 		}
 		p.source = ( std::filesystem::path( data_dir ) / "platform" / name_of( env ) / "views" / "environment.txt" ).string();
-		bool in_native = false, got_cpus = false, got_phys = false, got_arch = false, got_min = false, got_max = false;
+		bool in_native = false, got_cpus = false, got_phys = false, got_arch = false, got_min = false, got_max = false, got_page = false, got_gran = false,
+			 got_mask = false;
 		bool ok = read_input_lines( p.source, 4096, max_platform_view_bytes, [ & ]( std::string_view sv, uint64_t ) {
 			const std::string l( sv );
 			if ( l.rfind( "## ", 0 ) == 0 ) in_native = l.find( "GetNativeSystemInfo" ) != std::string::npos;
@@ -229,6 +230,9 @@ namespace emu::win
 			if ( number_after( l, "wProcessorArchitecture ", false, v ) && v <= 0xFFFF ) { p.processor_architecture = uint32_t( v ); got_arch = true; }
 			if ( number_after( l, "lpMinimumApplicationAddress ", true, v ) ) { p.min_app_address = v; got_min = true; }
 			if ( number_after( l, "lpMaximumApplicationAddress ", true, v ) ) { p.max_app_address = v; got_max = true; }
+			if ( number_after( l, "dwPageSize ", false, v ) && v <= 0xFFFFFFFFull ) { p.page_size = uint32_t( v ); got_page = true; }
+			if ( number_after( l, "dwAllocationGranularity ", false, v ) && v <= 0xFFFFFFFFull ) { p.allocation_granularity = uint32_t( v ); got_gran = true; }
+			if ( number_after( l, "dwActiveProcessorMask ", false, v ) ) { p.active_processor_mask = v; got_mask = true; }
 			return true;
 		}, error );
 		if ( !ok ) return false;
@@ -236,6 +240,14 @@ namespace emu::win
 		{
 			error = p.source + ": the GetNativeSystemInfo / GlobalMemoryStatusEx lines (dwNumberOfProcessors, wProcessorArchitecture, lpMinimum / "
 								"lpMaximumApplicationAddress, TotalPhys) are incomplete";
+			return false;
+		}
+		// U2011: the page size must be the 4 KiB the engine maps; the granularity a power of two of at least one page
+		const auto pow2 = []( uint64_t x ) { return x && !( x & ( x - 1 ) ); };
+		if ( !got_page || !got_gran || !got_mask || p.page_size != 0x1000 || !pow2( p.allocation_granularity ) || p.allocation_granularity < p.page_size ||
+			 p.allocation_granularity > 0x1000000 || !p.active_processor_mask )
+		{
+			error = p.source + ": dwPageSize (4096) / dwAllocationGranularity (a power of two >= the page) / dwActiveProcessorMask (non-zero) missing or unusable";
 			return false;
 		}
 		return true;

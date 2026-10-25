@@ -41,7 +41,7 @@ namespace emu
 		}
 	}
 
-	const char* milestone() { return "M4"; }   // U1952: the engine core (plan 3.M2); U1975: emu-snippet v1 (plan 3.M3); U1984: win_env (plan 3.M4)
+	const char* milestone() { return "M5"; }   // U1952: the engine core (plan 3.M2); U1975: emu-snippet v1 (plan 3.M3); U1984: win_env (plan 3.M4); U2013: the syscall layer + --HLE imports / TLS (plan 3.M5)
 
 	bool parse_u64( std::string_view text, uint64_t& out )
 	{
@@ -139,14 +139,15 @@ namespace emu
 		if ( tool == tool_kind::oep )
 			return "usage: emu-oep [options] INPUT | emu-oep (--guest | --host) [--sysdlls DIR] --syscall-number NAME\n"
 				   "  INPUT     a 64-bit PE image, read as data and mapped into the emulated Windows environment (never loaded or run on the\n"
-				   "            host; milestone M4: no imports / TLS yet - M5); the environment needs --guest (the VMware-guest DLL capture)\n"
+				   "            host; milestone M5: imports / TLS under --HLE, refused under --Sys); the environment needs --guest (the VMware-guest DLL\n"
+				   "            capture)\n"
 				   "            or --host (the bare-host capture, decision 3.0.8)\n"
 				   "  --image-base ADDR      map the image at ADDR (4 KiB aligned; its relocations applied) instead of its ImageBase\n"
 				   "  --sysdlls DIR          the environment's DLL capture folder (default: <capture root>\\sysdlls\\<environment>)\n"
 				   "  --syscall-number NAME  print NAME's service number from the environment's ntdll capture and stop\n"
 				   "  --dry-run              print the configuration and stop (nothing opened)\n"
 				   "  exit      0 the guest terminated (NtTerminateProcess), 1 another stop (fault, bound, return from the entry), 2 usage,\n"
-				   "            3 set-up error, 4 an unknown / unimplemented system service (loud stop with a state dump)\n" + common;
+				   "            3 set-up error, 4 an unknown / unimplemented system service or --HLE API (loud stop with a state dump)\n" + common;
 		return "usage: emu-snippet (--hex BYTES | --asm TEXT | --state FILE.json | --batch FILE.jsonl) [state] [stops] [checks] [output] [options]\n"
 			   "  code      --hex BYTES (\"48 31 c0 c3\") | --asm TEXT (Keystone, statements separated by ;) | --at ADDR (default 0x140001000)\n"
 			   "            --image PATH --rva RVA: a PE image mapped as data - arrives with milestone M4 (refused in M3)\n"

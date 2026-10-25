@@ -1,4 +1,4 @@
-// emu-selftest (plan 3.M1 / 3.A 2.2, ledger U1940-U1941; plan 3.M2, ledger U1951-U1954; plan 3.M3, ledger U1976; plan 3.M4, ledger U1985): the Emulator lib's self-tests (Gate 2 = G3.A: "build.cmd builds
+// emu-selftest (plan 3.M1 / 3.A 2.2, ledger U1940-U1941; plan 3.M2, ledger U1951-U1954; plan 3.M3, ledger U1976; plan 3.M4, ledger U1985; plan 3.M5, ledger U2014): the Emulator lib's self-tests (Gate 2 = G3.A: "build.cmd builds
 // everything with 0 errors, and the emu-selftest self-tests pass"). Suite emu_selftest runs every case; the no_native_check
 // suite runs the case no_native_runtime on its own. Own test code only: nothing from a sample is read or executed, and no
 // test process is started (no CreateProcess; the acutest runner is not used for that reason).
@@ -19,6 +19,8 @@
 #include <emu/pe_image.hpp>
 #include <emu/sysdll.hpp>
 #include <emu/win_env.hpp>
+#include <emu/nt_kernel.hpp>
+#include <emu/hle.hpp>
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -196,7 +198,7 @@ namespace
 		CHECK( has_line( d, "out-dir: outd (recorded, not created)" ), "out-dir recorded, not created" );
 		CHECK( has_line( d, "cpu profile: host (default, decision 3.0.3" ), "default profile named" );
 		CHECK( has_line( d, "max-insns: 4096 (0x1000)" ), "max-insns decimal + hex" );
-		CHECK( has_line( d, "milestone: M4" ), "milestone" );
+		CHECK( has_line( d, "milestone: M5" ), "milestone (U2013: M5)" );
 		auto s = parse( emu::tool_kind::snippet, { "--hex", "00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 10", "--expect", "rax=1" } );
 		auto ds = emu::describe( s.options );
 		CHECK( has_line( ds, "snippet input: hex (17 bytes: 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f ...)" ), "hex summary" );
@@ -210,7 +212,7 @@ namespace
 		std::cout << "  deps: " << s << "\n";
 		CHECK( s.find( "unicorn 2." ) == 0, "Unicorn 2 headers" );
 		CHECK( s.find( "capstone 6." ) != std::string::npos, "Capstone 6 headers" );
-		CHECK( std::string( emu::milestone() ) == "M4", "milestone M4" );
+		CHECK( std::string( emu::milestone() ) == "M5", "milestone M5 (U2013)" );
 	}
 
 	// ------------------------------------------------------------------------------------------------ M2 engine (U1951-U1954)
@@ -562,7 +564,7 @@ namespace
 		auto e = open_engine( emu::cpu_profile_choice::guest );
 		if ( !e ) return;
 		for ( auto& l : e->log() ) std::cout << "  log: " << l << "\n";
-		for ( auto key : { "milestone M4", "cpu profile: guest", "cpuid profile file:", "uc_open(UC_ARCH_X86, UC_MODE_64) ok", "cpu model: UC_CPU_X86_MAX",
+		for ( auto key : { "milestone M5", "cpu profile: guest", "cpuid profile file:", "uc_open(UC_ARCH_X86, UC_MODE_64) ok", "cpu model: UC_CPU_X86_MAX",
 						   "CPUID profile installed at uc_open", "rng: --seeded", "reset state (fork values): rip", "engine controls read back" } )
 			CHECK( std::any_of( e->log().begin(), e->log().end(), [ & ]( const std::string& l ) { return l.find( key ) != std::string::npos; } ),
 				   std::string( "log line with \"" ) + key + "\"" );
@@ -1472,7 +1474,8 @@ namespace
 		std::vector<stop_case> cases = {
 			{ "unknown number 1FFH", w4_t1( 0x1FF ), emu::win::stop_kind::unknown_syscall, "unknown", 10000 },
 			{ "EAX FFFFFFFFH (bits 15:12 set)", w4_t1( 0xFFFFFFFF ), emu::win::stop_kind::unknown_syscall, "unknown", 10000 },
-			{ "NtClose: known, not implemented in M4", w4_t1( 0x0F ), emu::win::stop_kind::unimplemented_syscall, "not implemented in milestone M4", 10000 },
+			// U2014 (M5): NtClose is a service now; NtClose of the pseudo handle NtCurrentProcess() has no documented answer = still a loud stop
+			{ "NtClose( NtCurrentProcess() ): no documented answer", w4_t1( 0x0F ), emu::win::stop_kind::unimplemented_syscall, "pseudo handle", 10000 },
 			{ "NtTerminateProcess( 1234H )", w4_t1( 0x2C, 0x2A, { 0xB8, 0x2C, 0, 0, 0, 0x41, 0xBA, 0x34, 0x12, 0, 0, 0x0F, 0x05, 0x0F, 0x0B } ), emu::win::stop_kind::unimplemented_syscall,
 			  "ProcessHandle 0x1234", 10000 },
 			{ "INT 2EH", w4_t1( 0x2C, 0x2A, { 0xCD, 0x2E, 0x0F, 0x0B } ), emu::win::stop_kind::fault, "INT 2EH", 10000 },
@@ -1511,7 +1514,8 @@ namespace
 		auto big_stack = w4_t1( 0x2C );
 		big_stack.stack_reserve = 0x4000000;
 		const struct { const char* what; w4_pe pe; const char* expect; } cases[] = {
-			{ "imports", imports, "milestone M5" }, { "TLS", tls, "TLS" }, { "DLL", dll, "DLL" }, { "image in the stack area", clash, "overlaps" },
+			// U2014 (M5): imports / TLS are --HLE features now; under --Sys (w4_go's default) refused with the LdrInitializeThunk reason
+			{ "imports under --Sys", imports, "LdrInitializeThunk" }, { "TLS under --Sys", tls, "has a TLS directory" }, { "DLL", dll, "DLL" }, { "image in the stack area", clash, "overlaps" },
 			{ "image above the user range", high, "user address range" }, { "stack reserve 4000000H", big_stack, "stack area" },
 		};
 		for ( auto& c : cases )
@@ -1547,6 +1551,684 @@ namespace
 		}
 		const auto after = emu::host_guard::foreign_executable();
 		CHECK( after.empty(), "no executable region outside images after the engine is closed" );
+	}
+
+	// ------------------------------------------------------------------------------------------------ M5 syscall layer / --HLE (U2014)
+	// Plan 3.M5: the services of emu::nt (answered as documented, or stopped loudly), the --HLE import redirect and TLS start, a
+	// SYSCALL from any address (plan 1.K.6), EAX AND FFFFH (plan 6.4.a), and the syscall-argument fuzz (AGENT_RULES "Host
+	// safety": "Fuzz the layer"). Images are built in memory (helper prefix w5_), their code assembled by Keystone at its image
+	// address; the syscall numbers and the OS / platform facts are synthetic (the capture-based runs are suite win_env_m5).
+	constexpr uint32_t w5_n_close = 0x0F, w5_n_alloc = 0x18, w5_n_qip = 0x19, w5_n_free = 0x1E, w5_n_qvm = 0x23, w5_n_term = 0x2C, w5_n_other = 0x55;
+	constexpr uint64_t w5_base = 0x140000000ull, w5_data = w5_base + 0x3000, w5_scratch = 0xFF0000ull;   // w5_scratch: inside the M4 stack area
+
+	emu::win::environment_facts w5_facts()
+	{
+		auto f = w4_facts();
+		f.syscalls = {};
+		for ( auto [ n, name ] : { std::pair<uint32_t, const char*>{ w5_n_term, "NtTerminateProcess" }, { w5_n_close, "NtClose" }, { w5_n_alloc, "NtAllocateVirtualMemory" },
+								   { w5_n_qip, "NtQueryInformationProcess" }, { w5_n_free, "NtFreeVirtualMemory" }, { w5_n_qvm, "NtQueryVirtualMemory" },
+								   { w5_n_other, "NtCreateFile" } } )
+		{
+			f.syscalls.by_number[ n ] = name;
+			f.syscalls.by_name[ name ] = n;
+		}
+		f.syscalls.nt_exports = f.syscalls.stubs = 7;
+		f.page_size = 0x1000;
+		f.allocation_granularity = 0x10000;
+		f.active_processor_mask = 0xFF;
+		return f;
+	}
+
+	struct w5_import
+	{
+		std::string dll;
+		std::vector<std::string> names;
+	};
+	struct w5_spec
+	{
+		std::string entry_asm;          // assembled at base + 1000H
+		std::string callback_asm;       // assembled at base + 1800H ("" = none)
+		std::vector<w5_import> imports;
+		bool tls = false;
+		bool tls_callback = true;
+	};
+
+	// the IAT slot of each imported name: .rdata 2200H on, 8 bytes each, one zero slot after each module
+	std::map<std::string, uint64_t> w5_iat_map( const w5_spec& s )
+	{
+		std::map<std::string, uint64_t> m;
+		uint64_t at = w5_base + 0x2200;
+		for ( auto& mod : s.imports )
+		{
+			for ( auto& n : mod.names )
+			{
+				m[ n ] = at;
+				at += 8;
+			}
+			at += 8;
+		}
+		return m;
+	}
+
+	// "IAT(Name)" in the assembly text -> the slot's address
+	std::string w5_fill( std::string t, const std::map<std::string, uint64_t>& iat )
+	{
+		for ( auto& [ n, va ] : iat )
+		{
+			const std::string key = "IAT(" + n + ")";
+			char b[ 32 ];
+			std::snprintf( b, sizeof( b ), "0x%llx", (unsigned long long)va );
+			for ( size_t p; ( p = t.find( key ) ) != std::string::npos; ) t.replace( p, key.size(), b );
+		}
+		return t;
+	}
+
+	// .text 1000H (entry; a TLS callback at 1800H), .rdata 2000H (import descriptors 2000H, ILT 2100H, IAT 2200H, hint / names
+	// 2400H, DLL names 2700H, IMAGE_TLS_DIRECTORY64 2800H, callback array 2840H), .data 3000H (variables; TLS index 3080H, the TLS
+	// template [3100H, 3110H) + 10H zero bytes)
+	std::vector<uint8_t> w5_build( const w5_spec& s, std::string& err )
+	{
+		w4_pe p;
+		p.image_base = w5_base;
+		p.entry_rva = 0x1000;
+		const auto iat = w5_iat_map( s );
+		std::vector<uint8_t> text, cb;
+		if ( !emu::assemble( w5_fill( s.entry_asm, iat ), w5_base + 0x1000, text, err ) ) return {};
+		if ( text.size() > 0x800 )
+		{
+			err = "entry code longer than 800H";
+			return {};
+		}
+		if ( !s.callback_asm.empty() )
+		{
+			if ( !emu::assemble( s.callback_asm, w5_base + 0x1800, cb, err ) ) return {};
+			text.resize( 0x800, 0xCC );
+			text.insert( text.end(), cb.begin(), cb.end() );
+		}
+		std::vector<uint8_t> rdata( 0x900, 0 );
+		auto p32 = [ & ]( size_t at, uint32_t v ) { std::memcpy( rdata.data() + at, &v, 4 ); };
+		auto p64 = [ & ]( size_t at, uint64_t v ) { std::memcpy( rdata.data() + at, &v, 8 ); };
+		size_t ilt = 0x100, iatp = 0x200, hn = 0x400, dn = 0x700;
+		for ( size_t i = 0; i < s.imports.size(); i++ )
+		{
+			const auto& mod = s.imports[ i ];
+			p32( 20 * i + 0, uint32_t( 0x2000 + ilt ) );    // OriginalFirstThunk
+			p32( 20 * i + 12, uint32_t( 0x2000 + dn ) );    // Name
+			p32( 20 * i + 16, uint32_t( 0x2000 + iatp ) );  // FirstThunk
+			std::memcpy( rdata.data() + dn, mod.dll.c_str(), mod.dll.size() + 1 );
+			dn += mod.dll.size() + 1;
+			for ( auto& n : mod.names )
+			{
+				p64( ilt, 0x2000 + hn );
+				p64( iatp, 0x2000 + hn );
+				ilt += 8;
+				iatp += 8;
+				hn += 2;   // Hint 0
+				std::memcpy( rdata.data() + hn, n.c_str(), n.size() + 1 );
+				hn = ( hn + n.size() + 2 ) & ~size_t( 1 );
+			}
+			ilt += 8;
+			iatp += 8;
+		}
+		if ( !s.imports.empty() ) p.dirs[ 1 ] = { 0x2000, uint32_t( 20 * ( s.imports.size() + 1 ) ) };
+		std::vector<uint8_t> data( 0x200, 0 );
+		if ( s.tls )
+		{
+			p64( 0x800, w5_base + 0x3100 );
+			p64( 0x808, w5_base + 0x3110 );
+			p64( 0x810, w5_base + 0x3080 );
+			p64( 0x818, s.tls_callback ? w5_base + 0x2840 : 0 );
+			p32( 0x820, 0x10 );
+			p64( 0x840, w5_base + 0x1800 );
+			p.dirs[ 9 ] = { 0x2800, 0x28 };
+			const uint64_t t0 = 0x1122334455667788ull, t1 = 0x99AABBCCDDEEFF00ull;
+			const uint32_t not_yet = 0xFFFFFFFF;   // the index variable before the loader writes 0
+			std::memcpy( data.data() + 0x100, &t0, 8 );
+			std::memcpy( data.data() + 0x108, &t1, 8 );
+			std::memcpy( data.data() + 0x80, &not_yet, 4 );
+		}
+		p.sections = { { ".text", 0x1000, text, w4_scn_text }, { ".rdata", 0x2000, rdata, w4_scn_rdata }, { ".data", 0x3000, data, w4_scn_data } };
+		return w4_build( p );
+	}
+
+	std::unique_ptr<emu::win::process> w5_create( const std::vector<uint8_t>& file, emu::env_boundary b, std::string& err, uint64_t max_insns = 200000 )
+	{
+		emu::engine_config ec;
+		ec.profile = emu::cpu_profile_choice::guest;
+		emu::win::process_options po;
+		po.boundary = b;
+		po.max_insns = max_insns;
+		po.image_name = "w5";
+		std::vector<std::string> log;
+		return emu::win::process::create( ec, w5_facts(), po, file, log, err );
+	}
+
+	struct w5_run
+	{
+		std::unique_ptr<emu::win::process> p;
+		emu::win::run_result r;
+		std::string error;
+		bool ok = false;
+	};
+	w5_run w5_go( const std::vector<uint8_t>& file, emu::env_boundary b )
+	{
+		w5_run w;
+		w.p = w5_create( file, b, w.error );
+		if ( w.p ) w.ok = w.p->run( w.r, w.error );
+		return w;
+	}
+
+	emu::nt::reply w5_call( emu::win::process& p, const char* name, std::initializer_list<uint64_t> a, bool stack_ok = true )
+	{
+		emu::nt::call c;
+		c.name = name;
+		size_t i = 0;
+		for ( auto v : a ) c.args[ i++ ] = v;
+		c.stack_args = stack_ok;
+		const auto it = p.syscalls().by_name.find( name );
+		if ( it != p.syscalls().by_name.end() ) c.number = it->second;
+		return p.kern().dispatch( c );
+	}
+	void w5_put( emu::win::process& p, uint64_t va, uint64_t v )
+	{
+		std::string err;
+		CHECK( p.eng().write( va, &v, 8, err ), "guest write " + err );
+	}
+	bool w5_ok( const emu::nt::reply& r ) { return r.kind == emu::nt::reply_kind::done && r.status == emu::nt::status::success; }
+	bool w5_status( const emu::nt::reply& r, uint32_t st ) { return r.kind == emu::nt::reply_kind::done && r.status == st; }
+	bool w5_stop( const emu::nt::reply& r ) { return r.kind == emu::nt::reply_kind::stop; }
+
+	struct w5_mbi { uint64_t base, alloc_base; uint32_t alloc_protect; uint16_t partition, pad; uint64_t region; uint32_t state, protect, type, pad2; };
+	w5_mbi w5_query( emu::win::process& p, uint64_t addr, emu::nt::reply& r )
+	{
+		w5_mbi m{};
+		r = w5_call( p, "NtQueryVirtualMemory", { emu::nt::current_process, addr, 0, w5_scratch + 0x100, 0x30, w5_scratch + 0x180 } );
+		std::string err;
+		if ( w5_ok( r ) ) p.eng().read( w5_scratch + 0x100, &m, sizeof( m ), err );
+		return m;
+	}
+
+	const char* w5_trivial = "mov eax, 0x2C; mov r10, -1; mov edx, 0x2A; syscall; ud2";
+
+	// NtAllocateVirtualMemory / NtFreeVirtualMemory / NtQueryVirtualMemory: reserve, commit, decommit, release, query, the documented
+	// errors and the loud stops; the engine's region table stays equal to Unicorn's
+	void t_nt_kernel_vm()
+	{
+		std::string err;
+		auto p = w5_create( w5_build( { w5_trivial }, err ), emu::env_boundary::sys, err );
+		CHECK( p != nullptr, "process: " + err );
+		if ( !p ) return;
+		namespace N = emu::nt;
+		const uint64_t S = w5_scratch, cp = N::current_process;
+		// 1. reserve + commit 3000H read-write at a system-chosen address
+		w5_put( *p, S, 0 );
+		w5_put( *p, S + 8, 0x3000 );
+		auto r = w5_call( *p, "NtAllocateVirtualMemory", { cp, S, 0, S + 8, N::mem::commit | N::mem::reserve, N::page::readwrite } );
+		const uint64_t base = w4_read( *p, S, 8 ), size = w4_read( *p, S + 8, 8 );
+		std::cout << "  allocate: " << r.text << "; base " << std::hex << base << " size " << size << std::dec << "\n";
+		CHECK( w5_ok( r ) && base && !( base & 0xFFFF ) && base >= 0x10000 && size == 0x3000 && r.writes.size() == 2, "reserve+commit at a 64 KiB boundary, size 3000H" );
+		CHECK( p->eng().accessible( base, 0x3000, UC_PROT_READ | UC_PROT_WRITE ) && !p->eng().accessible( base, 0x3000, UC_PROT_EXEC ), "committed read-write, not executable" );
+		CHECK( w4_read( *p, base + 0x2FF8, 8 ) == 0, "a committed page reads zero" );
+		// 2. query the middle page: one run of 2 pages committed read-write
+		auto m = w5_query( *p, base + 0x1234, r );
+		CHECK( w5_ok( r ) && m.base == base + 0x1000 && m.alloc_base == base && m.alloc_protect == N::page::readwrite && m.region == 0x2000 && m.state == N::mem::commit &&
+				   m.protect == N::page::readwrite && m.type == N::mem::private_ && w4_read( *p, S + 0x180, 8 ) == 0x30,
+			   "MemoryBasicInformation of the middle page: " + r.text );
+		// 3. decommit the middle page, then three runs
+		w5_put( *p, S, base + 0x1000 );
+		w5_put( *p, S + 8, 0x1000 );
+		r = w5_call( *p, "NtFreeVirtualMemory", { cp, S, S + 8, N::mem::decommit } );
+		CHECK( w5_ok( r ) && !p->eng().accessible( base + 0x1000, 1, UC_PROT_READ ) && p->eng().accessible( base + 0x2000, 1, UC_PROT_READ ), "decommit: " + r.text );
+		m = w5_query( *p, base, r );
+		CHECK( w5_ok( r ) && m.region == 0x1000 && m.state == N::mem::commit, "run 1: the first page" );
+		m = w5_query( *p, base + 0x1000, r );
+		CHECK( w5_ok( r ) && m.region == 0x1000 && m.state == N::mem::reserve && m.protect == 0, "run 2: reserved, Protect 0" );
+		// 4. commit it again as execute-read at its address (MEM_COMMIT alone inside the reservation)
+		w5_put( *p, S, base + 0x1000 );
+		w5_put( *p, S + 8, 0x10 );
+		const auto rc = w5_call( *p, "NtAllocateVirtualMemory", { cp, S, 0, S + 8, N::mem::commit, N::page::execute_read } );
+		CHECK( w5_ok( rc ) && w4_read( *p, S, 8 ) == base + 0x1000 && w4_read( *p, S + 8, 8 ) == 0x1000, "MEM_COMMIT inside the reservation, rounded to the page: " + rc.text );
+		m = w5_query( *p, base + 0x1000, r );
+		CHECK( w5_ok( r ) && m.protect == N::page::execute_read && m.state == N::mem::commit, "re-committed execute-read" );
+		CHECK( p->eng().accessible( base + 0x1000, 0x1000, UC_PROT_READ | UC_PROT_EXEC ), "execute-read page: readable + executable" );
+		// 5. the loud stops of undocumented combinations
+		w5_put( *p, S, base );
+		w5_put( *p, S + 8, 0x1000 );
+		CHECK( w5_stop( w5_call( *p, "NtAllocateVirtualMemory", { cp, S, 0, S + 8, N::mem::commit, N::page::readonly } ) ), "re-commit with another protection: stop" );
+		w5_put( *p, S, 0 );
+		w5_put( *p, S + 8, 0 );
+		CHECK( w5_stop( w5_call( *p, "NtAllocateVirtualMemory", { cp, S, 0, S + 8, N::mem::commit | N::mem::reserve, N::page::readwrite } ) ), "RegionSize 0: stop" );
+		w5_put( *p, S + 8, 0x1000 );
+		CHECK( w5_stop( w5_call( *p, "NtAllocateVirtualMemory", { cp, S, 0, S + 8, N::mem::commit | N::mem::reserve, N::page::readwrite | N::page::guard } ) ), "PAGE_GUARD: stop (M7)" );
+		CHECK( w5_stop( w5_call( *p, "NtAllocateVirtualMemory", { cp, S, 0, S + 8, N::mem::commit | N::mem::reserve, N::page::writecopy } ) ), "PAGE_WRITECOPY: stop" );
+		CHECK( w5_stop( w5_call( *p, "NtAllocateVirtualMemory", { cp, S, 0, S + 8, 0x80000, N::page::readwrite } ) ), "MEM_RESET: stop" );
+		CHECK( w5_stop( w5_call( *p, "NtAllocateVirtualMemory", { cp, S, 1, S + 8, N::mem::commit | N::mem::reserve, N::page::readwrite } ) ), "ZeroBits: stop" );
+		CHECK( w5_stop( w5_call( *p, "NtAllocateVirtualMemory", { 0x1234, S, 0, S + 8, N::mem::commit | N::mem::reserve, N::page::readwrite } ) ), "another process handle: stop" );
+		CHECK( w5_stop( w5_call( *p, "NtAllocateVirtualMemory", { cp, S, 0, S + 8, N::mem::commit | N::mem::reserve, N::page::readwrite }, false ) ), "stack arguments unreadable: stop" );
+		// 6. documented status values
+		CHECK( w5_status( w5_call( *p, "NtAllocateVirtualMemory", { cp, S, 0, S + 8, N::mem::commit | N::mem::reserve, 3 } ), N::status::invalid_page_protection ), "Protect 3: STATUS_INVALID_PAGE_PROTECTION" );
+		CHECK( w5_status( w5_call( *p, "NtAllocateVirtualMemory", { cp, S, 0, S + 8, N::mem::commit | N::mem::reserve, 0 } ), N::status::invalid_page_protection ), "Protect 0: STATUS_INVALID_PAGE_PROTECTION" );
+		w5_put( *p, S, w5_base + 0x1000 );
+		w5_put( *p, S + 8, 0x1000 );
+		r = w5_call( *p, "NtAllocateVirtualMemory", { cp, S, 0, S + 8, N::mem::reserve, N::page::readwrite } );
+		CHECK( w5_status( r, N::status::conflicting_addresses ) && w4_read( *p, S, 8 ) == w5_base + 0x1000, "reserve over the image: STATUS_CONFLICTING_ADDRESSES, nothing written: " + r.text );
+		for ( uint64_t bad : { 0x10ull, uint64_t( emu::win::guest_kuser_va ), emu::win::guest_kernel_gdt_va, w5_base + 0x2000, 0xFFFFFFFFFFFFFFF8ull } )
+		{
+			r = w5_call( *p, "NtAllocateVirtualMemory", { cp, bad, 0, S + 8, N::mem::commit | N::mem::reserve, N::page::readwrite } );
+			CHECK( w5_status( r, N::status::access_violation ) && r.writes.empty(), "BaseAddress pointer " + std::to_string( bad ) + ": STATUS_ACCESS_VIOLATION, nothing written" );
+		}
+		// 7. reserve only at a given free address, then release; MEM_TOP_DOWN
+		w5_put( *p, S, 0x50001234 );
+		w5_put( *p, S + 8, 0x10000 );
+		r = w5_call( *p, "NtAllocateVirtualMemory", { cp, S, 0, S + 8, N::mem::reserve, N::page::readwrite } );
+		CHECK( w5_ok( r ) && w4_read( *p, S, 8 ) == 0x50000000 && w4_read( *p, S + 8, 8 ) == 0x12000, "reserve at 50001234H: base rounded down to 64 KiB, size to the page end: " + r.text );
+		m = w5_query( *p, 0x50000000, r );
+		CHECK( w5_ok( r ) && m.state == N::mem::reserve && m.region == 0x12000 && !p->eng().accessible( 0x50000000, 1, UC_PROT_READ ), "reserved, no access" );
+		w5_put( *p, S, 0x50000000 );
+		w5_put( *p, S + 8, 0 );
+		r = w5_call( *p, "NtFreeVirtualMemory", { cp, S, S + 8, N::mem::release } );
+		CHECK( w5_ok( r ) && w4_read( *p, S + 8, 8 ) == 0x12000, "release: the size released returned" );
+		m = w5_query( *p, 0x50000000, r );
+		CHECK( w5_ok( r ) && m.state == N::mem::free_ && m.protect == N::page::noaccess && m.alloc_base == 0, "after release: MEM_FREE" );
+		w5_put( *p, S, 0 );
+		w5_put( *p, S + 8, 0x1000 );
+		r = w5_call( *p, "NtAllocateVirtualMemory", { cp, S, 0, S + 8, N::mem::commit | N::mem::reserve | N::mem::top_down, N::page::readwrite } );
+		const uint64_t top = w4_read( *p, S, 8 );
+		CHECK( w5_ok( r ) && top > 0x7FF000000000ull && top + 0x10000 - 1 <= 0x7FFFFFFEFFFFull, "MEM_TOP_DOWN: the highest free 64 KiB in the user range" );
+		// 8. release errors and queries of environment / out-of-range addresses
+		w5_put( *p, S, base );
+		w5_put( *p, S + 8, 0x1000 );
+		CHECK( w5_stop( w5_call( *p, "NtFreeVirtualMemory", { cp, S, S + 8, N::mem::release } ) ), "MEM_RELEASE with a size: stop" );
+		w5_put( *p, S, base + 0x1000 );
+		w5_put( *p, S + 8, 0 );
+		CHECK( w5_stop( w5_call( *p, "NtFreeVirtualMemory", { cp, S, S + 8, N::mem::release } ) ), "MEM_RELEASE not at the base: stop" );
+		CHECK( w5_stop( w5_call( *p, "NtFreeVirtualMemory", { cp, S, S + 8, 0x1 } ) ), "FreeType 1: stop" );
+		w5_query( *p, w5_base + 0x1000, r );
+		CHECK( w5_stop( r ) && r.text.find( "environment region" ) != std::string::npos, "query of the image: stop (no cited source for Windows' answer)" );
+		w5_query( *p, 0x7FFFFFFF0000ull, r );
+		CHECK( w5_stop( r ), "query above the user range: stop" );
+		m = w5_query( *p, 0x20000000, r );
+		CHECK( w5_ok( r ) && m.state == N::mem::free_ && m.base == 0x20000000 && m.region > 0x10000000, "free range: MEM_FREE up to the next region" );
+		CHECK( w5_stop( w5_call( *p, "NtQueryVirtualMemory", { cp, base, 2, S + 0x100, 0x30, 0 } ) ), "MemoryInformationClass 2: stop" );
+		CHECK( w5_stop( w5_call( *p, "NtQueryVirtualMemory", { cp, base, 0, S + 0x100, 0x20, 0 } ) ), "short buffer: stop" );
+		CHECK( w5_status( w5_call( *p, "NtQueryVirtualMemory", { cp, base, 0, w5_base + 0x2000, 0x30, 0 } ), N::status::access_violation ), "read-only buffer: STATUS_ACCESS_VIOLATION" );
+		CHECK( w5_ok( w5_call( *p, "NtQueryVirtualMemory", { cp, base, 0, S + 0x100, 0x30, 0 } ) ), "ReturnLength NULL is optional" );
+		w5_put( *p, S, base );
+		w5_put( *p, S + 8, 0 );
+		r = w5_call( *p, "NtFreeVirtualMemory", { cp, S, S + 8, N::mem::release } );
+		CHECK( w5_ok( r ) && !p->eng().accessible( base, 1, UC_PROT_READ ), "release of the first allocation" );
+		for ( auto& l : p->kern().describe() ) std::cout << "  " << l << "\n";
+		CHECK( p->kern().allocations().size() == 1, "one allocation left (the MEM_TOP_DOWN one)" );
+		CHECK( p->eng().check_regions( err ), "engine region table = Unicorn's: " + err );
+	}
+
+	// NtQueryInformationProcess: the documented classes of winternl.h; the rest stops
+	void t_nt_kernel_process_info()
+	{
+		std::string err;
+		auto p = w5_create( w5_build( { w5_trivial }, err ), emu::env_boundary::sys, err );
+		CHECK( p != nullptr, "process: " + err );
+		if ( !p ) return;
+		namespace N = emu::nt;
+		const uint64_t S = w5_scratch, cp = N::current_process;
+		for ( uint64_t i = 0; i < 8; i++ ) w5_put( *p, S + 8 * i, 0xEEEEEEEEEEEEEEEEull );
+		auto r = w5_call( *p, "NtQueryInformationProcess", { cp, 0, S, 0x30, S + 0x40 } );
+		std::cout << "  class 0: " << r.text << "\n";
+		CHECK( w5_ok( r ) && w4_read( *p, S + 8, 8 ) == p->peb() && w4_read( *p, S + 32, 8 ) == emu::win::guest_process_id && w4_read( *p, S, 8 ) == 0 &&
+				   w4_read( *p, S + 40, 8 ) == 0 && w4_read( *p, S + 0x40, 4 ) == 0x30,
+			   "ProcessBasicInformation: PebBaseAddress, UniqueProcessId, the reserved members 0, ReturnLength 30H" );
+		for ( auto [ cls, len ] : { std::pair<uint64_t, uint64_t>{ 7, 8 }, { 26, 8 }, { 29, 4 } } )
+		{
+			w5_put( *p, S, 0xEEEEEEEEEEEEEEEEull );
+			r = w5_call( *p, "NtQueryInformationProcess", { cp, cls, S, len, 0 } );
+			CHECK( w5_ok( r ) && ( w4_read( *p, S, 8 ) & ( len == 8 ? ~0ull : 0xFFFFFFFFull ) ) == 0, "class " + std::to_string( cls ) + ": 0 (" + r.text + ")" );
+		}
+		CHECK( w5_stop( w5_call( *p, "NtQueryInformationProcess", { cp, 0, S, 0x20, 0 } ) ), "class 0 with length 20H: stop (status not documented)" );
+		for ( uint64_t cls : { 1ull, 27ull, 30ull, 31ull, 0x100000000ull + 5 } )
+			CHECK( w5_stop( w5_call( *p, "NtQueryInformationProcess", { cp, cls, S, 8, 0 } ) ), "class " + std::to_string( cls & 0xFFFFFFFF ) + ": stop (not documented in winternl.h)" );
+		CHECK( w5_status( w5_call( *p, "NtQueryInformationProcess", { cp, 7, 0x10, 8, 0 } ), N::status::access_violation ), "unmapped buffer: STATUS_ACCESS_VIOLATION" );
+		CHECK( w5_status( w5_call( *p, "NtQueryInformationProcess", { cp, 7, S, 8, emu::win::guest_kuser_va } ), N::status::access_violation ), "read-only ReturnLength: STATUS_ACCESS_VIOLATION" );
+		CHECK( w5_stop( w5_call( *p, "NtQueryInformationProcess", { 4, 7, S, 8, 0 } ) ), "another process handle: stop" );
+		CHECK( w5_stop( w5_call( *p, "NtQueryInformationProcess", { cp, 7, S, 8, 0 }, false ) ), "stack argument unreadable: stop" );
+	}
+
+	// NtClose: a handle no service created = STATUS_INVALID_HANDLE (ZwClose), a pseudo handle stops; NtTerminateProcess; an
+	// unimplemented / unknown service
+	void t_nt_kernel_close_terminate()
+	{
+		std::string err;
+		auto p = w5_create( w5_build( { w5_trivial }, err ), emu::env_boundary::sys, err );
+		CHECK( p != nullptr, "process: " + err );
+		if ( !p ) return;
+		namespace N = emu::nt;
+		for ( uint64_t h : { 0ull, 4ull, 0x1234ull, 0x7FFFFFFFFFFFFFFFull } )
+			CHECK( w5_status( w5_call( *p, "NtClose", { h } ), N::status::invalid_handle ), "NtClose( " + std::to_string( h ) + " ): STATUS_INVALID_HANDLE" );
+		for ( uint64_t h : { N::current_process, N::current_thread, ~0ull - 5 } ) CHECK( w5_stop( w5_call( *p, "NtClose", { h } ) ), "NtClose of a pseudo handle: stop" );
+		auto r = w5_call( *p, "NtTerminateProcess", { N::current_process, 0x1234567800000077ull } );
+		CHECK( r.kind == N::reply_kind::terminated && r.exit_status == 0x77, "NtTerminateProcess( NtCurrentProcess() ): terminated, ExitStatus = the low 32 bits" );
+		CHECK( w5_stop( w5_call( *p, "NtTerminateProcess", { 0, 1 } ) ) && w5_stop( w5_call( *p, "NtTerminateProcess", { 0x40, 1 } ) ), "NtTerminateProcess of NULL / a handle: stop" );
+		r = w5_call( *p, "NtCreateFile", {} );
+		CHECK( w5_stop( r ) && r.text.find( "not implemented in milestone M5" ) != std::string::npos, "a known, unimplemented service: stop" );
+		emu::nt::call u;
+		u.number = 0x7AB;
+		CHECK( w5_stop( p->kern().dispatch( u ) ), "an unknown service (no name): stop" );
+	}
+
+	// the T4 shape: direct SYSCALLs from the image (NtQueryInformationProcess 0 / 7 - the second with EAX bits 31:16 set),
+	// NtAllocateVirtualMemory RWX, a stub WRITTEN by the guest into that memory and CALLED (SYSCALL from allocated memory: plan
+	// 1.K.6), NtFreeVirtualMemory, NtTerminateProcess - in both modes, identical observable results
+	std::string w5_t4_asm()
+	{
+		char b[ 4096 ];
+		const uint64_t D = w5_data;
+		std::snprintf( b, sizeof( b ),
+					   "sub rsp, 0x88\n"
+					   "mov r10, -1; xor edx, edx; mov r8, 0x%llx; mov r9d, 0x30; mov rax, 0x%llx; mov [rsp+0x28], rax; mov eax, 0x%x; syscall\n"
+					   "test eax, eax; jne bad1\n"
+					   "mov rax, 0x%llx; mov rcx, gs:[0x60]; cmp [rax+8], rcx; jne bad2; mov rcx, gs:[0x40]; cmp [rax+0x20], rcx; jne bad2\n"
+					   "mov r10, -1; mov edx, 7; mov r8, 0x%llx; mov r9d, 8; mov qword ptr [rsp+0x28], 0; mov eax, 0xABCD0000; or eax, 0x%x; syscall\n"
+					   "test eax, eax; jne bad3; mov rax, 0x%llx; cmp qword ptr [rax], 0; jne bad3\n"
+					   "mov rax, 0x%llx; mov qword ptr [rax], 0; mov qword ptr [rax+8], 0x1000\n"
+					   "mov r10, -1; mov rdx, 0x%llx; xor r8d, r8d; mov r9, 0x%llx; mov qword ptr [rsp+0x28], 0x3000; mov qword ptr [rsp+0x30], 0x40; mov eax, 0x%x; syscall\n"
+					   "test eax, eax; jne bad4\n"
+					   "mov rax, 0x%llx; mov rbx, [rax]; mov dword ptr [rbx], 0xB8D18B4C; mov dword ptr [rbx+4], 0x%x; mov word ptr [rbx+8], 0x050F; mov byte ptr [rbx+10], 0xC3\n"
+					   "mov rcx, -1; mov rdx, rbx; xor r8d, r8d; mov r9, 0x%llx; mov qword ptr [rsp+0x20], 0x30; mov rax, 0x%llx; mov [rsp+0x28], rax; call rbx\n"
+					   "test eax, eax; jne bad5\n"
+					   "mov rax, 0x%llx; cmp [rax], rbx; jne bad6; cmp [rax+8], rbx; jne bad6; cmp dword ptr [rax+0x10], 0x40; jne bad6; cmp qword ptr [rax+0x18], 0x1000; jne bad6\n"
+					   "cmp dword ptr [rax+0x20], 0x1000; jne bad6; cmp dword ptr [rax+0x24], 0x40; jne bad6; cmp dword ptr [rax+0x28], 0x20000; jne bad6\n"
+					   "mov rax, 0x%llx; mov qword ptr [rax+8], 0\n"
+					   "mov r10, -1; mov rdx, 0x%llx; mov r8, 0x%llx; mov r9d, 0x8000; mov eax, 0x%x; syscall\n"
+					   "test eax, eax; jne bad7\n"
+					   "mov edx, 0x2D; jmp done\n"
+					   "bad1: mov edx, 0x101; jmp done\n"
+					   "bad2: mov edx, 0x102; jmp done\n"
+					   "bad3: mov edx, 0x103; jmp done\n"
+					   "bad4: mov edx, 0x104; jmp done\n"
+					   "bad5: mov edx, 0x105; jmp done\n"
+					   "bad6: mov edx, 0x106; jmp done\n"
+					   "bad7: mov edx, 0x107\n"
+					   "done: mov r10, -1; mov eax, 0x%x; syscall; ud2\n",
+					   (unsigned long long)( D + 0x100 ), (unsigned long long)( D + 0x180 ), w5_n_qip, (unsigned long long)( D + 0x100 ), (unsigned long long)( D + 0x140 ), w5_n_qip,
+					   (unsigned long long)( D + 0x140 ), (unsigned long long)( D + 0x40 ), (unsigned long long)( D + 0x40 ), (unsigned long long)( D + 0x48 ), w5_n_alloc,
+					   (unsigned long long)( D + 0x40 ), w5_n_qvm, (unsigned long long)( D + 0x1C0 ) - 0x100, (unsigned long long)( D + 0x1F8 ) - 0x100,
+					   (unsigned long long)( D + 0x1C0 ) - 0x100, (unsigned long long)( D + 0x40 ), (unsigned long long)( D + 0x40 ), (unsigned long long)( D + 0x48 ), w5_n_free,
+					   w5_n_term );
+		return b;
+	}
+
+	void t_win_env_syscall_layer_run()
+	{
+		std::string err;
+		const auto f = w5_build( { w5_t4_asm() }, err );
+		CHECK( !f.empty(), "T4-shaped image: " + err );
+		if ( f.empty() ) return;
+		std::vector<std::string> first;
+		for ( auto b : { emu::env_boundary::sys, emu::env_boundary::hle } )
+		{
+			auto w = w5_go( f, b );
+			CHECK( w.p && w.ok, "process: " + w.error );
+			if ( !w.p ) continue;
+			std::cout << "  " << emu::name_of( b ) << ": " << emu::win::name_of( w.r.stop ) << " - " << w.r.detail << "; exit " << std::hex << w.r.exit_status << std::dec << ", "
+					  << w.r.syscalls.size() << " system calls\n";
+			for ( auto& s : w.r.syscalls ) std::cout << "    " << s.name << " at " << std::hex << s.at << " rax " << s.rax << std::dec << ": " << s.outcome << "\n";
+			CHECK( w.r.stop == emu::win::stop_kind::terminated && w.r.exit_status == 0x2D, "exit status 2DH (every check of the guest passed)" );
+			CHECK( w.r.syscalls.size() == 6 && w.r.syscall_insns == 6 && w.r.syscalls_handled == 6, "6 SYSCALLs, all handled by the kernel layer" );
+			if ( w.r.syscalls.size() == 6 )
+			{
+				CHECK( w.r.syscalls[ 1 ].rax == 0xABCD0000ull + w5_n_qip && w.r.syscalls[ 1 ].number == w5_n_qip && w.r.syscalls[ 1 ].answered, "EAX bits 31:16 set: dispatched on EAX AND FFFFH (plan 6.4.a)" );
+				const uint64_t at = w.r.syscalls[ 3 ].at;
+				CHECK( w.r.syscalls[ 3 ].name == "NtQueryVirtualMemory" && !( at >= w5_base && at < w5_base + 0x4000 ) && at >= 0x10000 && at < 0x1000000,
+					   "the SYSCALL of the guest-written stub came from allocated memory, not from the image (plan 1.K.6)" );
+			}
+			const auto obs = w.p->observable( w.r );
+			if ( b == emu::env_boundary::sys ) first = obs;
+			else CHECK( obs == first, "--Sys and --HLE: identical observable results (" + std::to_string( obs.size() ) + " lines)" );
+		}
+	}
+
+	// the T2 shape under --HLE: kernel32.dll GetCurrentProcessId / GetModuleHandleW( NULL ) / ExitProcess through the stubs; an
+	// unimplemented import stops when CALLED; --Sys refuses (LdrInitializeThunk)
+	void t_win_env_hle_imports()
+	{
+		w5_spec s;
+		s.imports = { { "KERNEL32.dll", { "GetCurrentProcessId", "GetModuleHandleW", "ExitProcess", "Sleep" } } };
+		s.entry_asm = "sub rsp, 0x28\n"
+					  "mov rax, IAT(GetCurrentProcessId); call qword ptr [rax]; mov rcx, gs:[0x40]; cmp eax, ecx; jne bad1\n"
+					  "xor ecx, ecx; mov rax, IAT(GetModuleHandleW); call qword ptr [rax]; mov rcx, gs:[0x60]; cmp rax, [rcx+0x10]; jne bad2\n"
+					  "mov ecx, 0x2B; jmp done\n"
+					  "bad1: mov ecx, 0x101; jmp done\n"
+					  "bad2: mov ecx, 0x102\n"
+					  "done: mov rax, IAT(ExitProcess); call qword ptr [rax]; ud2\n";
+		std::string err;
+		const auto f = w5_build( s, err );
+		CHECK( !f.empty(), "T2-shaped image: " + err );
+		if ( f.empty() ) return;
+		auto w = w5_go( f, emu::env_boundary::hle );
+		CHECK( w.p && w.ok, "process: " + w.error );
+		if ( w.p )
+		{
+			for ( auto& a : w.r.api_calls ) std::cout << "  api " << a.api << " -> " << a.outcome << "\n";
+			CHECK( w.r.stop == emu::win::stop_kind::terminated && w.r.exit_status == 0x2B, "--HLE: exit status 2BH: " + w.r.detail );
+			CHECK( w.r.api_calls.size() == 3 && w.r.api_calls[ 0 ].api == "KERNEL32.dll!GetCurrentProcessId" && w.r.api_calls[ 2 ].api == "KERNEL32.dll!ExitProcess" &&
+					   w.r.syscalls.empty(),
+				   "three API calls through the stubs, no SYSCALL" );
+			CHECK( w4_read( *w.p, w5_base + 0x2200, 8 ) == emu::hle::module_va && w4_read( *w.p, w5_base + 0x2218, 8 ) == emu::hle::module_va + 3 * emu::hle::stub_size,
+				   "IAT slots bound to the stubs (also the unimplemented one)" );
+		}
+		auto sys = w5_go( f, emu::env_boundary::sys );
+		std::cout << "  --Sys: " << ( sys.p ? "accepted" : sys.error.substr( 0, 160 ) ) << "\n";
+		CHECK( !sys.p && sys.error.find( "LdrInitializeThunk" ) != std::string::npos && sys.error.find( "KERNEL32.dll" ) != std::string::npos, "--Sys refuses the import (no cited source)" );
+		// calling the unimplemented import: a loud stop naming it
+		w5_spec u = s;
+		u.entry_asm = "sub rsp, 0x28; mov ecx, 5; mov rax, IAT(Sleep); call qword ptr [rax]; ud2";
+		const auto fu = w5_build( u, err );
+		auto wu = w5_go( fu, emu::env_boundary::hle );
+		CHECK( wu.p && wu.ok && wu.r.stop == emu::win::stop_kind::unimplemented_api && wu.r.detail.find( "KERNEL32.dll!Sleep" ) != std::string::npos, "unimplemented API: " + wu.r.detail );
+		if ( wu.p ) CHECK( has_line( wu.p->state_dump( wu.r ), "last API call (--HLE): #1 KERNEL32.dll!Sleep" ), "the state dump names the API call" );
+		// GetModuleHandleA with a name: stop
+		u.imports = { { "kernel32.dll", { "GetModuleHandleA" } } };
+		u.entry_asm = "sub rsp, 0x28; mov rcx, 0x140003000; mov rax, IAT(GetModuleHandleA); call qword ptr [rax]; ud2";
+		auto wn = w5_go( w5_build( u, err ), emu::env_boundary::hle );
+		CHECK( wn.p && wn.r.stop == emu::win::stop_kind::unimplemented_api, "GetModuleHandleA( name ): stop" );
+	}
+
+	// the T3 shape under --HLE: the TLS callback runs once before the entry with ( image base, DLL_PROCESS_ATTACH, 0 ); the TLS
+	// block holds the template + zero fill; index 0 written; --Sys refuses
+	void t_win_env_hle_tls()
+	{
+		w5_spec s;
+		s.tls = true;
+		s.callback_asm = "mov rax, 0x140003000; inc dword ptr [rax]; mov [rax+8], rcx; mov [rax+0x10], rdx; mov [rax+0x18], r8; ret";
+		s.entry_asm = "mov rax, 0x140003000\n"
+					  "cmp dword ptr [rax], 1; jne bad1\n"
+					  "cmp qword ptr [rax+0x10], 1; jne bad2\n"
+					  "mov rcx, 0x140000000; cmp [rax+8], rcx; jne bad3\n"
+					  "mov rcx, gs:[0x58]; mov edx, dword ptr [rax+0x80]; mov rcx, [rcx+rdx*8]\n"
+					  "mov rdx, 0x1122334455667788; cmp [rcx], rdx; jne bad4; cmp qword ptr [rcx+0x10], 0; jne bad5; cmp qword ptr [rcx+0x18], 0; jne bad5\n"
+					  "mov edx, 0x2E; jmp done\n"
+					  "bad1: mov edx, 0x101; jmp done\n"
+					  "bad2: mov edx, 0x102; jmp done\n"
+					  "bad3: mov edx, 0x103; jmp done\n"
+					  "bad4: mov edx, 0x104; jmp done\n"
+					  "bad5: mov edx, 0x105\n"
+					  "done: mov r10, -1; mov eax, 0x2C; syscall; ud2\n";
+		std::string err;
+		const auto f = w5_build( s, err );
+		CHECK( !f.empty(), "T3-shaped image: " + err );
+		if ( f.empty() ) return;
+		auto w = w5_go( f, emu::env_boundary::hle );
+		CHECK( w.p && w.ok, "process: " + w.error );
+		if ( w.p )
+		{
+			std::cout << "  --HLE: " << emu::win::name_of( w.r.stop ) << " exit " << std::hex << w.r.exit_status << std::dec << ", start " << std::hex << w.p->start_va() << std::dec << "\n";
+			CHECK( w.r.stop == emu::win::stop_kind::terminated && w.r.exit_status == 0x2E, "exit status 2EH: the callback ran once with (base, 1, 0) and the TLS block is right" );
+			CHECK( w.p->start_va() == emu::hle::trampoline_va && w4_read( *w.p, w5_base + 0x3018, 8 ) == 0 && w4_read( *w.p, w5_base + 0x3080, 4 ) == 0, "trampoline start, Reserved 0, index 0" );
+		}
+		auto sys = w5_go( f, emu::env_boundary::sys );
+		CHECK( !sys.p && sys.error.find( "has a TLS directory" ) != std::string::npos, "--Sys refuses TLS: " + sys.error.substr( 0, 120 ) );
+		// TLS without callbacks: no trampoline, the block still set up
+		w5_spec n = s;
+		n.tls_callback = false;
+		n.callback_asm.clear();
+		n.entry_asm = "mov rcx, gs:[0x58]; mov rcx, [rcx]; mov rdx, 0x99AABBCCDDEEFF00; mov edx, 0x2E; mov r8, 0x99AABBCCDDEEFF00; cmp [rcx+8], r8; je ok; mov edx, 0x109\n"
+					  "ok: mov r10, -1; mov eax, 0x2C; syscall; ud2";
+		auto wn = w5_go( w5_build( n, err ), emu::env_boundary::hle );
+		CHECK( wn.p && wn.ok && wn.r.exit_status == 0x2E && wn.p->start_va() == wn.p->entry(), "TLS without callbacks: the entry starts directly, the block holds the template" );
+	}
+
+	// AGENT_RULES "Host safety": "Fuzz the layer." 4000 calls with random services and random arguments (pointers into every kind
+	// of region and outside: unmapped, read-only, kernel, wrapping, huge sizes): every call ends answered / terminated / stopped,
+	// an answered STATUS_SUCCESS wrote its OUT parameters into writable user memory, the host process is unaffected and the
+	// engine's region table stays exact
+	void t_win_env_syscall_fuzz()
+	{
+		std::string err;
+		auto p = w5_create( w5_build( { w5_trivial }, err ), emu::env_boundary::sys, err );
+		CHECK( p != nullptr, "process: " + err );
+		if ( !p ) return;
+		uint64_t x = 0x9E3779B97F4A7C15ull;
+		auto rnd = [ & ]() { x ^= x >> 12; x ^= x << 25; x ^= x >> 27; return x * 0x2545F4914F6CDD1Dull; };
+		const char* names[] = { "NtTerminateProcess", "NtClose", "NtAllocateVirtualMemory", "NtFreeVirtualMemory", "NtQueryVirtualMemory", "NtQueryInformationProcess",
+								"NtCreateFile", "" };
+		const uint64_t ptrs[] = { 0, 1, 0x10, 0xFFF, w5_scratch, w5_scratch + 0x8, w5_scratch + 0xFFF8, emu::win::guest_stack_top - 4, emu::win::guest_kuser_va, w5_base + 0x2000,
+								  w5_base + 0x3000, emu::win::guest_kernel_gdt_va, 0x7FFFFFFEFFFDull, 0xFFFFFFFFFFFFF000ull, 0x8000000000000000ull, emu::win::guest_peb_va + 0xFF8 };
+		uint64_t answered = 0, ok = 0, stopped = 0, terminated = 0, violations = 0;
+		for ( int i = 0; i < 4000; i++ )
+		{
+			// fresh values behind the scratch pointers: small / page / huge sizes, allocation bases
+			const uint64_t sizes[] = { 0, 1, 0x1000, 0x1234, 0x10000, 0x40000000, ~0ull, 0x7FFFFFFFFFFFull };
+			w5_put( *p, w5_scratch, rnd() % 4 ? 0 : ( rnd() % 2 ? 0x30000000 + ( rnd() & 0xFFFFF ) : rnd() ) );
+			w5_put( *p, w5_scratch + 8, sizes[ rnd() % 8 ] );
+			emu::nt::call c;
+			c.name = names[ rnd() % 8 ];
+			c.number = uint32_t( rnd() & 0xFFF );
+			for ( auto& a : c.args )
+			{
+				switch ( rnd() % 5 )
+				{
+					case 0: a = ptrs[ rnd() % ( sizeof( ptrs ) / 8 ) ]; break;
+					case 1: a = rnd(); break;
+					case 2: a = rnd() % 64; break;
+					case 3: { const uint32_t v[] = { 0x1000, 0x2000, 0x3000, 0x103000, 0x4000, 0x8000, 0x80000, 0x30 }; a = v[ rnd() % 8 ]; break; }
+					default: { const uint32_t v[] = { 1, 2, 4, 8, 0x10, 0x20, 0x40, 0x80, 0x104, 3, 0 }; a = v[ rnd() % 11 ]; break; }
+				}
+			}
+			if ( rnd() % 3 == 0 ) c.args[ 0 ] = emu::nt::current_process;
+			c.stack_args = rnd() % 8 != 0;
+			if ( rnd() % 2 == 0 )   // half the calls well-formed (then one argument perturbed in a quarter of them): the answered paths get exercised too
+			{
+				const uint64_t cp = emu::nt::current_process, S = w5_scratch;
+				const uint32_t types[] = { 0x3000, 0x103000, 0x2000, 0x1000 }, prots[] = { 2, 4, 0x10, 0x20, 0x40, 1 }, frees[] = { 0x8000, 0x4000 };
+				const uint64_t bases[] = { 0, 0x30000000, 0x10000 };
+				const std::string n = c.name;
+				if ( n == "NtAllocateVirtualMemory" )
+				{
+					w5_put( *p, S, bases[ rnd() % 3 ] );
+					w5_put( *p, S + 8, 0x1000 * ( 1 + rnd() % 8 ) );
+					c.args = { cp, S, 0, S + 8, types[ rnd() % 4 ], prots[ rnd() % 6 ] };
+				}
+				else if ( n == "NtFreeVirtualMemory" )
+				{
+					uint64_t b = 0;
+					if ( !p->kern().allocations().empty() ) b = p->kern().allocations().begin()->first;
+					w5_put( *p, S, b );
+					w5_put( *p, S + 8, rnd() % 2 ? 0 : 0x1000 );
+					c.args = { cp, S, S + 8, frees[ rnd() % 2 ], 0, 0 };
+				}
+				else if ( n == "NtQueryVirtualMemory" )
+				{
+					uint64_t a = rnd() % 2 ? 0x20000000 : ( p->kern().allocations().empty() ? 0x40000000 : p->kern().allocations().begin()->first );
+					c.args = { cp, a, 0, S + 0x100, 0x30, rnd() % 2 ? S + 0x180 : 0 };
+				}
+				else if ( n == "NtQueryInformationProcess" )
+				{
+					const uint32_t cls[] = { 0, 7, 26, 29 }, lens[] = { 0x30, 8, 8, 4 };
+					const size_t k = size_t( rnd() % 4 );
+					c.args = { cp, cls[ k ], S + 0x200, lens[ k ], rnd() % 2 ? S + 0x280 : 0, 0 };
+				}
+				c.stack_args = true;
+				if ( rnd() % 4 == 0 ) c.args[ size_t( rnd() % 6 ) ] = ptrs[ rnd() % ( sizeof( ptrs ) / 8 ) ];
+			}
+			const auto r = p->kern().dispatch( c );
+			if ( r.kind == emu::nt::reply_kind::done )
+			{
+				answered++;
+				if ( r.status == emu::nt::status::success )
+				{
+					ok++;
+					CHECK( !r.writes.empty() || c.name == std::string( "NtClose" ), "a STATUS_SUCCESS answer wrote its OUT parameters" );
+				}
+				else if ( !r.writes.empty() )
+				{
+					violations++;
+					CHECK( false, "an error status with OUT parameters written: " + c.name + " " + r.text );
+				}
+			}
+			else if ( r.kind == emu::nt::reply_kind::terminated )
+			{
+				terminated++;
+				CHECK( c.name == std::string( "NtTerminateProcess" ) && c.args[ 0 ] == emu::nt::current_process, "only NtTerminateProcess( NtCurrentProcess() ) terminates" );
+			}
+			else
+			{
+				stopped++;
+				CHECK( !r.text.empty(), "a stop names its reason" );
+			}
+			if ( i % 250 == 0 ) CHECK( p->eng().check_regions( err ), "engine region table = Unicorn's after call " + std::to_string( i ) + ": " + err );
+			if ( p->kern().allocations().size() > 64 )   // keep the guest memory bounded: release everything
+			{
+				std::vector<uint64_t> bases;
+				for ( auto& [ b, a ] : p->kern().allocations() ) bases.push_back( b );
+				for ( auto b : bases )
+				{
+					w5_put( *p, w5_scratch, b );
+					w5_put( *p, w5_scratch + 8, 0 );
+					CHECK( w5_ok( w5_call( *p, "NtFreeVirtualMemory", { emu::nt::current_process, w5_scratch, w5_scratch + 8, emu::nt::mem::release } ) ), "release" );
+				}
+			}
+		}
+		std::cout << "  fuzz: 4000 calls, " << answered << " answered (" << ok << " STATUS_SUCCESS), " << terminated << " terminated, " << stopped << " stopped, "
+				  << p->kern().allocations().size() << " allocations left, " << std::hex << p->eng().mapped_bytes() << std::dec << " bytes mapped\n";
+		CHECK( answered + terminated + stopped == 4000 && violations == 0 && ok > 50 && stopped > 100, "every call answered / terminated / stopped" );
+		CHECK( p->eng().check_regions( err ), "engine region table exact at the end: " + err );
+	}
+
+	// host safety of the import reader: mutated import tables never crash pe::imports; every outcome is a list or a refusal
+	void t_pe_imports_fuzz()
+	{
+		w5_spec s;
+		s.imports = { { "KERNEL32.dll", { "GetCurrentProcessId", "ExitProcess" } }, { "user32.dll", { "MessageBoxA" } } };
+		s.entry_asm = "ret";
+		std::string err;
+		const auto good = w5_build( s, err );
+		emu::pe::image img;
+		std::vector<emu::pe::import_module> mods;
+		CHECK( emu::pe::parse( good, img, err ) && emu::pe::imports( good, img, mods, err ) && mods.size() == 2 && mods[ 0 ].entries.size() == 2 &&
+				   mods[ 1 ].entries[ 0 ].name == "MessageBoxA" && mods[ 0 ].entries[ 1 ].iat_rva == 0x2208,
+			   "the import table reads back: " + err );
+		// the .rdata raw data: after the 400H headers and the .text raw data
+		const auto& sec = img.sections;
+		const uint64_t rd_off = sec.size() > 1 ? sec[ 1 ].raw_offset : 0x600;
+		uint64_t x = 0x1234567887654321ull, lists = 0, refused = 0;
+		auto rnd = [ & ]() { x ^= x >> 12; x ^= x << 25; x ^= x >> 27; return x * 0x2545F4914F6CDD1Dull; };
+		for ( int i = 0; i < 3000; i++ )
+		{
+			auto f = good;
+			const int flips = 1 + int( rnd() % 5 );
+			for ( int k = 0; k < flips; k++ ) f[ size_t( rd_off + rnd() % 0x800 ) ] = uint8_t( rnd() % 3 ? rnd() : 0xFF );
+			emu::pe::image im;
+			std::vector<emu::pe::import_module> m;
+			std::string why;
+			if ( !emu::pe::parse( f, im, why ) ) { refused++; continue; }
+			if ( emu::pe::imports( f, im, m, why ) ) lists++;
+			else
+			{
+				refused++;
+				CHECK( !why.empty() && m.empty(), "a refusal names its reason and returns nothing" );
+			}
+		}
+		std::cout << "  import fuzz: 3000 mutated tables, " << lists << " read, " << refused << " refused\n";
+		CHECK( lists + refused == 3000 && refused > 100, "every mutation ended in a list or a refusal" );
 	}
 
 	struct test_case { const char* name; void ( *fn )(); };
@@ -1590,6 +2272,14 @@ namespace
 		{ "win_env_loud_stops", t_win_env_loud_stops },
 		{ "win_env_refusals", t_win_env_refusals },
 		{ "win_env_no_passthrough_runtime", t_win_env_no_passthrough_runtime },
+		{ "nt_kernel_vm", t_nt_kernel_vm },
+		{ "nt_kernel_process_info", t_nt_kernel_process_info },
+		{ "nt_kernel_close_terminate", t_nt_kernel_close_terminate },
+		{ "win_env_syscall_layer_run", t_win_env_syscall_layer_run },
+		{ "win_env_hle_imports", t_win_env_hle_imports },
+		{ "win_env_hle_tls", t_win_env_hle_tls },
+		{ "win_env_syscall_fuzz", t_win_env_syscall_fuzz },
+		{ "pe_imports_fuzz", t_pe_imports_fuzz },
 	};
 }
 

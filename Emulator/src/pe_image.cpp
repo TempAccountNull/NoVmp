@@ -24,6 +24,11 @@ namespace emu::pe
 	static_assert( sizeof( IMAGE_BASE_RELOCATION ) == 8, "IMAGE_BASE_RELOCATION" );
 	static_assert( IMAGE_FILE_MACHINE_AMD64 == 0x8664 && IMAGE_NT_OPTIONAL_HDR64_MAGIC == 0x20B, "AMD64 / PE32+" );
 	static_assert( IMAGE_REL_BASED_ABSOLUTE == 0 && IMAGE_REL_BASED_HIGHLOW == 3 && IMAGE_REL_BASED_DIR64 == 10, "relocation types" );
+	static_assert( sizeof( IMAGE_IMPORT_DESCRIPTOR ) == 20 && offsetof( IMAGE_IMPORT_DESCRIPTOR, Name ) == 12 && offsetof( IMAGE_IMPORT_DESCRIPTOR, FirstThunk ) == 16,
+				   "IMAGE_IMPORT_DESCRIPTOR (U2008)" );
+	static_assert( sizeof( IMAGE_TLS_DIRECTORY64 ) == 40 && offsetof( IMAGE_TLS_DIRECTORY64, AddressOfCallBacks ) == 24 && offsetof( IMAGE_TLS_DIRECTORY64, SizeOfZeroFill ) == 32,
+				   "IMAGE_TLS_DIRECTORY64 (U2008)" );
+	static_assert( IMAGE_ORDINAL_FLAG64 == 0x8000000000000000ull, "IMAGE_ORDINAL_FLAG64 (U2008)" );
 
 	namespace
 	{
@@ -249,6 +254,115 @@ namespace emu::pe
 			e.ordinal = ed.Base + i;
 			e.forwarder = rva >= d.rva && uint64_t( rva ) < uint64_t( d.rva ) + d.size;
 			out.push_back( e );
+		}
+		return true;
+	}
+
+	// U2008 (plan 3.M5): imports from the file bytes, bounds-checked
+	bool imports( const std::vector<uint8_t>& f, const image& img, std::vector<import_module>& out, std::string& error )
+	{
+		out.clear();
+		const data_dir d = img.dirs[ IMAGE_DIRECTORY_ENTRY_IMPORT ];
+		if ( !d.rva && !d.size ) return true;
+		auto fail = [ & ]( const std::string& why ) {
+			error = "PE imports: " + why;
+			out.clear();
+			return false;
+		};
+		auto cstr = [ & ]( uint32_t rva, std::string& s ) {
+			s.clear();
+			for ( uint64_t k = 0;; k++ )
+			{
+				if ( k >= 512 ) return false;
+				uint64_t o = 0;
+				char c = 0;
+				if ( rva > UINT32_MAX - k || !rva_to_offset( img, uint32_t( rva + k ), 1, o ) || !rd( f, o, &c, 1 ) ) return false;
+				if ( !c ) return true;
+				if ( uint8_t( c ) < 0x20 || uint8_t( c ) >= 0x7F ) return false;
+				s += c;
+			}
+		};
+		for ( uint32_t i = 0;; i++ )
+		{
+			if ( i >= max_import_modules ) return fail( "more than " + std::to_string( max_import_modules ) + " import descriptors (no terminating null descriptor)" );
+			IMAGE_IMPORT_DESCRIPTOR id{};
+			uint64_t o = 0;
+			const uint64_t at = uint64_t( d.rva ) + 20ull * i;
+			if ( at > UINT32_MAX || !rva_to_offset( img, uint32_t( at ), sizeof( id ), o ) || !rd( f, o, &id, sizeof( id ) ) )
+				return fail( "descriptor " + std::to_string( i ) + " at RVA " + hex( at ) + " outside the file's sections" );
+			if ( !id.Name && !id.FirstThunk && !id.OriginalFirstThunk ) break;
+			import_module m;
+			if ( !id.Name || !cstr( id.Name, m.dll ) || m.dll.empty() ) return fail( "descriptor " + std::to_string( i ) + ": DLL name at RVA " + hex( id.Name ) + " unreadable" );
+			if ( !id.FirstThunk ) return fail( m.dll + ": FirstThunk 0" );
+			const uint32_t lookup = id.OriginalFirstThunk ? id.OriginalFirstThunk : id.FirstThunk;
+			for ( uint32_t k = 0;; k++ )
+			{
+				if ( k >= max_import_entries ) return fail( m.dll + ": more than " + std::to_string( max_import_entries ) + " entries (no terminating 0)" );
+				uint64_t t = 0, to = 0;
+				const uint64_t trva = uint64_t( lookup ) + 8ull * k, irva = uint64_t( id.FirstThunk ) + 8ull * k;
+				if ( trva > UINT32_MAX || irva > UINT32_MAX || !rva_to_offset( img, uint32_t( trva ), 8, to ) || !rd( f, to, &t, 8 ) )
+					return fail( m.dll + ": thunk " + std::to_string( k ) + " outside the file's sections" );
+				if ( !t ) break;
+				uint64_t io = 0;
+				if ( !rva_to_offset( img, uint32_t( irva ), 8, io ) ) return fail( m.dll + ": IAT slot " + std::to_string( k ) + " (RVA " + hex( irva ) + ") outside the file's sections" );
+				import_entry e;
+				e.iat_rva = uint32_t( irva );
+				if ( t & IMAGE_ORDINAL_FLAG64 )
+				{
+					if ( t & 0x7FFFFFFFFFFF0000ull ) return fail( m.dll + ": ordinal thunk " + hex( t ) + " with bits 62:16 set" );
+					e.ordinal = uint32_t( t & 0xFFFF );
+				}
+				else
+				{
+					if ( t > 0x7FFFFFFFull ) return fail( m.dll + ": name thunk " + hex( t ) + " above 31 bits" );
+					uint64_t ho = 0;
+					if ( !rva_to_offset( img, uint32_t( t ), 2, ho ) || !rd( f, ho, &e.hint, 2 ) || !cstr( uint32_t( t ) + 2, e.name ) || e.name.empty() )
+						return fail( m.dll + ": IMAGE_IMPORT_BY_NAME at RVA " + hex( t ) + " unreadable" );
+				}
+				m.entries.push_back( e );
+			}
+			out.push_back( m );
+		}
+		return true;
+	}
+
+	bool tls( const engine& e, const image& img, const mapping& m, tls_directory& out, std::string& error )
+	{
+		out = tls_directory{};
+		const data_dir d = img.dirs[ IMAGE_DIRECTORY_ENTRY_TLS ];
+		if ( !d.rva && !d.size ) return true;
+		auto fail = [ & ]( const std::string& why ) {
+			error = "PE TLS: " + why;
+			return false;
+		};
+		if ( d.size < sizeof( IMAGE_TLS_DIRECTORY64 ) ) return fail( "directory size " + hex( d.size ) + " below sizeof IMAGE_TLS_DIRECTORY64 (28H)" );
+		auto in_image = [ & ]( uint64_t va, uint64_t n ) { return va >= m.base && n <= m.size && va - m.base <= m.size - n; };
+		IMAGE_TLS_DIRECTORY64 t{};
+		std::string err;
+		if ( !in_image( m.base + d.rva, sizeof( t ) ) || !e.read( m.base + d.rva, &t, sizeof( t ), err ) ) return fail( "directory at RVA " + hex( d.rva ) + " not in the mapped image" );
+		out.present = true;
+		out.start = t.StartAddressOfRawData;
+		out.end = t.EndAddressOfRawData;
+		out.index_va = t.AddressOfIndex;
+		out.callbacks_va = t.AddressOfCallBacks;
+		out.zero_fill = t.SizeOfZeroFill;
+		out.characteristics = t.Characteristics;
+		if ( out.end < out.start || out.end - out.start > max_tls_template || ( out.end > out.start && !in_image( out.start, out.end - out.start ) ) )
+			return fail( "template [" + hex( out.start ) + ", " + hex( out.end ) + ") not inside the mapped image (or above 1 MiB)" );
+		if ( out.zero_fill > max_tls_template ) return fail( "SizeOfZeroFill " + hex( out.zero_fill ) + " above 1 MiB" );
+		if ( !in_image( out.index_va, 4 ) ) return fail( "AddressOfIndex " + hex( out.index_va ) + " not inside the mapped image" );
+		if ( out.callbacks_va )
+		{
+			for ( uint32_t k = 0;; k++ )
+			{
+				if ( k >= max_tls_callbacks ) return fail( "more than " + std::to_string( max_tls_callbacks ) + " callbacks (no terminating 0)" );
+				uint64_t cb = 0;
+				if ( !in_image( out.callbacks_va + 8ull * k, 8 ) || !e.read( out.callbacks_va + 8ull * k, &cb, 8, err ) )
+					return fail( "callback array entry " + std::to_string( k ) + " not inside the mapped image" );
+				if ( !cb ) break;
+				if ( !in_image( cb, 1 ) ) return fail( "callback " + hex( cb ) + " outside the mapped image" );
+				out.callbacks.push_back( cb );
+			}
 		}
 		return true;
 	}

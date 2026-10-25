@@ -5,7 +5,11 @@
 //
 // What a run (process::create + process::run) builds:
 //   image     the PE mapped AS DATA (emu::pe::map): headers R, sections with their protections, relocations when not at the
-//             preferred base (--image-base); a PE with imports, delay imports or a TLS directory is refused (milestone M5)
+//             preferred base (--image-base). Plan 3.M5 (U2012): under --HLE the imports are bound to the API stubs of emu::hle
+//             and a TLS directory gets the loader's TLS start (index 0, the thread's TLS block from the template, the callbacks
+//             with DLL_PROCESS_ATTACH before the entry); under --Sys an image with imports or TLS is REFUSED: the real
+//             ntdll!LdrInitializeThunk would need the kernel's process-creation state, which no cited source documents (P35);
+//             delay imports are refused in both modes
 //   KUSER     KUSER_SHARED_DATA at the user address MM_SHARED_USER_DATA_VA = 7FFE0000H, read-only, SYNTHESIZED field by
 //             field (never a copy of the host page - the old code's memcpy of the live host page is NOT ported)
 //   PEB, TEB  one process, one thread; GS base = the TEB (the Windows x64 user convention: TEB.NtTib.Self at gs:[30H])
@@ -17,13 +21,15 @@
 //             (probed: a read of FFFFF80000000000H faults at FF80000000000H), so the pages sit in the low half.
 //   syscalls  SYSCALL executes as the SDM defines it (fork U901: RCX := RIP, R11 := RFLAGS, CPL 0, RIP := IA32_LSTAR); the
 //             UC_X86_INS_SYSCALL hook then IS the kernel: it dispatches on EAX AND FFFFH (plan 6.4.a; bit 12 = the win32k
-//             table, unknown in M4) with the numbers parsed from the environment's ntdll capture (plan 6.4.b, decision
-//             3.0.8). M4 implements NtTerminateProcess( NtCurrentProcess(), ExitStatus ) only. An unknown number, a known
-//             but unimplemented service, or an unsupported argument STOPS the run loudly with a state dump (plan 6.4,
-//             AGENT_RULES "Host safety": never a silent success). The SYSRETQ at LSTAR returns to user mode when a
-//             service completes. INT 2EH and SYSENTER are faults / #UD in M4 (stopped, never forwarded).
-// --Sys / --HLE (D3, plan 6.1): recorded in every log line set; M4 maps no system DLL in either mode (imports come in M5),
-// and both share this one kernel layer, so the observable result is the same in both modes (checked by the suites).
+//             table, unknown: no win32u capture) with the numbers parsed from the environment's ntdll capture (plan 6.4.b,
+//             decision 3.0.8) to emu::nt::kernel (plan 3.M5, U2007: the services and their sources are listed in
+//             nt_kernel.hpp), from ANY address (plan 1.K.6: a direct SYSCALL from the image or from allocated memory). An
+//             unknown number, a known but unimplemented service, or an argument combination without a documented answer
+//             STOPS the run loudly with a state dump (plan 6.4, AGENT_RULES "Host safety": never a silent success). The
+//             SYSRETQ at LSTAR returns to user mode with the status in RAX. INT 2EH and SYSENTER are faults / #UD (stopped,
+//             never forwarded).
+// --Sys / --HLE (D3, plan 6.1): recorded in every log line set; both share the one kernel layer (the --HLE APIs call into
+// it), so an image both modes run gives the same observable result (checked by the suites); M5 maps no system DLL.
 //
 // Layouts (cited per field in win_env.cpp; checked by Emulator\tools\check_win_layout.py and static_asserts):
 //   TEB   Windows SDK / WDK 10.0.26100.0 shared\ksamd64.inc "Te*" offsets (TeSelf 30H, TeClientId 40H, TePeb 60H, ...);
@@ -39,10 +45,12 @@
 //         253668-093 Vol3A 3.4.4 p. 3-9 ("load a standard 32-bit base ... bits above the standard 32 bits are cleared")
 // Values: the OS version / product type / system root from the environment's capture manifest; processor count, physical
 // memory, processor architecture and the user address range from the platform profile (views\environment.txt); time fields
-// stay 0 until the one virtual time base (milestone M6); ProcessorFeatures stay 0 until their first consumer (M5).
+// stay 0 until the one virtual time base (milestone M6); ProcessorFeatures stay 0 until their first consumer (none in M5).
 #pragma once
 
 #include <emu/engine.hpp>
+#include <emu/hle.hpp>
+#include <emu/nt_kernel.hpp>
 #include <emu/options.hpp>
 #include <emu/pe_image.hpp>
 #include <emu/reg.hpp>
@@ -103,6 +111,8 @@ namespace emu::win
 		std::string system_root;
 		uint32_t processors = 0, processor_architecture = 0;
 		uint64_t total_phys = 0, min_app_address = 0, max_app_address = 0;
+		uint32_t page_size = 0x1000, allocation_granularity = 0x10000;   // U2011
+		uint64_t active_processor_mask = 0;
 		syscall_table syscalls;
 		std::string capture_dir, platform_source;   // where they came from (for the log)
 	};
@@ -119,7 +129,7 @@ namespace emu::win
 		std::string image_name = "image";
 	};
 
-	enum class stop_kind { none, terminated, unknown_syscall, unimplemented_syscall, fault, count, returned, error };
+	enum class stop_kind { none, terminated, unknown_syscall, unimplemented_syscall, unimplemented_api, fault, count, returned, error };
 	const char* name_of( stop_kind k );
 
 	struct syscall_record
@@ -132,6 +142,16 @@ namespace emu::win
 		std::array<uint64_t, 6> args{};   // R10, RDX, R8, R9, [RSP+28H], [RSP+30H]
 		bool stack_args_read = false;
 		std::string outcome;
+		bool answered = false;          // U2012: the kernel layer answered (status in RAX)
+		uint32_t status = 0;
+		std::vector<std::string> writes;   // the OUT parameters the service wrote
+	};
+
+	struct api_record   // U2012: one --HLE API call (a stub reached)
+	{
+		uint64_t index = 0, stub = 0, rax = 0;
+		std::string api, outcome;
+		std::array<uint64_t, 4> args{};   // RCX, RDX, R8, R9
 	};
 
 	struct run_result
@@ -143,6 +163,7 @@ namespace emu::win
 		uint64_t syscall_insns = 0;            // SYSCALL instructions the guest executed (seen by the code hook)
 		uint64_t syscalls_handled = 0;         // handled by this kernel layer (the UC_X86_INS_SYSCALL hook)
 		std::vector<syscall_record> syscalls;
+		std::vector<api_record> api_calls;     // U2012
 		int fault_vector = -1;
 		int64_t fault_error_code = -1;
 		uint64_t fault_address = 0;            // #PF: the address; returned: the sentinel
@@ -172,6 +193,10 @@ namespace emu::win
 		uint64_t user_rsp() const { return user_rsp_; }
 		const pe::image& img() const { return img_; }
 		const syscall_table& syscalls() const { return facts_.syscalls; }
+		nt::kernel& kern() { return *kernel_; }                       // U2012: the one kernel layer
+		hle::module& hle() { return *hle_; }
+		uint64_t start_va() const { return start_va_; }               // the entry, or the TLS start trampoline (--HLE)
+		const pe::tls_directory& tls() const { return tls_; }
 
 		// the result lines that must not depend on --Sys / --HLE (the suites compare them between the two modes)
 		std::vector<std::string> observable( const run_result& r ) const;
@@ -195,5 +220,9 @@ namespace emu::win
 		std::vector<std::string> log_;
 		std::vector<std::string> env_lines_;
 		std::unique_ptr<hook_ctx> hc_;
+		std::unique_ptr<nt::kernel> kernel_;     // U2012
+		std::unique_ptr<hle::module> hle_;
+		pe::tls_directory tls_;
+		uint64_t start_va_ = 0;
 	};
 }

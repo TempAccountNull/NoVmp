@@ -1,7 +1,9 @@
 // emu-oep (plan 3.M1 / 3.A 2.2, ledger U1940; plan 3.M4, ledger U1984): runs a 64-bit PE purely in emulation inside the
 // minimum Windows environment of the Emulator lib (emu::win: image mapped as data, PEB / TEB / KUSER from the profile and the
 // environment's capture, GS = TEB, SYSCALL handled by the emulated kernel layer). The goal - a packed PE to its OEP - is plan
-// 5.C; bounded pure-emulation runs of the sample start with milestone M5 (decision 3.0.4). INPUT is only ever read as a file
+// 5.C; bounded pure-emulation runs of the sample start with milestone M5 (decision 3.0.4). Plan 3.M5 (U2013): the kernel layer of
+// emu::nt answers the services of M5, --HLE binds imports to the API stubs of emu::hle and runs TLS callbacks; --Sys refuses images
+// with imports / TLS (the real LdrInitializeThunk start is not modelled, notes\eread\P35_phase3_m5.md). INPUT is only ever read as a file
 // and written into guest memory: never loaded, mapped executable or run on the host, never under a debugger (AGENT_RULES
 // "Host safety"). Nothing is written or created (--out-dir is recorded only).
 //
@@ -9,8 +11,8 @@
 //           [--sysdlls DIR] [--dry-run] [--out-dir DIR] INPUT
 //   emu-oep (--guest | --host) [--sysdlls DIR] --syscall-number NAME
 //   exit 0 = the guest terminated through NtTerminateProcess, 1 = another stop (fault, instruction bound, return from the
-//   entry), 2 = usage, 3 = set-up error (input, capture, refused feature), 4 = unknown / unimplemented system service (loud
-//   stop with a state dump)
+//   entry), 2 = usage, 3 = set-up error (input, capture, refused feature), 4 = unknown / unimplemented system service or --HLE
+//   API (loud stop with a state dump)
 #include <emu/engine.hpp>
 #include <emu/input_file.hpp>
 #include <emu/options.hpp>
@@ -120,7 +122,8 @@ int main( int argc, char** argv )
 		return 3;
 	}
 	for ( auto& l : p->observable( rr ) ) std::cout << "[emu-oep] observable: " << l << "\n";
-	const bool loud = rr.stop == emu::win::stop_kind::unknown_syscall || rr.stop == emu::win::stop_kind::unimplemented_syscall;
+	const bool loud = rr.stop == emu::win::stop_kind::unknown_syscall || rr.stop == emu::win::stop_kind::unimplemented_syscall ||
+					  rr.stop == emu::win::stop_kind::unimplemented_api;   // U2013 (plan 3.M5)
 	if ( rr.stop != emu::win::stop_kind::terminated )
 		for ( auto& l : p->state_dump( rr ) ) std::cout << "[emu-oep] " << l << "\n";
 	if ( rr.stop == emu::win::stop_kind::terminated )

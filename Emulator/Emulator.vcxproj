@@ -82,7 +82,9 @@
     <ClCompile Include="src\engine.cpp" />
     <ClCompile Include="src\host_guard.cpp" />
     <ClCompile Include="src\input_file.cpp" />
+    <ClCompile Include="src\hle.cpp" />
     <ClCompile Include="src\json.cpp" />
+    <ClCompile Include="src\nt_kernel.cpp" />
     <ClCompile Include="src\options.cpp" />
     <ClCompile Include="src\pe_image.cpp" />
     <ClCompile Include="src\profile.cpp" />
@@ -95,7 +97,9 @@
     <ClInclude Include="include\emu\engine.hpp" />
     <ClInclude Include="include\emu\host_guard.hpp" />
     <ClInclude Include="include\emu\input_file.hpp" />
+    <ClInclude Include="include\emu\hle.hpp" />
     <ClInclude Include="include\emu\json.hpp" />
+    <ClInclude Include="include\emu\nt_kernel.hpp" />
     <ClInclude Include="include\emu\options.hpp" />
     <ClInclude Include="include\emu\pe_image.hpp" />
     <ClInclude Include="include\emu\profile.hpp" />

@@ -98,6 +98,14 @@ namespace emu
 
 		bool map( uint64_t base, uint64_t size, uint32_t prot, const std::string& name, std::string& error );
 		bool unmap( uint64_t base, uint64_t size, std::string& error );   // exactly one mapped region
+		// U2006 (plan 3.M5): the emulated kernel's virtual-memory services work on parts of regions. protect / unmap_range need
+		// every page of [base, +size) mapped (page aligned); the region table is split the way uc_mem_protect / uc_mem_unmap split
+		// Unicorn's (check_regions stays exact). accessible = every byte of [address, +length) mapped with all NEED bits (the
+		// probe of a guest pointer; length 0 = true).
+		bool protect( uint64_t base, uint64_t size, uint32_t prot, std::string& error );
+		bool unmap_range( uint64_t base, uint64_t size, std::string& error );
+		bool accessible( uint64_t address, uint64_t length, uint32_t need ) const;
+		uint64_t mapped_bytes() const { return mapped_bytes_; }
 		std::vector<mapped_region> regions() const { return regions_; }
 		bool check_regions( std::string& error ) const;
 		bool read( uint64_t address, void* out, uint64_t length, std::string& error ) const;
@@ -113,6 +121,7 @@ namespace emu
 	private:
 		engine() = default;
 		bool inside_mapped( uint64_t address, uint64_t length, std::string& error ) const;
+		bool page_range( uint64_t base, uint64_t size, const char* what, std::string& error ) const;   // U2006
 
 		uc_engine* uc_ = nullptr;
 		engine_config cfg_;

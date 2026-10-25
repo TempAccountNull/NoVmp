@@ -73,6 +73,7 @@ namespace emu::win
 			case stop_kind::terminated: return "terminated";
 			case stop_kind::unknown_syscall: return "unknown system service";
 			case stop_kind::unimplemented_syscall: return "unimplemented system service";
+			case stop_kind::unimplemented_api: return "unimplemented API (--HLE)";
 			case stop_kind::fault: return "fault";
 			case stop_kind::count: return "instruction bound";
 			case stop_kind::returned: return "returned from the entry point";
@@ -115,6 +116,9 @@ namespace emu::win
 		f.total_phys = p.total_phys;
 		f.min_app_address = p.min_app_address;
 		f.max_app_address = p.max_app_address;
+		f.page_size = p.page_size;   // U2011
+		f.allocation_granularity = p.allocation_granularity;
+		f.active_processor_mask = p.active_processor_mask;
 		f.platform_source = p.source;
 		log.push_back( std::string( "environment: " ) + name_of( env ) + " (decision 3.0.8: its own DLL capture, local only, never committed)" );
 		log.push_back( "  capture: " + f.capture_dir + " (manifest format 1, captured " + m.captured + "; ntdll.dll " + std::to_string( bytes.size() ) +
@@ -126,6 +130,8 @@ namespace emu::win
 		log.push_back( "  platform facts (" + f.platform_source + "): " + std::to_string( f.processors ) + " processors, architecture " +
 					   std::to_string( f.processor_architecture ) + ", " + std::to_string( f.total_phys ) + " bytes physical memory, user range [" +
 					   hex( f.min_app_address ) + ", " + hex( f.max_app_address ) + "]" );
+		log.push_back( "  memory facts (" + f.platform_source + "): page " + hex( f.page_size ) + ", allocation granularity " + hex( f.allocation_granularity ) +
+					   ", active processor mask " + hex( f.active_processor_mask ) );
 		return true;
 	}
 
@@ -235,29 +241,70 @@ namespace emu::win
 				return;
 			}
 			s.name = it->second;
-			if ( s.name == "NtTerminateProcess" )
+			// plan 3.M5 (U2012): the one kernel layer answers, terminates or stops loudly (emu::nt::kernel::dispatch)
+			nt::call call;
+			call.number = s.number;
+			call.name = s.name;
+			call.args = s.args;
+			call.stack_args = s.stack_args_read;
+			const nt::reply rep = c.p->kern().dispatch( call );
+			s.writes = rep.writes;
+			if ( rep.kind == nt::reply_kind::done )
 			{
-				if ( s.args[ 0 ] == UINT64_MAX )
-				{
-					r.exit_status = uint32_t( s.args[ 1 ] );
-					s.outcome += "process terminated, ExitStatus " + hex( r.exit_status ) + " (ProcessHandle = NtCurrentProcess())";
-					r.syscalls.push_back( s );
-					c.stop( stop_kind::terminated, "NtTerminateProcess( NtCurrentProcess(), " + hex( r.exit_status ) + " ) at rip " + hex( s.at ) +
-													   " - the emulated process ended; the host process is not affected" );
-					uc_emu_stop( uc );
-					return;
-				}
-				s.outcome += "ProcessHandle " + hex( s.args[ 0 ] ) + " is not NtCurrentProcess() (-1): no handle table in milestone M4";
+				const uint64_t st = rep.status;   // NTSTATUS in EAX, the upper half of RAX zero
+				uc_reg_write( uc, UC_X86_REG_RAX, &st );
+				char b[ 16 ];
+				std::snprintf( b, sizeof( b ), "%08X", rep.status );
+				s.answered = true;
+				s.status = rep.status;
+				s.outcome += std::string( "status " ) + b + "H: " + rep.text;
 				r.syscalls.push_back( s );
-				c.stop( stop_kind::unimplemented_syscall, "NtTerminateProcess with ProcessHandle " + hex( s.args[ 0 ] ) +
-															  ": only NtCurrentProcess() is modelled in milestone M4 - stopped with a state dump" );
+				return;   // the SYSRETQ at IA32_LSTAR returns to the caller
+			}
+			if ( rep.kind == nt::reply_kind::terminated )
+			{
+				r.exit_status = rep.exit_status;
+				s.outcome += rep.text;
+				r.syscalls.push_back( s );
+				c.stop( stop_kind::terminated, "NtTerminateProcess( NtCurrentProcess(), " + hex( r.exit_status ) + " ) at rip " + hex( s.at ) +
+												   " - the emulated process ended; the host process is not affected" );
 				uc_emu_stop( uc );
 				return;
 			}
-			s.outcome += "known service, not implemented in milestone M4";
+			s.outcome += "not answered: " + rep.text;
 			r.syscalls.push_back( s );
-			c.stop( stop_kind::unimplemented_syscall, s.name + " (" + hex( s.number ) + ") at rip " + hex( s.at ) +
-														  " is not implemented in milestone M4 (the syscall layer is M5) - stopped with a state dump, nothing forwarded" );
+			c.stop( stop_kind::unimplemented_syscall, s.name + " (" + hex( s.number ) + ") at rip " + hex( s.at ) + ": " + rep.text +
+														  " - stopped with a state dump, nothing forwarded" );
+			uc_emu_stop( uc );
+		}
+
+		// plan 3.M5 (U2012): an --HLE API stub was reached (emu::hle)
+		void on_hle( uc_engine* uc, uint64_t address, uint32_t, void* user )
+		{
+			auto& c = *static_cast<process::hook_ctx*>( user );
+			if ( c.stopped ) return;
+			run_result& r = *c.r;
+			if ( address >= hle::trampoline_va ) return;   // the TLS start trampoline is ordinary user code
+			api_record a;
+			a.index = r.api_calls.size() + 1;
+			a.stub = address;
+			const hle::result res = c.p->hle().call( address, uc, c.p->kern(), c.p->image_base(), a.api, a.args );
+			a.outcome = res.text;
+			if ( res.kind == hle::result_kind::returned )
+			{
+				a.rax = res.rax;
+				uc_reg_write( uc, UC_X86_REG_RAX, &a.rax );
+				r.api_calls.push_back( a );
+				return;   // the stub's RET returns to the caller
+			}
+			r.api_calls.push_back( a );
+			if ( res.kind == hle::result_kind::terminated )
+			{
+				r.exit_status = res.exit_status;
+				c.stop( stop_kind::terminated, a.api + "( " + hex( res.exit_status ) + " ) - the emulated process ended through the kernel layer; the host process is not affected" );
+			}
+			else
+				c.stop( stop_kind::unimplemented_api, a.api + " at " + hex( address ) + ": " + res.text + " - stopped with a state dump" );
 			uc_emu_stop( uc );
 		}
 	}
@@ -273,10 +320,10 @@ namespace emu::win
 		p->po_ = po;
 		p->log_.push_back( std::string( "boundary: --" ) + name_of( po.boundary ) +
 						   ( po.boundary == env_boundary::sys
-								 ? " (D3, plan 6.1: the real system DLLs run in the engine, emulated at the system-call boundary; milestone M4 maps no "
-								   "system DLL yet - imports arrive in M5; direct system calls go to the one kernel layer below)"
-								 : " (D3, plan 6.1: API-level reimplementation of the system DLLs; milestone M4 has no API redirect yet - imports arrive "
-								   "in M5; direct system calls go to the same kernel layer as --Sys)" ) );
+								 ? " (D3, plan 6.1: the real system DLLs run in the engine, emulated at the system-call boundary; milestone M5 maps no "
+								   "system DLL - an image with imports / TLS is refused (P35 open item); direct system calls go to the one kernel layer below)"
+								 : " (D3, plan 6.1: API-level reimplementation of the system DLLs; milestone M5 binds the imports to the emu::hle stubs "
+								   "(ExitProcess = the kernel layer's NtTerminateProcess); direct system calls go to the same kernel layer as --Sys)" ) );
 		p->e_ = engine::open( ec, error );
 		if ( !p->e_ )
 		{
@@ -299,12 +346,27 @@ namespace emu::win
 		};
 		if ( f.env == environment::none ) return refuse( "no Windows environment (a PE run needs --guest or --host, decision 3.0.8)" );
 		if ( !pe::parse( file, img_, error ) ) return refuse( error );
-		const struct { int dir; const char* what; } m5[] = { { IMAGE_DIRECTORY_ENTRY_IMPORT, "imports (T2)" }, { IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT, "delay imports" },
-															 { IMAGE_DIRECTORY_ENTRY_TLS, "a TLS directory (T3: TLS callbacks)" } };
-		for ( auto& d : m5 )
-			if ( img_.dirs[ d.dir ].rva || img_.dirs[ d.dir ].size )
-				return refuse( po.image_name + " has " + d.what + " - milestone M5 (the syscall layer with LdrInitializeThunk / the --HLE redirect); M4 runs "
-											   "images without them only" );
+		// plan 3.M5 (U2012): imports and TLS. --HLE: the redirect and the loader's TLS start below. --Sys: the process would start
+		// in the environment's real ntdll!LdrInitializeThunk, whose initialisation of the loader, the API set map, the NLS tables
+		// and kernelbase's CSR connection needs kernel-side state that no cited source documents - refused, not guessed.
+		if ( img_.dirs[ IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT ].rva || img_.dirs[ IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT ].size )
+			return refuse( po.image_name + " has delay imports - not modelled in milestone M5 (either mode)" );
+		const bool has_imports = img_.dirs[ IMAGE_DIRECTORY_ENTRY_IMPORT ].rva || img_.dirs[ IMAGE_DIRECTORY_ENTRY_IMPORT ].size;
+		const bool has_tls = img_.dirs[ IMAGE_DIRECTORY_ENTRY_TLS ].rva || img_.dirs[ IMAGE_DIRECTORY_ENTRY_TLS ].size;
+		std::vector<pe::import_module> imports;
+		if ( po.boundary == env_boundary::sys && ( has_imports || has_tls ) )
+		{
+			std::string what, why;
+			if ( has_imports && pe::imports( file, img_, imports, why ) )
+				for ( auto& m : imports ) what += ( what.empty() ? "" : ", " ) + m.dll;
+			return refuse( "--Sys: " + po.image_name + ( has_imports ? " imports" + ( what.empty() ? std::string( " (a malformed import directory)" ) : " " + what ) : std::string() ) +
+						   ( has_imports && has_tls ? " and" : "" ) + ( has_tls ? " has a TLS directory" : "" ) +
+						   ": under --Sys the process starts in the environment's real ntdll!LdrInitializeThunk (plan 6.1), which needs the kernel's "
+						   "process-creation state - PEB members beyond the documented layouts (the API set map, the NLS code-page tables), the "
+						   "loader's initial thread context, and kernelbase's CSR / BaseSrv connection - for which the project has no cited source; not "
+						   "modelled in milestone M5 (user decision pending, notes\\eread\\P35_phase3_m5.md). --HLE runs this image." );
+		}
+		if ( !pe::imports( file, img_, imports, error ) ) return refuse( error );
 		if ( img_.file_characteristics & IMAGE_FILE_DLL ) return refuse( po.image_name + " is a DLL (IMAGE_FILE_DLL): the process image must be an executable" );
 		if ( !img_.entry_rva ) return refuse( po.image_name + " has no entry point (AddressOfEntryPoint 0)" );
 
@@ -400,14 +462,14 @@ namespace emu::win
 			 !w64( k + layout::kuser_active_group_count, 1, 1, "KUSER ActiveGroupCount (3C4H)" ) )
 			return false;
 		env_lines_.push_back( "KUSER TickCountMultiplier / InterruptTime / SystemTime / TimeZoneBias / TickCount = 0 (the virtual time base is milestone M6)" );
-		env_lines_.push_back( "KUSER ProcessorFeatures[64] = 0 (from the CPUID profile with their first consumer, milestone M5)" );
+		env_lines_.push_back( "KUSER ProcessorFeatures[64] = 0 (from the CPUID profile with their first consumer; none in milestone M5)" );
 
 		// PEB
 		const uint64_t pb = guest_peb_va;
 		if ( !w64( pb + layout::peb_being_debugged, 0, 1, "PEB BeingDebugged (2H)" ) || !w64( pb + layout::peb_image_base_address, base, 8, "PEB ImageBaseAddress (10H)" ) ||
-			 !w64( pb + layout::peb_ldr, 0, 8, "PEB Ldr (18H, the loader data is milestone M5)" ) ||
-			 !w64( pb + layout::peb_process_parameters, 0, 8, "PEB ProcessParameters (20H, milestone M5)" ) ||
-			 !w64( pb + layout::peb_process_heap, 0, 8, "PEB ProcessHeap (30H, milestone M5)" ) ||
+			 !w64( pb + layout::peb_ldr, 0, 8, "PEB Ldr (18H, not modelled in M5: --HLE keeps no loader lists; the --Sys loader start is the P35 open item)" ) ||
+			 !w64( pb + layout::peb_process_parameters, 0, 8, "PEB ProcessParameters (20H, not modelled in M5)" ) ||
+			 !w64( pb + layout::peb_process_heap, 0, 8, "PEB ProcessHeap (30H, not modelled in M5)" ) ||
 			 !w64( pb + layout::peb_os_major_version, f.os_major, 4, "PEB OSMajorVersion (118H)" ) ||
 			 !w64( pb + layout::peb_os_minor_version, f.os_minor, 4, "PEB OSMinorVersion (11CH)" ) ||
 			 !w64( pb + layout::peb_os_build_number, f.os_build, 2, "PEB OSBuildNumber (120H)" ) ||
@@ -421,7 +483,7 @@ namespace emu::win
 			 !w64( tb + layout::teb_stack_limit, stack_low, 8, "TEB NtTib.StackLimit (10H, fully committed)" ) ||
 			 !w64( tb + layout::teb_self, tb, 8, "TEB NtTib.Self (30H)" ) || !w64( tb + layout::teb_client_id, guest_process_id, 8, "TEB ClientId.UniqueProcess (40H)" ) ||
 			 !w64( tb + layout::teb_client_id + 8, guest_thread_id, 8, "TEB ClientId.UniqueThread (48H)" ) ||
-			 !w64( tb + layout::teb_tls_pointer, 0, 8, "TEB ThreadLocalStoragePointer (58H, no TLS in M4)" ) ||
+			 !w64( tb + layout::teb_tls_pointer, 0, 8, "TEB ThreadLocalStoragePointer (58H, 0 until a TLS directory is set up)" ) ||
 			 !w64( tb + layout::teb_peb, pb, 8, "TEB ProcessEnvironmentBlock (60H)" ) || !w64( tb + layout::teb_last_error, 0, 4, "TEB LastErrorValue (68H)" ) ||
 			 !w64( tb + layout::teb_deallocation_stack, stack_low, 8, "TEB DeallocationStack (1478H)" ) )
 			return false;
@@ -445,8 +507,57 @@ namespace emu::win
 		if ( !( efer.value & 1 ) ) return refuse( "IA32_EFER.SCE is 0 in the engine's reset state" );
 		log_.push_back( "CPU: GDTR " + hex( guest_kernel_gdt_va ) + "/" + hex( layout::gdt_limit ) + ", IA32_STAR " + hex( star_value ) + ", IA32_LSTAR " +
 						hex( guest_kernel_entry_va ) + " (SYSRETQ), IA32_FMASK " + hex( fmask_value ) + " (chosen), IA32_EFER " + hex( efer.value ) + " (SCE 1)" );
+		// plan 3.M5 (U2007 / U2012): the one kernel layer of this process
+		nt::kernel_facts kf;
+		kf.min_app_address = f.min_app_address;
+		kf.max_app_address = f.max_app_address;
+		kf.page_size = f.page_size;
+		kf.allocation_granularity = f.allocation_granularity;
+		kf.active_processor_mask = f.active_processor_mask;
+		kf.process_id = guest_process_id;
+		kf.thread_id = guest_thread_id;
+		kf.peb = pb;
+		kf.teb = tb;
+		kernel_ = std::make_unique<nt::kernel>( *e_, kf );
+		hle_ = std::make_unique<hle::module>();
+		start_va_ = map_.entry;
+		if ( !imports.empty() )   // --HLE (U2009): the imports bound to the API stubs
+		{
+			std::vector<std::string> blog;
+			if ( !hle_->bind( *e_, imports, base, blog, err ) ) return refuse( "binding the imports: " + err );
+			for ( auto& l : blog ) log_.push_back( l );
+			size_t impl = 0;
+			for ( auto& b : hle_->bindings() ) impl += b.id != hle::api::unknown;
+			env_lines_.push_back( "imports (--HLE): " + std::to_string( imports.size() ) + " module(s), " + std::to_string( hle_->bindings().size() ) + " entries bound to the "
+								  "API stubs at " + hex( hle::module_va ) + ", " + std::to_string( impl ) + " of them implemented" );
+			for ( auto& b : hle_->bindings() ) env_lines_.push_back( "import " + b.label() + " -> " + hex( b.stub ) + ( b.id == hle::api::unknown ? " (not implemented)" : "" ) );
+		}
+		if ( has_tls )   // --HLE (U2010): the loader's TLS start - index 0, the thread's block from the template, the callbacks
+		{
+			if ( !pe::tls( *e_, img_, map_, tls_, err ) ) return refuse( err );
+			const uint64_t tmpl = tls_.end - tls_.start, block = tmpl + tls_.zero_fill;
+			uint64_t bb = 0, bs = block ? block : 1, sb = 0, ss = 0x1000;
+			const nt::reply ra = kernel_->allocate( bb, bs, nt::mem::commit | nt::mem::reserve, nt::page::readwrite );
+			const nt::reply rs = kernel_->allocate( sb, ss, nt::mem::commit | nt::mem::reserve, nt::page::readwrite );
+			if ( ra.kind != nt::reply_kind::done || ra.status || rs.kind != nt::reply_kind::done || rs.status )
+				return refuse( "TLS memory: " + ra.text + " / " + rs.text );
+			std::vector<uint8_t> t( size_t( tmpl ), 0 );
+			if ( ( tmpl && ( !e_->read( tls_.start, t.data(), tmpl, err ) || !e_->write( bb, t.data(), tmpl, err ) ) ) ) return refuse( "TLS template copy: " + err );
+			const uint32_t index = 0;   // the executable's TLS index: the first (and only) module with TLS
+			if ( !e_->write( tls_.index_va, &index, 4, err ) || !e_->write( sb, &bb, 8, err ) ) return refuse( "TLS index / slot: " + err );
+			if ( !w64( tb + layout::teb_tls_pointer, sb, 8, "TEB ThreadLocalStoragePointer (58H, the TLS slot array; slot 0 = the executable's block)" ) ) return false;
+			env_lines_.push_back( "TLS (--HLE): template [" + hex( tls_.start ) + ", " + hex( tls_.end ) + ") + " + hex( tls_.zero_fill ) + " zero bytes -> block " + hex( bb ) +
+								  ", index 0 written to " + hex( tls_.index_va ) + ", " + std::to_string( tls_.callbacks.size() ) + " callback(s) before the entry" );
+			if ( !tls_.callbacks.empty() )
+			{
+				if ( !hle_->write_trampoline( *e_, base, tls_.callbacks, map_.entry, start_va_, err ) ) return refuse( "TLS start trampoline: " + err );
+				for ( auto cb : tls_.callbacks ) env_lines_.push_back( "TLS callback " + hex( cb ) + " ( DllHandle " + hex( base ) + ", DLL_PROCESS_ATTACH, 0 ) from the start trampoline " +
+																	   hex( start_va_ ) );
+			}
+		}
 		log_.push_back( "environment built: image " + hex( base ) + " entry " + hex( map_.entry ) + ", PEB " + hex( pb ) + ", TEB " + hex( tb ) + ", KUSER " + hex( k ) +
-						", stack [" + hex( stack_low ) + ", " + hex( stack_base_ ) + "), " + std::to_string( env_lines_.size() ) + " environment fields" );
+						", stack [" + hex( stack_low ) + ", " + hex( stack_base_ ) + "), " + std::to_string( env_lines_.size() ) + " environment fields" +
+						( start_va_ != map_.entry ? ", user start " + hex( start_va_ ) + " (TLS trampoline)" : "" ) );
 		hc_ = std::make_unique<hook_ctx>();
 		hc_->p = this;
 		return true;
@@ -468,7 +579,7 @@ namespace emu::win
 		}
 		// 2. the register state SYSRETQ hands to user mode (253667-093 Vol2B SYSRET p. 4-710: RIP := RCX, RFLAGS := (R11 & 3C7FD7H) | 2,
 		//    CS := IA32_STAR[63:48] + 16 OR 3, SS := IA32_STAR[63:48] + 8 OR 3, CPL := 3); GS base = TEB after the GS load
-		const std::pair<int, uint64_t> regs[] = { { UC_X86_REG_GS_BASE, guest_teb_va }, { UC_X86_REG_FS_BASE, 0 }, { UC_X86_REG_RCX, map_.entry },
+		const std::pair<int, uint64_t> regs[] = { { UC_X86_REG_GS_BASE, guest_teb_va }, { UC_X86_REG_FS_BASE, 0 }, { UC_X86_REG_RCX, start_va_ },
 												  { UC_X86_REG_R11, guest_initial_rflags }, { UC_X86_REG_RSP, user_rsp_ } };
 		for ( auto& [ id, v ] : regs )
 			if ( uc_reg_write( uc, id, &v ) != UC_ERR_OK )
@@ -483,13 +594,15 @@ namespace emu::win
 			 uc_hook_add( uc, &h, UC_HOOK_CODE, (void*)on_code, hc_.get(), 1, 0 ) != UC_ERR_OK ||
 			 uc_hook_add( uc, &h, UC_HOOK_INTR, (void*)on_intr, hc_.get(), 1, 0 ) != UC_ERR_OK ||
 			 uc_hook_add( uc, &h, UC_HOOK_INSN_INVALID, (void*)on_invalid, hc_.get(), 1, 0 ) != UC_ERR_OK ||
-			 uc_hook_add( uc, &h, UC_HOOK_MEM_UNMAPPED | UC_HOOK_MEM_PROT, (void*)on_bad_mem, hc_.get(), 1, 0 ) != UC_ERR_OK )
+			 uc_hook_add( uc, &h, UC_HOOK_MEM_UNMAPPED | UC_HOOK_MEM_PROT, (void*)on_bad_mem, hc_.get(), 1, 0 ) != UC_ERR_OK ||
+			 ( hle_->mapped() && uc_hook_add( uc, &h, UC_HOOK_CODE, (void*)on_hle, hc_.get(), hle::module_va, hle::module_va + hle::module_size - 1 ) != UC_ERR_OK ) )
 		{
 			error = "uc_hook_add failed";
 			log_.push_back( "FAILED: " + error );
 			return false;
 		}
-		log_.push_back( "run: SYSRETQ to the entry " + hex( map_.entry ) + " at CPL 3, at most " + std::to_string( po_.max_insns ) + " instructions" );
+		log_.push_back( "run: SYSRETQ to " + ( start_va_ == map_.entry ? "the entry " + hex( map_.entry ) : "the TLS start trampoline " + hex( start_va_ ) + " (then the entry " + hex( map_.entry ) + ")" ) +
+						" at CPL 3, at most " + std::to_string( po_.max_insns ) + " instructions" );
 		// 4. the run: until the return sentinel, a stop of the hooks, or the instruction bound (no host time)
 		ue = e_->emulate( start_sysret_, guest_return_sentinel, po_.max_insns );
 		std::string rerr;
@@ -501,7 +614,7 @@ namespace emu::win
 			{
 				r.fault_address = rip;
 				hc_->stop( stop_kind::returned, "the entry point returned (to the sentinel " + hex( rip ) +
-													"): a process exit through RtlExitUserThread is milestone M5" );
+													"): a thread exit (RtlExitUserThread) is not modelled in milestone M5" );
 			}
 			else if ( ue == UC_ERR_OK )   // no until, no hook stop: Unicorn's own instruction count ended the run
 				hc_->stop( stop_kind::count, "the instruction bound " + std::to_string( po_.max_insns ) + " was reached at rip " + hex( rip ) + " (" +
@@ -534,6 +647,12 @@ namespace emu::win
 			for ( int i = 0; i < 6; i++ ) l += " " + ( i < 4 || s.stack_args_read ? hex( s.args[ size_t( i ) ] ) : std::string( "?" ) );
 			o.push_back( l + " -> " + s.outcome );
 		}
+		for ( auto& s : r.syscalls )
+			for ( auto& wr : s.writes ) o.push_back( "syscall " + std::to_string( s.index ) + " wrote " + wr );
+		for ( auto& a : r.api_calls )
+			o.push_back( "api call " + std::to_string( a.index ) + ": " + a.api + "( " + hex( a.args[ 0 ] ) + ", " + hex( a.args[ 1 ] ) + ", " + hex( a.args[ 2 ] ) + ", " + hex( a.args[ 3 ] ) +
+						 " ) -> " + a.outcome );
+		for ( auto& l : kernel_->describe() ) o.push_back( "kernel: " + l );
 		if ( r.fault_vector >= 0 ) o.push_back( "fault vector " + std::to_string( r.fault_vector ) + ", error code " + std::to_string( r.fault_error_code ) + ", address " + hex( r.fault_address ) );
 		o.push_back( "image: base " + hex( map_.base ) + ", entry " + hex( map_.entry ) + ( map_.relocated ? ", relocated (" + std::to_string( map_.relocations ) + " fixups)" : "" ) );
 		for ( auto& l : env_lines_ ) o.push_back( "env: " + l );
@@ -558,9 +677,17 @@ namespace emu::win
 						 "), rsp " + hex( r.user_rsp ) );
 			d.push_back( "  the register dump below is the kernel-entry state after the SDM SYSCALL transition (CPL 0, RIP = IA32_LSTAR)" );
 		}
+		if ( !r.api_calls.empty() )
+		{
+			const auto& a = r.api_calls.back();
+			d.push_back( "  last API call (--HLE): #" + std::to_string( a.index ) + " " + a.api + " at stub " + hex( a.stub ) + ", RCX " + hex( a.args[ 0 ] ) + ", RDX " +
+						 hex( a.args[ 1 ] ) + ", R8 " + hex( a.args[ 2 ] ) + ", R9 " + hex( a.args[ 3 ] ) + " -> " + a.outcome );
+		}
 		if ( r.have_final )
 			for ( auto& l : reg::format( r.final ) ) d.push_back( "  " + l );
 		for ( auto& l : e_->describe_memory_map() ) d.push_back( "  " + l );
+		if ( kernel_ )
+			for ( auto& l : kernel_->describe() ) d.push_back( "  " + l );
 		return d;
 	}
 }

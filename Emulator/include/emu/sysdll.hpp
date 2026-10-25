@@ -17,7 +17,8 @@
 // names with one number, a number with bit 12 or above set (not the NT service table), or no stub at all is an error.
 //
 // Platform facts (views\environment.txt of the platform profile Emulator\data\platform\<environment>, the synthetic profile of
-// plan 1.J.49): dwNumberOfProcessors, TotalPhys, wProcessorArchitecture, lpMinimum / lpMaximumApplicationAddress.
+// plan 1.J.49): dwNumberOfProcessors, TotalPhys, wProcessorArchitecture, lpMinimum / lpMaximumApplicationAddress; U2011
+// (plan 3.M5): dwPageSize, dwAllocationGranularity, dwActiveProcessorMask (powers of two; page 4 KiB, granularity >= page).
 #pragma once
 
 #include <emu/options.hpp>
@@ -68,6 +69,9 @@ namespace emu::win
 		uint64_t total_phys = 0;                // TotalPhys (bytes)
 		uint32_t processor_architecture = 0;    // wProcessorArchitecture (winnt.h PROCESSOR_ARCHITECTURE_AMD64 = 9)
 		uint64_t min_app_address = 0, max_app_address = 0;
+		// U2011 (plan 3.M5): the memory facts of the emulated kernel's virtual-memory services (GetNativeSystemInfo line)
+		uint32_t page_size = 0, allocation_granularity = 0;   // dwPageSize, dwAllocationGranularity
+		uint64_t active_processor_mask = 0;                    // dwActiveProcessorMask
 		std::string source;                     // the file read
 	};
 	bool load_platform_facts( environment env, const std::string& data_dir, platform_facts& p, std::string& error );

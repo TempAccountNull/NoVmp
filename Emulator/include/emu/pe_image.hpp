@@ -87,6 +87,25 @@ namespace emu::pe
 	// the export directory (IMAGE_DIRECTORY_ENTRY_EXPORT) of a parsed image, read from the FILE bytes
 	bool exports( const std::vector<uint8_t>& file, const image& img, std::vector<export_entry>& out, std::string& error );
 
+	// U2008 (plan 3.M5): the import directory (IMAGE_DIRECTORY_ENTRY_IMPORT) read from the FILE bytes: winnt.h
+	// IMAGE_IMPORT_DESCRIPTOR {OriginalFirstThunk, TimeDateStamp, ForwarderChain, Name, FirstThunk}, IMAGE_THUNK_DATA64 (bit 63 =
+	// IMAGE_ORDINAL_FLAG64: an ordinal, else the RVA of IMAGE_IMPORT_BY_NAME {Hint, Name}); every RVA bounds-checked; at most
+	// max_import_modules descriptors and max_import_entries entries each (chosen limits); names printable ASCII, <= 512 chars
+	inline constexpr uint32_t max_import_modules = 256, max_import_entries = 4096;
+	struct import_entry
+	{
+		std::string name;          // "" = by ordinal
+		uint32_t ordinal = 0;      // by ordinal: the ordinal (16 bits)
+		uint16_t hint = 0;
+		uint32_t iat_rva = 0;      // the IAT slot (FirstThunk + 8 * i) the loader writes
+	};
+	struct import_module
+	{
+		std::string dll;           // as written in the file
+		std::vector<import_entry> entries;
+	};
+	bool imports( const std::vector<uint8_t>& file, const image& img, std::vector<import_module>& out, std::string& error );
+
 	struct mapping
 	{
 		uint64_t base = 0;              // where the image was mapped
@@ -102,4 +121,19 @@ namespace emu::pe
 	// engine may then hold some of the regions: the caller discards the engine).
 	bool map( engine& e, const std::vector<uint8_t>& file, const image& img, uint64_t base, const std::string& name, mapping& out,
 			  std::string& error );
+
+	// U2008 (plan 3.M5): the TLS directory (IMAGE_DIRECTORY_ENTRY_TLS) read from the MAPPED image (its VAs are relocated there):
+	// winnt.h IMAGE_TLS_DIRECTORY64 {StartAddressOfRawData, EndAddressOfRawData, AddressOfIndex, AddressOfCallBacks,
+	// SizeOfZeroFill, Characteristics}; the callback array is a zero-terminated array of VAs (PIMAGE_TLS_CALLBACK). Every VA
+	// must lie inside the mapped image; at most max_tls_callbacks callbacks (a chosen limit); the template at most 1 MiB.
+	inline constexpr uint32_t max_tls_callbacks = 64;
+	inline constexpr uint64_t max_tls_template = 1ull << 20;
+	struct tls_directory
+	{
+		bool present = false;
+		uint64_t start = 0, end = 0, index_va = 0, callbacks_va = 0;
+		uint32_t zero_fill = 0, characteristics = 0;
+		std::vector<uint64_t> callbacks;
+	};
+	bool tls( const engine& e, const image& img, const mapping& m, tls_directory& out, std::string& error );
 }

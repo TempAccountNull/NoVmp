@@ -733,6 +733,11 @@ Add-Suite 'emu_snippet_hw_sample' 'emulator snippet hw' 'py' ( Join-Path $Root '
 Add-Suite 'win_env_t1' 'emulator win_env' 'py' ( Join-Path $Root 'Emulator\tools\win_env_t1.py' ) @( $Root, $T )
 Add-Suite 'win_env_layout' 'emulator win_env tools' 'py' ( Join-Path $Root 'Emulator\tools\check_win_layout.py' ) @( $Root )
 Add-Suite 'no_host_passthrough' 'emulator safety tools win_env' 'py' ( Join-Path $Root 'Emulator\tools\check_no_passthrough.py' ) @( $Root, '--build', $T )
+# U2016 (agent p3m5, plan 3.M5, notes\eread\P35_phase3_m5.md): the test PEs T2 (kernel32.dll imports), T3 (a TLS callback) and T4
+# (direct SYSCALLs from its own code and from allocated memory, EAX bits 31:16 set) with the service numbers of the VMware-guest
+# ntdll capture: T4 exits 2DH in --Sys and --HLE with identical observable results; T2 (2BH) and T3 (2EH) run under --HLE and are
+# refused loudly under --Sys (the real LdrInitializeThunk start is the open item of P35); the native references of decision 3.0.7.
+Add-Suite 'win_env_m5' 'emulator win_env' 'py' ( Join-Path $Root 'Emulator\tools\win_env_m5.py' ) @( $Root, $T )
 # U1990-U1991 (agent p3m4, user decision 2026-10-25, notes\eread\P34_phase3_m4.md): capture_sysdlls.py labels a capture only on
 # the positive evidence of U1893's environment detection (emu-alltest "tag environment:", run with an empty case file); the
 # self-test: mocked / forced (--tag-env) wrong environments and unknown (--tag-profiles none) refuse without writing, the live

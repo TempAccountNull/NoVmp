@@ -283,6 +283,129 @@ namespace emu
 		return false;
 	}
 
+	// U2006 (plan 3.M5): sub-range protection / removal and the guest-pointer probe of the emulated kernel layer
+	bool engine::page_range( uint64_t base, uint64_t size, const char* what, std::string& error ) const
+	{
+		if ( size == 0 || ( ( base | size ) & ( page_size - 1 ) ) )
+		{
+			error = std::string( what ) + " [" + hex( base ) + ", +" + hex( size ) + "): base and size must be non-zero multiples of 4 KiB";
+			return false;
+		}
+		if ( base + ( size - 1 ) < base )
+		{
+			error = std::string( what ) + " [" + hex( base ) + ", +" + hex( size ) + "): wraps around 2^64";
+			return false;
+		}
+		std::string why;
+		if ( size > max_io_bytes ? false : !inside_mapped( base, size, why ) )
+		{
+			error = std::string( what ) + ": " + why;
+			return false;
+		}
+		if ( size > max_io_bytes )   // inside_mapped bounds one I/O call; walk the regions for a large range
+		{
+			uint64_t cur = base;
+			const uint64_t last = base + ( size - 1 );
+			for ( ;; )
+			{
+				const mapped_region* hit = nullptr;
+				for ( const auto& r : regions_ )
+					if ( cur >= r.base && cur - r.base < r.size ) hit = &r;
+				if ( !hit )
+				{
+					error = std::string( what ) + ": " + hex( cur ) + " is not mapped";
+					return false;
+				}
+				const uint64_t hl = hit->base + ( hit->size - 1 );
+				if ( last <= hl ) break;
+				cur = hl + 1;
+			}
+		}
+		return true;
+	}
+
+	bool engine::protect( uint64_t base, uint64_t size, uint32_t prot, std::string& error )
+	{
+		if ( prot & ~uint32_t( UC_PROT_ALL ) )
+		{
+			error = "protect: unknown protection bits";
+			return false;
+		}
+		if ( !page_range( base, size, "protect", error ) ) return false;
+		const uc_err ue = uc_mem_protect( uc_, base, size, prot );
+		if ( ue != UC_ERR_OK )
+		{
+			error = std::string( "protect: uc_mem_protect: " ) + uc_strerror( ue );
+			log_line( "FAILED " + error );
+			return false;
+		}
+		const uint64_t last = base + ( size - 1 );
+		std::vector<mapped_region> out;
+		for ( const auto& r : regions_ )
+		{
+			const uint64_t rl = r.base + ( r.size - 1 );
+			if ( rl < base || r.base > last )
+			{
+				out.push_back( r );
+				continue;
+			}
+			if ( r.base < base ) out.push_back( { r.base, base - r.base, r.prot, r.name } );
+			const uint64_t mb = std::max( r.base, base ), ml = std::min( rl, last );
+			out.push_back( { mb, ml - mb + 1, prot, r.name } );
+			if ( rl > last ) out.push_back( { last + 1, rl - last, r.prot, r.name } );
+		}
+		regions_ = out;
+		log_line( "protect [" + hex( base ) + ", +" + hex( size ) + ") " + prot_text( prot ) + " ok" );
+		return true;
+	}
+
+	bool engine::unmap_range( uint64_t base, uint64_t size, std::string& error )
+	{
+		if ( !page_range( base, size, "unmap_range", error ) ) return false;
+		const uc_err ue = uc_mem_unmap( uc_, base, size );
+		if ( ue != UC_ERR_OK )
+		{
+			error = std::string( "unmap_range: uc_mem_unmap: " ) + uc_strerror( ue );
+			log_line( "FAILED " + error );
+			return false;
+		}
+		const uint64_t last = base + ( size - 1 );
+		std::vector<mapped_region> out;
+		for ( const auto& r : regions_ )
+		{
+			const uint64_t rl = r.base + ( r.size - 1 );
+			if ( rl < base || r.base > last )
+			{
+				out.push_back( r );
+				continue;
+			}
+			if ( r.base < base ) out.push_back( { r.base, base - r.base, r.prot, r.name } );
+			if ( rl > last ) out.push_back( { last + 1, rl - last, r.prot, r.name } );
+		}
+		regions_ = out;
+		mapped_bytes_ -= size;
+		log_line( "unmap_range [" + hex( base ) + ", +" + hex( size ) + ") ok" );
+		return true;
+	}
+
+	bool engine::accessible( uint64_t address, uint64_t length, uint32_t need ) const
+	{
+		if ( length == 0 ) return true;
+		const uint64_t last = address + ( length - 1 );
+		if ( last < address ) return false;
+		uint64_t cur = address;
+		for ( ;; )
+		{
+			const mapped_region* hit = nullptr;
+			for ( const auto& r : regions_ )
+				if ( cur >= r.base && cur - r.base < r.size ) hit = &r;
+			if ( !hit || ( hit->prot & need ) != need ) return false;
+			const uint64_t hl = hit->base + ( hit->size - 1 );
+			if ( last <= hl ) return true;
+			cur = hl + 1;
+		}
+	}
+
 	bool engine::check_regions( std::string& error ) const
 	{
 		uc_mem_region* r = nullptr;
