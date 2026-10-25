@@ -1,5 +1,6 @@
-// emu::options (plan 3.M1, ledger U1940; plan 3.M3, ledger U1975: the emu-snippet v1 flags): see include/emu/options.hpp. Pure
-// string handling: no file, no directory, no host query.
+// emu::options (plan 3.M1, ledger U1940; plan 3.M3, ledger U1975: the emu-snippet v1 flags; plan 3.M4, ledger U1984: the emu-oep
+// flags --dry-run / --image-base / --sysdlls / --syscall-number): see include/emu/options.hpp. Pure string handling: no file, no
+// directory, no host query.
 #include <emu/options.hpp>
 
 #include <cstdio>
@@ -40,7 +41,7 @@ namespace emu
 		}
 	}
 
-	const char* milestone() { return "M3"; }   // U1952: the engine core (plan 3.M2); U1975: emu-snippet v1 (plan 3.M3)
+	const char* milestone() { return "M4"; }   // U1952: the engine core (plan 3.M2); U1975: emu-snippet v1 (plan 3.M3); U1984: win_env (plan 3.M4)
 
 	bool parse_u64( std::string_view text, uint64_t& out )
 	{
@@ -133,11 +134,19 @@ namespace emu
 			"  boundary  --Sys (default: syscall-level emulation of the real system DLLs) | --HLE (API-level)\n"
 			"  rng       --seeded (default, deterministic) | --HostSeed (hardware DRNG)\n"
 			"  --max-insns N   instruction bound (decimal or 0x hex, 64-bit)\n"
-			"  --out-dir DIR   output folder (recorded; milestone M1 creates nothing)\n"
+			"  --out-dir DIR   output folder (recorded; nothing is created)\n"
 			"  -h, --help\n";
 		if ( tool == tool_kind::oep )
-			return "usage: emu-oep [options] INPUT\n"
-				   "  INPUT     the PE image to emulate (recorded; milestone M1 opens nothing, emulation arrives with M4 / M5)\n" + common;
+			return "usage: emu-oep [options] INPUT | emu-oep (--guest | --host) [--sysdlls DIR] --syscall-number NAME\n"
+				   "  INPUT     a 64-bit PE image, read as data and mapped into the emulated Windows environment (never loaded or run on the\n"
+				   "            host; milestone M4: no imports / TLS yet - M5); the environment needs --guest (the VMware-guest DLL capture)\n"
+				   "            or --host (the bare-host capture, decision 3.0.8)\n"
+				   "  --image-base ADDR      map the image at ADDR (4 KiB aligned; its relocations applied) instead of its ImageBase\n"
+				   "  --sysdlls DIR          the environment's DLL capture folder (default: <capture root>\\sysdlls\\<environment>)\n"
+				   "  --syscall-number NAME  print NAME's service number from the environment's ntdll capture and stop\n"
+				   "  --dry-run              print the configuration and stop (nothing opened)\n"
+				   "  exit      0 the guest terminated (NtTerminateProcess), 1 another stop (fault, bound, return from the entry), 2 usage,\n"
+				   "            3 set-up error, 4 an unknown / unimplemented system service (loud stop with a state dump)\n" + common;
 		return "usage: emu-snippet (--hex BYTES | --asm TEXT | --state FILE.json | --batch FILE.jsonl) [state] [stops] [checks] [output] [options]\n"
 			   "  code      --hex BYTES (\"48 31 c0 c3\") | --asm TEXT (Keystone, statements separated by ;) | --at ADDR (default 0x140001000)\n"
 			   "            --image PATH --rva RVA: a PE image mapped as data - arrives with milestone M4 (refused in M3)\n"
@@ -297,6 +306,26 @@ namespace emu
 				if ( !value( v ) || !parse_u64( v, n ) || n == 0 || n > 0xFFFF ) return fail( "--avx10 N (1, 2, ...)" );
 				o.avx10 = int( n );
 			}
+			else if ( tool == tool_kind::oep && a == "--dry-run" ) o.dry_run = true;
+			else if ( tool == tool_kind::oep && ( a == "--image-base" || a == "--sysdlls" || a == "--syscall-number" ) )
+			{
+				// U1984 (plan 3.M4)
+				std::string v;
+				if ( !value( v ) || v.empty() ) return fail( "missing value for " + raw );
+				if ( a == "--image-base" )
+				{
+					if ( o.image_base_given ) return fail( raw + " given twice" );
+					if ( !parse_u64( v, o.image_base ) ) return fail( "bad 64-bit number for " + raw + ": \"" + v + "\"" );
+					if ( o.image_base & 0xFFF ) return fail( raw + " must be 4 KiB aligned" );
+					o.image_base_given = true;
+				}
+				else
+				{
+					std::string& dst = a == "--sysdlls" ? o.sysdlls_dir : o.syscall_query;
+					if ( !dst.empty() ) return fail( raw + " given twice" );
+					dst = v;
+				}
+			}
 			else if ( !raw.empty() && raw[ 0 ] == '-' ) return fail( "unknown option \"" + raw + "\"" );
 			else if ( tool == tool_kind::oep )
 			{
@@ -310,7 +339,8 @@ namespace emu
 		}
 
 		if ( o.help ) { r.ok = true; return r; }
-		if ( tool == tool_kind::oep && !input_given ) return fail( "missing INPUT" );
+		if ( tool == tool_kind::oep && !input_given && o.syscall_query.empty() ) return fail( "missing INPUT" );
+		if ( tool == tool_kind::oep && input_given && !o.syscall_query.empty() ) return fail( "--syscall-number takes no INPUT" );
 		if ( tool == tool_kind::snippet )
 		{
 			if ( !o.batch_file.empty() )
@@ -337,7 +367,8 @@ namespace emu
 		std::vector<std::string> d;
 		d.push_back( std::string( "tool: " ) + name_of( o.tool ) );
 		d.push_back( std::string( "milestone: " ) + milestone() +
-					 ( o.tool == tool_kind::oep ? " (emu-oep parses options only: nothing opened, nothing created, nothing emulated)"
+					 ( o.tool == tool_kind::oep ? ( o.dry_run ? " (emu-oep --dry-run: nothing opened, nothing created, nothing emulated)"
+															   : " (emu-oep maps INPUT as data into the emulated Windows environment; nothing is created or written)" )
 												: " (emu-snippet emulates the snippet on the Emulator lib engine; nothing is created or written)" ) );
 		d.push_back( std::string( "cpu profile: " ) + name_of( o.profile ) +
 					 ( o.profile_given ? " (given)" : " (default, decision 3.0.3: the captured bare-host profile)" ) );
@@ -346,7 +377,12 @@ namespace emu
 		d.push_back( "max-insns: " + ( o.max_insns_given ? std::to_string( o.max_insns ) + " (" + hex64( o.max_insns ) + ")" : std::string( "not given" ) ) );
 		d.push_back( "out-dir: " + ( o.out_dir.empty() ? std::string( "(none)" ) : o.out_dir + " (recorded, not created)" ) );
 		if ( o.tool == tool_kind::oep )
-			d.push_back( "input: " + o.input_path + " (recorded, not opened)" );
+		{
+			if ( !o.syscall_query.empty() ) d.push_back( "syscall-number query: " + o.syscall_query );
+			else d.push_back( "input: " + o.input_path + ( o.dry_run ? " (recorded, not opened)" : " (read as data, never loaded or run on the host)" ) );
+			d.push_back( "image-base: " + ( o.image_base_given ? hex64( o.image_base ) : std::string( "the image's ImageBase" ) ) );
+			d.push_back( "sysdlls: " + ( o.sysdlls_dir.empty() ? std::string( "(default: the capture root)" ) : o.sysdlls_dir ) );
+		}
 		else
 		{
 			std::string in = std::string( "snippet input: " ) + name_of( o.snippet_input );

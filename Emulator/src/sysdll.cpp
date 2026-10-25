@@ -1,0 +1,243 @@
+// emu::win sysdll (plan 3.M4, ledger U1981): see include/emu/sysdll.hpp. Reads only (emu::read_input_file); no host query.
+#include <emu/sysdll.hpp>
+#include <emu/input_file.hpp>
+#include <emu/pe_image.hpp>
+
+#include <cctype>
+#include <cstdio>
+#include <cstring>
+#include <filesystem>
+
+namespace emu::win
+{
+	namespace
+	{
+		std::string hex( uint64_t v )
+		{
+			char b[ 32 ];
+			std::snprintf( b, sizeof( b ), "0x%llx", (unsigned long long)v );
+			return b;
+		}
+
+		bool dec_u64( const std::string& s, uint64_t& v )
+		{
+			if ( s.empty() || s.size() > 20 ) return false;
+			v = 0;
+			for ( char c : s )
+			{
+				if ( c < '0' || c > '9' ) return false;
+				const uint64_t d = uint64_t( c - '0' );
+				if ( v > ( UINT64_MAX - d ) / 10 ) return false;
+				v = v * 10 + d;
+			}
+			return true;
+		}
+
+		// the decimal / hexadecimal number right after KEY in LINE ("KEY 123" / "KEY 0x7B" / "KEY 00007FFFFFFEFFFF" with hex=true)
+		bool number_after( const std::string& line, const std::string& key, bool hex_digits, uint64_t& v )
+		{
+			const size_t p = line.find( key );
+			if ( p == std::string::npos ) return false;
+			size_t i = p + key.size();
+			std::string t;
+			if ( !hex_digits && line.compare( i, 2, "0x" ) == 0 ) { i += 2; hex_digits = true; }
+			while ( i < line.size() && std::isxdigit( uint8_t( line[ i ] ) ) && t.size() < 20 ) t += line[ i++ ];
+			if ( t.empty() ) return false;
+			if ( !hex_digits ) return dec_u64( t, v );
+			if ( t.size() > 16 ) return false;
+			v = std::stoull( t, nullptr, 16 );
+			return true;
+		}
+	}
+
+	const char* name_of( environment e )
+	{
+		switch ( e )
+		{
+			case environment::vmware_guest: return "vmware_guest";
+			case environment::bare_host: return "bare_host";
+			default: return "none";
+		}
+	}
+
+	environment environment_of( cpu_profile_choice p )
+	{
+		if ( p == cpu_profile_choice::guest ) return environment::vmware_guest;
+		if ( p == cpu_profile_choice::host ) return environment::bare_host;
+		return environment::none;
+	}
+
+	bool locate_capture( environment env, const std::string& explicit_dir, const std::string& data_dir, std::string& dir, std::string& error )
+	{
+		namespace fs = std::filesystem;
+		if ( env == environment::none )
+		{
+			error = "no Windows environment for this CPU profile (--max / --cpuid-runtime): a PE run needs --guest (the VMware-guest capture) "
+					"or --host (the bare-host capture, decision 3.0.8)";
+			return false;
+		}
+		std::error_code ec;
+		if ( !explicit_dir.empty() )
+		{
+			if ( !fs::is_regular_file( fs::path( explicit_dir ) / "manifest.txt", ec ) )
+			{
+				error = "--sysdlls " + explicit_dir + ": no manifest.txt there (make the capture with Emulator\\tools\\capture_sysdlls.py --env " + name_of( env ) + ")";
+				return false;
+			}
+			dir = explicit_dir;
+			return true;
+		}
+		fs::path p = fs::absolute( fs::path( data_dir ), ec );
+		for ( int depth = 0; depth < 16 && !p.empty(); depth++ )
+		{
+			const fs::path c = p / "capture" / "sysdlls" / name_of( env );
+			if ( fs::is_regular_file( c / "manifest.txt", ec ) )
+			{
+				dir = c.string();
+				return true;
+			}
+			if ( p == p.parent_path() ) break;
+			p = p.parent_path();
+		}
+		error = std::string( "no system-DLL capture for the environment " ) + name_of( env ) +
+				" (searched the ancestors of " + data_dir + " for capture\\sysdlls\\" + name_of( env ) + "\\manifest.txt; decision 3.0.8: " +
+				( env == environment::bare_host ? "the bare-host DLL capture comes with a host package - not made yet; use --guest"
+												: "run python -I Emulator\\tools\\capture_sysdlls.py --env vmware_guest in the VMware guest" ) +
+				"; or name the folder with --sysdlls DIR)";
+		return false;
+	}
+
+	bool load_manifest( const std::string& dir, environment env, capture_manifest& m, std::string& error )
+	{
+		m = capture_manifest{};
+		const std::string path = ( std::filesystem::path( dir ) / "manifest.txt" ).string();
+		std::map<std::string, std::string> kv;
+		bool ok = read_input_lines( path, 4096, max_manifest_bytes, [ & ]( std::string_view l, uint64_t ) {
+			if ( l.empty() || l[ 0 ] == '#' ) return true;
+			const size_t sp = l.find( ' ' );
+			if ( sp == std::string_view::npos ) return true;
+			kv[ std::string( l.substr( 0, sp ) ) ] = std::string( l.substr( sp + 1 ) );
+			return true;
+		}, error );
+		if ( !ok ) return false;
+		auto need = [ & ]( const char* k, std::string& out ) {
+			auto it = kv.find( k );
+			if ( it == kv.end() || it->second.empty() )
+			{
+				error = path + ": no \"" + k + "\" line";
+				return false;
+			}
+			out = it->second;
+			return true;
+		};
+		auto need_u = [ & ]( const char* k, uint64_t limit, uint64_t& out ) {
+			std::string s;
+			if ( !need( k, s ) ) return false;
+			if ( !dec_u64( s, out ) || out > limit )
+			{
+				error = path + ": \"" + k + "\" is not a decimal number up to " + std::to_string( limit );
+				return false;
+			}
+			return true;
+		};
+		std::string fmt;
+		uint64_t a = 0, b = 0, c = 0, pt = 0;
+		if ( !need( "format", fmt ) || !need( "environment", m.environment ) || !need( "captured", m.captured ) || !need_u( "os_major", 0xFFFF, a ) ||
+			 !need_u( "os_minor", 0xFFFF, b ) || !need_u( "os_build", 0xFFFF, c ) || !need_u( "product_type", 3, pt ) || !need( "system_root", m.system_root ) ||
+			 !need_u( "ntdll_size", max_ntdll_bytes, m.ntdll_size ) || !need( "ntdll_sha256", m.ntdll_sha256 ) )
+			return false;
+		if ( fmt != "1" )
+		{
+			error = path + ": format " + fmt + " (this lib reads format 1)";
+			return false;
+		}
+		if ( m.environment != name_of( env ) )
+		{
+			error = path + ": the capture is of the environment " + m.environment + ", the run asks for " + name_of( env );
+			return false;
+		}
+		if ( m.system_root.size() > 128 )
+		{
+			error = path + ": system_root longer than 128 characters";
+			return false;
+		}
+		m.os_major = uint32_t( a );
+		m.os_minor = uint32_t( b );
+		m.os_build = uint32_t( c );
+		m.product_type = uint32_t( pt );
+		return true;
+	}
+
+	bool parse_syscall_table( const std::vector<uint8_t>& f, syscall_table& t, std::string& error )
+	{
+		t = syscall_table{};
+		pe::image img;
+		if ( !pe::parse( f, img, error ) ) return false;
+		std::vector<pe::export_entry> ex;
+		if ( !pe::exports( f, img, ex, error ) ) return false;
+		for ( const auto& e : ex )
+		{
+			if ( e.name.size() < 3 || e.name[ 0 ] != 'N' || e.name[ 1 ] != 't' || e.forwarder ) continue;
+			t.nt_exports++;
+			uint64_t off = 0;
+			uint8_t b[ 8 ] = {};
+			if ( !pe::rva_to_offset( img, e.rva, 8, off ) ) continue;
+			std::memcpy( b, f.data() + off, 8 );
+			if ( !( b[ 0 ] == 0x4C && b[ 1 ] == 0x8B && b[ 2 ] == 0xD1 && b[ 3 ] == 0xB8 ) ) continue;
+			uint32_t n = 0;
+			std::memcpy( &n, b + 4, 4 );
+			if ( n > 0xFFF )
+			{
+				error = "ntdll stub " + e.name + ": service number " + hex( n ) + " outside the NT table (bits 15:12 must be 0)";
+				return false;
+			}
+			auto it = t.by_number.find( n );
+			if ( it != t.by_number.end() && it->second != e.name )
+			{
+				error = "ntdll stubs " + it->second + " and " + e.name + " both load service number " + hex( n );
+				return false;
+			}
+			t.by_number[ n ] = e.name;
+			t.by_name[ e.name ] = n;
+			t.stubs++;
+		}
+		if ( !t.stubs )
+		{
+			error = "no system-service stub (4C 8B D1 B8 imm32) among " + std::to_string( t.nt_exports ) + " Nt* exports";
+			return false;
+		}
+		return true;
+	}
+
+	bool load_platform_facts( environment env, const std::string& data_dir, platform_facts& p, std::string& error )
+	{
+		p = platform_facts{};
+		if ( env == environment::none )
+		{
+			error = "no platform profile for this CPU profile";
+			return false;
+		}
+		p.source = ( std::filesystem::path( data_dir ) / "platform" / name_of( env ) / "views" / "environment.txt" ).string();
+		bool in_native = false, got_cpus = false, got_phys = false, got_arch = false, got_min = false, got_max = false;
+		bool ok = read_input_lines( p.source, 4096, max_platform_view_bytes, [ & ]( std::string_view sv, uint64_t ) {
+			const std::string l( sv );
+			if ( l.rfind( "## ", 0 ) == 0 ) in_native = l.find( "GetNativeSystemInfo" ) != std::string::npos;
+			uint64_t v = 0;
+			if ( !got_phys && number_after( l, "TotalPhys ", false, v ) ) { p.total_phys = v; got_phys = true; }
+			if ( !in_native ) return true;
+			if ( number_after( l, "dwNumberOfProcessors ", false, v ) && v && v <= 4096 ) { p.processors = uint32_t( v ); got_cpus = true; }
+			if ( number_after( l, "wProcessorArchitecture ", false, v ) && v <= 0xFFFF ) { p.processor_architecture = uint32_t( v ); got_arch = true; }
+			if ( number_after( l, "lpMinimumApplicationAddress ", true, v ) ) { p.min_app_address = v; got_min = true; }
+			if ( number_after( l, "lpMaximumApplicationAddress ", true, v ) ) { p.max_app_address = v; got_max = true; }
+			return true;
+		}, error );
+		if ( !ok ) return false;
+		if ( !got_cpus || !got_phys || !got_arch || !got_min || !got_max || p.min_app_address >= p.max_app_address )
+		{
+			error = p.source + ": the GetNativeSystemInfo / GlobalMemoryStatusEx lines (dwNumberOfProcessors, wProcessorArchitecture, lpMinimum / "
+								"lpMaximumApplicationAddress, TotalPhys) are incomplete";
+			return false;
+		}
+		return true;
+	}
+}

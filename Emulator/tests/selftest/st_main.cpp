@@ -1,4 +1,4 @@
-// emu-selftest (plan 3.M1 / 3.A 2.2, ledger U1940-U1941; plan 3.M2, ledger U1951-U1954; plan 3.M3, ledger U1976): the Emulator lib's self-tests (Gate 2 = G3.A: "build.cmd builds
+// emu-selftest (plan 3.M1 / 3.A 2.2, ledger U1940-U1941; plan 3.M2, ledger U1951-U1954; plan 3.M3, ledger U1976; plan 3.M4, ledger U1985): the Emulator lib's self-tests (Gate 2 = G3.A: "build.cmd builds
 // everything with 0 errors, and the emu-selftest self-tests pass"). Suite emu_selftest runs every case; the no_native_check
 // suite runs the case no_native_runtime on its own. Own test code only: nothing from a sample is read or executed, and no
 // test process is started (no CreateProcess; the acutest runner is not used for that reason).
@@ -16,8 +16,17 @@
 #include <emu/input_file.hpp>
 #include <emu/json.hpp>
 #include <emu/snippet.hpp>
+#include <emu/pe_image.hpp>
+#include <emu/sysdll.hpp>
+#include <emu/win_env.hpp>
+
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>   // winnt.h IMAGE_* (the in-memory test PEs of the M4 cases)
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <functional>
@@ -132,6 +141,19 @@ namespace
 		auto od = parse( emu::tool_kind::oep, { "--out-dir", "some\\dir", "a.exe" } );
 		CHECK( od.ok && od.options.out_dir == "some\\dir", "--out-dir recorded" );
 		CHECK( !parse( emu::tool_kind::oep, { "--out-dir", "d1", "--out-dir", "d2", "a.exe" } ).ok, "--out-dir twice" );
+		// U1985 (plan 3.M4): the emu-oep M4 options
+		auto dr = parse( emu::tool_kind::oep, { "--dry-run", "a.exe" } );
+		CHECK( dr.ok && dr.options.dry_run, "--dry-run" );
+		auto ib = parse( emu::tool_kind::oep, { "--image-base", "0x7ff700000000", "a.exe" } );
+		CHECK( ib.ok && ib.options.image_base_given && ib.options.image_base == 0x7ff700000000ull, "--image-base: " + ib.error );
+		CHECK( !parse( emu::tool_kind::oep, { "--image-base", "0x140000800", "a.exe" } ).ok, "--image-base not 4 KiB aligned refused" );
+		CHECK( !parse( emu::tool_kind::oep, { "--image-base", "1", "--image-base", "2", "a.exe" } ).ok, "--image-base twice" );
+		auto sq = parse( emu::tool_kind::oep, { "--guest", "--syscall-number", "NtClose" } );
+		CHECK( sq.ok && sq.options.syscall_query == "NtClose" && sq.options.input_path.empty(), "--syscall-number without INPUT: " + sq.error );
+		CHECK( !parse( emu::tool_kind::oep, { "--syscall-number", "NtClose", "a.exe" } ).ok, "--syscall-number with an INPUT refused" );
+		auto sd = parse( emu::tool_kind::oep, { "--sysdlls", "cap\\dir", "a.exe" } );
+		CHECK( sd.ok && sd.options.sysdlls_dir == "cap\\dir", "--sysdlls recorded" );
+		CHECK( !parse( emu::tool_kind::snippet, { "--hex", "90", "--dry-run" } ).ok, "--dry-run is an emu-oep option" );
 	}
 
 	void t_options_snippet()
@@ -168,11 +190,13 @@ namespace
 		CHECK( r.ok, r.error );
 		auto d = emu::describe( r.options );
 		for ( auto& l : d ) std::cout << "  describe: " << l << "\n";
-		CHECK( has_line( d, "input: in.exe (recorded, not opened)" ), "INPUT recorded, not opened" );
+		CHECK( has_line( d, "input: in.exe (read as data, never loaded or run on the host)" ), "INPUT read as data (U1984)" );
+		auto dd = emu::describe( parse( emu::tool_kind::oep, { "--dry-run", "in.exe" } ).options );
+		CHECK( has_line( dd, "input: in.exe (recorded, not opened)" ) && has_line( dd, "--dry-run: nothing opened" ), "--dry-run: INPUT recorded, not opened" );
 		CHECK( has_line( d, "out-dir: outd (recorded, not created)" ), "out-dir recorded, not created" );
 		CHECK( has_line( d, "cpu profile: host (default, decision 3.0.3" ), "default profile named" );
 		CHECK( has_line( d, "max-insns: 4096 (0x1000)" ), "max-insns decimal + hex" );
-		CHECK( has_line( d, "milestone: M3" ), "milestone" );
+		CHECK( has_line( d, "milestone: M4" ), "milestone" );
 		auto s = parse( emu::tool_kind::snippet, { "--hex", "00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 10", "--expect", "rax=1" } );
 		auto ds = emu::describe( s.options );
 		CHECK( has_line( ds, "snippet input: hex (17 bytes: 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f ...)" ), "hex summary" );
@@ -186,7 +210,7 @@ namespace
 		std::cout << "  deps: " << s << "\n";
 		CHECK( s.find( "unicorn 2." ) == 0, "Unicorn 2 headers" );
 		CHECK( s.find( "capstone 6." ) != std::string::npos, "Capstone 6 headers" );
-		CHECK( std::string( emu::milestone() ) == "M3", "milestone M3" );
+		CHECK( std::string( emu::milestone() ) == "M4", "milestone M4" );
 	}
 
 	// ------------------------------------------------------------------------------------------------ M2 engine (U1951-U1954)
@@ -538,7 +562,7 @@ namespace
 		auto e = open_engine( emu::cpu_profile_choice::guest );
 		if ( !e ) return;
 		for ( auto& l : e->log() ) std::cout << "  log: " << l << "\n";
-		for ( auto key : { "milestone M3", "cpu profile: guest", "cpuid profile file:", "uc_open(UC_ARCH_X86, UC_MODE_64) ok", "cpu model: UC_CPU_X86_MAX",
+		for ( auto key : { "milestone M4", "cpu profile: guest", "cpuid profile file:", "uc_open(UC_ARCH_X86, UC_MODE_64) ok", "cpu model: UC_CPU_X86_MAX",
 						   "CPUID profile installed at uc_open", "rng: --seeded", "reset state (fork values): rip", "engine controls read back" } )
 			CHECK( std::any_of( e->log().begin(), e->log().end(), [ & ]( const std::string& l ) { return l.find( key ) != std::string::npos; } ),
 				   std::string( "log line with \"" ) + key + "\"" );
@@ -989,6 +1013,542 @@ namespace
 		CHECK( parse( emu::tool_kind::snippet, { "--hex", "90", "--expect", "st0=3fff:8000000000000000" } ).ok, "st SEXP:MANT form" );
 	}
 
+	// ------------------------------------------------------------------------------------------------ M4 win_env (U1985)
+	// Plan 3.M4: a self-written 64-bit PE mapped as data, PEB / TEB / KUSER from the facts and the documented layouts, GS = TEB,
+	// --Sys / --HLE recorded, a direct SYSCALL of NtTerminateProcess handled by the emulated kernel layer; loud stops with a state
+	// dump; the PE parser fuzzed (host safety). Every image here is built in memory (helper prefix w4_); the syscall table and the
+	// OS / platform facts are synthetic (no capture is needed: the capture-based run is suite win_env_t1).
+	std::vector<uint8_t> w4_ntdll();
+
+	struct w4_section
+	{
+		const char* name;
+		uint32_t rva;
+		std::vector<uint8_t> data;
+		uint32_t characteristics;
+		uint32_t vsize = 0;   // 0 = data size
+	};
+	struct w4_pe
+	{
+		uint64_t image_base = 0x140000000ull;
+		uint32_t entry_rva = 0x1000;
+		uint16_t file_characteristics = 0x22;   // EXECUTABLE_IMAGE | LARGE_ADDRESS_AWARE
+		uint64_t stack_reserve = 0x100000;
+		std::vector<w4_section> sections;
+		std::array<std::pair<uint32_t, uint32_t>, 16> dirs{};
+	};
+
+	// a PE32+ file: headers 400H, FileAlignment 200H, SectionAlignment 1000H (winnt.h IMAGE_* structures)
+	std::vector<uint8_t> w4_build( const w4_pe& p )
+	{
+		std::vector<uint8_t> f( 0x400, 0 );
+		IMAGE_DOS_HEADER dos{};
+		dos.e_magic = IMAGE_DOS_SIGNATURE;
+		dos.e_lfanew = 0x80;
+		std::memcpy( f.data(), &dos, sizeof( dos ) );
+		const uint32_t sig = IMAGE_NT_SIGNATURE;
+		std::memcpy( f.data() + 0x80, &sig, 4 );
+		IMAGE_FILE_HEADER fh{};
+		fh.Machine = IMAGE_FILE_MACHINE_AMD64;
+		fh.NumberOfSections = uint16_t( p.sections.size() );
+		fh.SizeOfOptionalHeader = sizeof( IMAGE_OPTIONAL_HEADER64 );
+		fh.Characteristics = p.file_characteristics;
+		std::memcpy( f.data() + 0x84, &fh, sizeof( fh ) );
+		IMAGE_OPTIONAL_HEADER64 oh{};
+		oh.Magic = IMAGE_NT_OPTIONAL_HDR64_MAGIC;
+		oh.AddressOfEntryPoint = p.entry_rva;
+		oh.ImageBase = p.image_base;
+		oh.SectionAlignment = 0x1000;
+		oh.FileAlignment = 0x200;
+		oh.MajorSubsystemVersion = 6;
+		uint32_t end = 0x1000;
+		for ( auto& s : p.sections ) end = std::max<uint32_t>( end, s.rva + ( ( std::max<uint32_t>( s.vsize, uint32_t( s.data.size() ) ) + 0xFFF ) & ~0xFFFu ) );
+		oh.SizeOfImage = end;
+		oh.SizeOfHeaders = 0x400;
+		oh.Subsystem = IMAGE_SUBSYSTEM_WINDOWS_CUI;
+		oh.DllCharacteristics = 0x8160;
+		oh.SizeOfStackReserve = p.stack_reserve;
+		oh.SizeOfStackCommit = 0x1000;
+		oh.NumberOfRvaAndSizes = 16;
+		for ( int i = 0; i < 16; i++ ) oh.DataDirectory[ i ] = { p.dirs[ size_t( i ) ].first, p.dirs[ size_t( i ) ].second };
+		std::memcpy( f.data() + 0x98, &oh, sizeof( oh ) );
+		uint32_t raw = 0x400;
+		for ( size_t i = 0; i < p.sections.size(); i++ )
+		{
+			const auto& s = p.sections[ i ];
+			IMAGE_SECTION_HEADER sh{};
+			std::memcpy( sh.Name, s.name, std::min<size_t>( 8, std::strlen( s.name ) ) );
+			sh.Misc.VirtualSize = s.vsize ? s.vsize : uint32_t( s.data.size() );
+			sh.VirtualAddress = s.rva;
+			sh.SizeOfRawData = uint32_t( ( s.data.size() + 0x1FF ) & ~size_t( 0x1FF ) );
+			sh.PointerToRawData = sh.SizeOfRawData ? raw : 0;
+			sh.Characteristics = s.characteristics;
+			std::memcpy( f.data() + 0x98 + sizeof( oh ) + i * sizeof( sh ), &sh, sizeof( sh ) );
+			if ( sh.SizeOfRawData )
+			{
+				f.resize( raw + sh.SizeOfRawData, 0 );
+				std::memcpy( f.data() + raw, s.data.data(), s.data.size() );
+				raw += sh.SizeOfRawData;
+			}
+		}
+		return f;
+	}
+
+	constexpr uint32_t w4_scn_text = 0x60000020, w4_scn_rdata = 0x40000040, w4_scn_data = 0xC0000040, w4_scn_reloc = 0x42000040;
+
+	// T1's shape (Emulator\tests\pe\t1_exit\t1_exit.asm): mov rax, [rip -> .data pointer]; mov eax, [rax]; mov rcx, -1;
+	// mov edx, EXIT; mov r10, rcx; syscall; ud2 - the number in .rdata, the pointer in .data (one DIR64 relocation)
+	w4_pe w4_t1( uint32_t number, uint32_t exit_code = 0x2A, const std::vector<uint8_t>& code_override = {} )
+	{
+		w4_pe p;
+		std::vector<uint8_t> code = { 0x48, 0x8B, 0x05, 0xF9, 0x1F, 0x00, 0x00, 0x8B, 0x00, 0x48, 0xC7, 0xC1, 0xFF, 0xFF, 0xFF, 0xFF, 0xBA };
+		for ( int k = 0; k < 4; k++ ) code.push_back( uint8_t( exit_code >> ( 8 * k ) ) );
+		code.insert( code.end(), { 0x4C, 0x8B, 0xD1, 0x0F, 0x05, 0x0F, 0x0B } );
+		if ( !code_override.empty() ) code = code_override;
+		std::vector<uint8_t> rdata( 8, 0 ), data( 8, 0 );
+		std::memcpy( rdata.data(), &number, 4 );
+		const uint64_t ptr = p.image_base + 0x2000;
+		std::memcpy( data.data(), &ptr, 8 );
+		const std::vector<uint8_t> reloc = { 0x00, 0x30, 0x00, 0x00, 0x0C, 0x00, 0x00, 0x00, 0x00, 0xA0, 0x00, 0x00 };   // page 3000H, size CH, DIR64 at +0
+		p.sections = { { ".text", 0x1000, code, w4_scn_text }, { ".rdata", 0x2000, rdata, w4_scn_rdata }, { ".data", 0x3000, data, w4_scn_data },
+					   { ".reloc", 0x4000, reloc, w4_scn_reloc } };
+		p.dirs[ 5 ] = { 0x4000, 0xC };
+		return p;
+	}
+
+	emu::win::environment_facts w4_facts()
+	{
+		emu::win::environment_facts f;
+		f.env = emu::win::environment::vmware_guest;
+		f.os_major = 10;
+		f.os_minor = 0;
+		f.os_build = 0x4A64;
+		f.product_type = 1;
+		f.system_root = "C:\\Windows";
+		f.processors = 8;
+		f.processor_architecture = 9;
+		f.total_phys = 0x400000000ull;
+		f.min_app_address = 0x10000;
+		f.max_app_address = 0x7FFFFFFEFFFFull;
+		for ( auto [ n, name ] : { std::pair<uint32_t, const char*>{ 0x2C, "NtTerminateProcess" }, { 0x0F, "NtClose" }, { 0x18, "NtAllocateVirtualMemory" } } )
+		{
+			f.syscalls.by_number[ n ] = name;
+			f.syscalls.by_name[ name ] = n;
+		}
+		f.syscalls.nt_exports = f.syscalls.stubs = 3;
+		f.capture_dir = "(synthetic: emu-selftest)";
+		return f;
+	}
+
+	struct w4_run
+	{
+		std::unique_ptr<emu::win::process> p;
+		emu::win::run_result r;
+		std::string error;
+		bool ok = false;
+	};
+
+	w4_run w4_go( const std::vector<uint8_t>& file, emu::env_boundary b = emu::env_boundary::sys, bool rebase = false, uint64_t max_insns = 10000 )
+	{
+		w4_run w;
+		emu::engine_config ec;
+		ec.profile = emu::cpu_profile_choice::guest;
+		emu::win::process_options po;
+		po.boundary = b;
+		po.image_base_given = rebase;
+		po.image_base = 0x7FF700000000ull;
+		po.max_insns = max_insns;
+		po.image_name = "w4";
+		std::vector<std::string> log;
+		w.p = emu::win::process::create( ec, w4_facts(), po, file, log, w.error );
+		if ( !w.p ) return w;
+		w.ok = w.p->run( w.r, w.error );
+		return w;
+	}
+
+	uint64_t w4_read( emu::win::process& p, uint64_t va, unsigned n )
+	{
+		uint64_t v = 0;
+		std::string err;
+		CHECK( p.eng().read( va, &v, n, err ), "guest read " + err );
+		return v;
+	}
+
+	// the parser refuses each malformed header with its reason (and accepts the good one)
+	void t_pe_parse_refusals()
+	{
+		const auto good = w4_build( w4_t1( 0x2C ) );
+		emu::pe::image img;
+		std::string err;
+		CHECK( emu::pe::parse( good, img, err ), "the T1-shaped image parses: " + err );
+		CHECK( img.sections.size() == 4 && img.sections[ 0 ].prot == ( UC_PROT_READ | UC_PROT_EXEC ) && img.sections[ 1 ].prot == UC_PROT_READ &&
+				   img.sections[ 2 ].prot == ( UC_PROT_READ | UC_PROT_WRITE ),
+			   "section protections from IMAGE_SCN_MEM_*" );
+		struct bad_case { const char* why; std::function<void( std::vector<uint8_t>& )> mutate; const char* expect; };
+		const bad_case bad[] = {
+			{ "no MZ", []( std::vector<uint8_t>& f ) { f[ 0 ] = 'X'; }, "no MZ" },
+			{ "e_lfanew outside", []( std::vector<uint8_t>& f ) { const int32_t v = 0x7FFFFFF0; std::memcpy( f.data() + 0x3C, &v, 4 ); }, "outside the file" },
+			{ "negative e_lfanew", []( std::vector<uint8_t>& f ) { const int32_t v = -4; std::memcpy( f.data() + 0x3C, &v, 4 ); }, "negative" },
+			{ "i386 machine", []( std::vector<uint8_t>& f ) { f[ 0x84 ] = 0x4C; f[ 0x85 ] = 0x01; }, "not AMD64" },
+			{ "0 sections", []( std::vector<uint8_t>& f ) { f[ 0x86 ] = 0; f[ 0x87 ] = 0; }, "NumberOfSections" },
+			{ "PE32 magic", []( std::vector<uint8_t>& f ) { f[ 0x98 ] = 0x0B; f[ 0x99 ] = 0x01; }, "not PE32+" },
+			{ "SectionAlignment 200H", []( std::vector<uint8_t>& f ) { const uint32_t v = 0x200; std::memcpy( f.data() + 0x98 + 32, &v, 4 ); }, "SectionAlignment" },
+			{ "SizeOfImage 0", []( std::vector<uint8_t>& f ) { const uint32_t v = 0; std::memcpy( f.data() + 0x98 + 56, &v, 4 ); }, "SizeOfImage" },
+			{ "entry outside", []( std::vector<uint8_t>& f ) { const uint32_t v = 0x900000; std::memcpy( f.data() + 0x98 + 16, &v, 4 ); }, "AddressOfEntryPoint" },
+			{ "17 directories", []( std::vector<uint8_t>& f ) { const uint32_t v = 17; std::memcpy( f.data() + 0x98 + 108, &v, 4 ); }, "NumberOfRvaAndSizes" },
+			{ "sections overlap", []( std::vector<uint8_t>& f ) { const uint32_t v = 0x1000; std::memcpy( f.data() + 0x188 + 40 + 12, &v, 4 ); }, "overlaps" },
+			{ "raw data outside", []( std::vector<uint8_t>& f ) { const uint32_t v = 0x10000; std::memcpy( f.data() + 0x188 + 20, &v, 4 ); }, "outside the file" },
+			{ "truncated", []( std::vector<uint8_t>& f ) { f.resize( 0x90 ); }, "outside the file" },
+		};
+		for ( auto& b : bad )
+		{
+			auto f = good;
+			b.mutate( f );
+			emu::pe::image x;
+			std::string why;
+			const bool ok = emu::pe::parse( f, x, why );
+			std::cout << "  " << b.why << ": " << ( ok ? "accepted" : why ) << "\n";
+			CHECK( !ok && why.find( b.expect ) != std::string::npos, std::string( b.why ) + " refused with \"" + b.expect + "\": " + why );
+		}
+	}
+
+	// host safety: deterministic mutations of the headers / section table and of an export table never crash the parser, the
+	// export reader or the mapper; every outcome is "accepted" or a refusal with a reason
+	void t_pe_fuzz()
+	{
+		const auto good = w4_build( w4_t1( 0x2C ) );
+		uint64_t x = 0x2545F4914F6CDD1Dull, accepted = 0, refused = 0, mapped = 0, map_refused = 0;
+		auto rnd = [ & ]() { x ^= x >> 12; x ^= x << 25; x ^= x >> 27; return x * 0x2545F4914F6CDD1Dull; };
+		for ( int i = 0; i < 3000; i++ )
+		{
+			auto f = good;
+			const int flips = 1 + int( rnd() % 6 );
+			for ( int k = 0; k < flips; k++ ) f[ size_t( rnd() % 0x2B0 ) ] = uint8_t( rnd() );
+			if ( rnd() % 16 == 0 ) f.resize( size_t( rnd() % f.size() ) );
+			emu::pe::image img;
+			std::string err;
+			if ( !emu::pe::parse( f, img, err ) )
+			{
+				refused++;
+				CHECK( !err.empty(), "a refusal names its reason" );
+				continue;
+			}
+			accepted++;
+			std::vector<emu::pe::export_entry> ex;
+			emu::pe::exports( f, img, ex, err );
+			if ( i % 25 == 0 && img.size_of_image <= 0x1000000 )   // a mutated SizeOfImage up to 1 GiB: map the small ones only (time)
+			{
+				emu::engine_config ec;
+				ec.profile = emu::cpu_profile_choice::max;
+				auto e = emu::engine::open( ec, err );
+				emu::pe::mapping m;
+				if ( e && emu::pe::map( *e, f, img, 0x7FF600000000ull, "fuzz", m, err ) ) mapped++;
+				else map_refused++;
+			}
+		}
+		std::cout << "  header fuzz: 3000 mutated images, " << accepted << " accepted, " << refused << " refused; mapped " << mapped << ", map refused " << map_refused << "\n";
+		CHECK( accepted + refused == 3000 && refused > 1000, "every mutation ended in accept / refuse" );
+		// the export reader on mutated synthetic ntdll images
+		uint64_t ok_tables = 0, bad_tables = 0;
+		const auto nt = w4_ntdll();
+		for ( int i = 0; i < 2000; i++ )
+		{
+			auto f = nt;
+			for ( int k = 0; k < 4; k++ ) f[ 0x600 + size_t( rnd() % 0x200 ) ] = uint8_t( rnd() );
+			emu::win::syscall_table t;
+			std::string err;
+			if ( emu::win::parse_syscall_table( f, t, err ) ) ok_tables++;
+			else bad_tables++;
+		}
+		std::cout << "  export / stub fuzz: 2000 mutated ntdll images, " << ok_tables << " tables, " << bad_tables << " refused\n";
+		CHECK( ok_tables + bad_tables == 2000, "every export mutation ended in a table or a refusal" );
+	}
+
+	// mapped as data: headers R, sections with their protections, the bytes; another base applies the DIR64 relocation
+	void t_pe_map_relocate()
+	{
+		const auto file = w4_build( w4_t1( 0x2C ) );
+		emu::pe::image img;
+		std::string err;
+		CHECK( emu::pe::parse( file, img, err ), err );
+		for ( uint64_t base : { 0x140000000ull, 0x7FF700000000ull } )
+		{
+			emu::engine_config ec;
+			ec.profile = emu::cpu_profile_choice::max;
+			auto e = emu::engine::open( ec, err );
+			if ( !e ) { CHECK( false, err ); return; }
+			emu::pe::mapping m;
+			CHECK( emu::pe::map( *e, file, img, base, "t1", m, err ), "map at " + std::to_string( base ) + ": " + err );
+			for ( auto& l : m.log ) std::cout << "  " << l << "\n";
+			const auto regs = e->regions();
+			CHECK( regs.size() == 5, "headers + 4 sections mapped" );
+			const uint32_t want[] = { UC_PROT_READ, UC_PROT_READ | UC_PROT_EXEC, UC_PROT_READ, UC_PROT_READ | UC_PROT_WRITE, UC_PROT_READ };
+			for ( size_t i = 0; i < regs.size() && i < 5; i++ ) CHECK( regs[ i ].prot == want[ i ] && regs[ i ].base == base + 0x1000 * i, "region " + regs[ i ].name );
+			uint64_t ptr = 0;
+			uint8_t first = 0;
+			CHECK( e->read( base + 0x3000, &ptr, 8, err ) && e->read( base + 0x1000, &first, 1, err ) && first == 0x48, "image bytes in guest memory" );
+			CHECK( ptr == base + 0x2000, "the DIR64 fixup: pointer = mapped base + 2000H" );
+			CHECK( m.relocated == ( base != 0x140000000ull ) && m.relocations == ( base != 0x140000000ull ? 1u : 0u ), "relocation count" );
+		}
+		// refusals: an unmodelled relocation type, RELOCS_STRIPPED / no directory when not at the preferred base
+		auto bad_type = w4_t1( 0x2C );
+		bad_type.sections[ 3 ].data[ 9 ] = 0x50;   // type 5 (MIPS_JMPADDR) instead of 10
+		auto stripped = w4_t1( 0x2C );
+		stripped.file_characteristics |= IMAGE_FILE_RELOCS_STRIPPED;
+		auto nodir = w4_t1( 0x2C );
+		nodir.dirs[ 5 ] = { 0, 0 };
+		for ( auto& [ pe, expect ] : { std::pair<w4_pe, const char*>{ bad_type, "relocation type 5" }, { stripped, "no base relocations" }, { nodir, "no base relocations" } } )
+		{
+			const auto f = w4_build( pe );
+			emu::pe::image im;
+			CHECK( emu::pe::parse( f, im, err ), err );
+			emu::engine_config ec;
+			ec.profile = emu::cpu_profile_choice::max;
+			auto e = emu::engine::open( ec, err );
+			emu::pe::mapping m;
+			const bool ok = e && emu::pe::map( *e, f, im, 0x7FF700000000ull, "t1", m, err );
+			std::cout << "  refused at another base: " << err << "\n";
+			CHECK( !ok && err.find( expect ) != std::string::npos, std::string( "refused: " ) + expect );
+		}
+	}
+
+	// a synthetic "ntdll": .text with three Nt* stubs and one non-stub, .rdata with the export directory (Zw* alias, a forwarder)
+	std::vector<uint8_t> w4_ntdll_with( const std::vector<std::pair<std::string, std::vector<uint8_t>>>& funcs )
+	{
+		w4_pe p;
+		p.image_base = 0x180000000ull;
+		p.file_characteristics = 0x2022;
+		std::vector<uint8_t> text;
+		std::vector<uint32_t> rvas;
+		for ( auto& fn : funcs )
+		{
+			rvas.push_back( 0x1000 + uint32_t( text.size() ) );
+			text.insert( text.end(), fn.second.begin(), fn.second.end() );
+			while ( text.size() % 32 ) text.push_back( 0xCC );
+		}
+		// export directory at 2000H: dir (40) | functions | names | ordinals | strings (names sorted as given)
+		std::vector<uint8_t> ed( 40, 0 );
+		const uint32_t n = uint32_t( funcs.size() );
+		const uint32_t fo = 0x2000 + 40, no = fo + 4 * n, oo = no + 4 * n, so = oo + 2 * n;
+		auto put32 = [ & ]( std::vector<uint8_t>& v, size_t at, uint32_t x ) { if ( v.size() < at + 4 ) v.resize( at + 4 ); std::memcpy( v.data() + at, &x, 4 ); };
+		put32( ed, 16, 1 );   // Base
+		put32( ed, 20, n );   // NumberOfFunctions
+		put32( ed, 24, n );   // NumberOfNames
+		put32( ed, 28, fo );
+		put32( ed, 32, no );
+		put32( ed, 36, oo );
+		std::vector<uint8_t> strs;
+		for ( uint32_t i = 0; i < n; i++ )
+		{
+			put32( ed, 40 + 4 * i, rvas[ i ] );
+			put32( ed, ( no - 0x2000 ) + 4 * i, so + uint32_t( strs.size() ) );
+			const uint16_t o = uint16_t( i );
+			if ( ed.size() < ( oo - 0x2000 ) + 2 * i + 2 ) ed.resize( ( oo - 0x2000 ) + 2 * i + 2 );
+			std::memcpy( ed.data() + ( oo - 0x2000 ) + 2 * i, &o, 2 );
+			strs.insert( strs.end(), funcs[ i ].first.begin(), funcs[ i ].first.end() );
+			strs.push_back( 0 );
+		}
+		ed.resize( so - 0x2000 );
+		ed.insert( ed.end(), strs.begin(), strs.end() );
+		p.sections = { { ".text", 0x1000, text, w4_scn_text }, { ".rdata", 0x2000, ed, w4_scn_rdata } };
+		p.dirs[ 0 ] = { 0x2000, uint32_t( ed.size() ) };
+		p.entry_rva = 0;
+		return w4_build( p );
+	}
+	std::vector<uint8_t> w4_stub( uint32_t number )
+	{
+		std::vector<uint8_t> s = { 0x4C, 0x8B, 0xD1, 0xB8 };
+		for ( int k = 0; k < 4; k++ ) s.push_back( uint8_t( number >> ( 8 * k ) ) );
+		s.insert( s.end(), { 0x0F, 0x05, 0xC3 } );
+		return s;
+	}
+	std::vector<uint8_t> w4_ntdll()
+	{
+		return w4_ntdll_with( { { "NtClose", w4_stub( 0x0F ) }, { "NtGetTickCount", { 0xB9, 0x20, 0x03, 0xFE, 0x7F, 0xC3 } }, { "NtTerminateProcess", w4_stub( 0x2C ) },
+								{ "RtlNothing", w4_stub( 0x77 ) }, { "ZwClose", w4_stub( 0x0F ) } } );
+	}
+
+	// plan 6.4.b: the numbers come from the stubs (never hardcoded); a broken table is refused
+	void t_sysdll_syscall_table()
+	{
+		emu::win::syscall_table t;
+		std::string err;
+		CHECK( emu::win::parse_syscall_table( w4_ntdll(), t, err ), "the synthetic ntdll parses: " + err );
+		CHECK( t.stubs == 2 && t.nt_exports == 3 && t.by_name.count( "NtTerminateProcess" ) && t.by_name.at( "NtTerminateProcess" ) == 0x2C &&
+				   t.by_number.count( 0x0F ) && t.by_number.at( 0x0F ) == "NtClose" && !t.by_number.count( 0x77 ),
+			   "2 stubs of 3 Nt* exports (NtGetTickCount is no stub, RtlNothing / ZwClose are not Nt*)" );
+		const struct { std::vector<std::pair<std::string, std::vector<uint8_t>>> funcs; const char* expect; } bad[] = {
+			{ { { "NtA", w4_stub( 0x10 ) }, { "NtB", w4_stub( 0x10 ) } }, "both load service number" },
+			{ { { "NtA", w4_stub( 0x1010 ) } }, "outside the NT table" },
+			{ { { "NtA", { 0x90, 0xC3 } } }, "no system-service stub" },
+		};
+		for ( auto& b : bad )
+		{
+			emu::win::syscall_table x;
+			std::string why;
+			const bool ok = emu::win::parse_syscall_table( w4_ntdll_with( b.funcs ), x, why );
+			std::cout << "  refused: " << why << "\n";
+			CHECK( !ok && why.find( b.expect ) != std::string::npos, std::string( "refused with \"" ) + b.expect + "\": " + why );
+		}
+		CHECK( emu::win::environment_of( emu::cpu_profile_choice::guest ) == emu::win::environment::vmware_guest &&
+				   emu::win::environment_of( emu::cpu_profile_choice::host ) == emu::win::environment::bare_host &&
+				   emu::win::environment_of( emu::cpu_profile_choice::max ) == emu::win::environment::none,
+			   "environments of the profile choices (decision 3.0.8)" );
+		std::string dir;
+		CHECK( !emu::win::locate_capture( emu::win::environment::none, "", ".", dir, err ), "--max has no environment" );
+		CHECK( !emu::win::locate_capture( emu::win::environment::vmware_guest, "C:\\no_such_capture_dir_for_emu_selftest", ".", dir, err ) && err.find( "manifest.txt" ) != std::string::npos,
+			   "an explicit folder without a manifest is refused: " + err );
+	}
+
+	// PEB / TEB / KUSER fields in guest memory (offsets: emu::win::layout, checked against the SDK in win_env.cpp / check_win_layout.py)
+	void t_win_env_layout()
+	{
+		auto w = w4_go( w4_build( w4_t1( 0x2C ) ) );
+		CHECK( w.p && w.ok, "process: " + w.error );
+		if ( !w.p ) return;
+		namespace L = emu::win::layout;
+		auto& p = *w.p;
+		const uint64_t teb = p.teb(), peb = p.peb(), k = emu::win::guest_kuser_va;
+		CHECK( w4_read( p, teb + L::teb_self, 8 ) == teb && w4_read( p, teb + L::teb_peb, 8 ) == peb, "TEB.Self = TEB, TEB.ProcessEnvironmentBlock = PEB" );
+		CHECK( w4_read( p, teb + L::teb_stack_base, 8 ) == emu::win::guest_stack_top && w4_read( p, teb + L::teb_stack_limit, 8 ) == emu::win::guest_stack_top - 0x100000,
+			   "TEB StackBase / StackLimit = the stack (1 MiB reserve, fully committed)" );
+		CHECK( w4_read( p, teb + L::teb_client_id, 8 ) == emu::win::guest_process_id && w4_read( p, teb + L::teb_client_id + 8, 8 ) == emu::win::guest_thread_id, "ClientId" );
+		CHECK( w4_read( p, peb + L::peb_image_base_address, 8 ) == p.image_base() && w4_read( p, peb + L::peb_being_debugged, 1 ) == 0, "PEB ImageBaseAddress, BeingDebugged 0" );
+		CHECK( w4_read( p, peb + L::peb_os_major_version, 4 ) == 10 && w4_read( p, peb + L::peb_os_minor_version, 4 ) == 0 && w4_read( p, peb + L::peb_os_build_number, 2 ) == 0x4A64 &&
+				   w4_read( p, peb + L::peb_os_platform_id, 4 ) == 2,
+			   "PEB OS version fields from the facts" );
+		CHECK( w4_read( p, k + L::kuser_major_version, 4 ) == 10 && w4_read( p, k + L::kuser_build_number, 4 ) == 0x4A64 && w4_read( p, k + L::kuser_product_type, 4 ) == 1 &&
+				   w4_read( p, k + L::kuser_image_number_low, 2 ) == 0x8664 && w4_read( p, k + L::kuser_native_processor_architecture, 2 ) == 9 &&
+				   w4_read( p, k + L::kuser_active_processor_count, 4 ) == 8 && w4_read( p, k + L::kuser_number_of_physical_pages, 4 ) == 0x400000 &&
+				   w4_read( p, k + L::kuser_kd_debugger_enabled, 1 ) == 0 && w4_read( p, k + L::kuser_system_call, 4 ) == 0,
+			   "KUSER fields from the facts (synthesized, no host page)" );
+		CHECK( w4_read( p, k + L::kuser_system_root, 6 ) == 0x005C003A0043ull, "KUSER NtSystemRoot = L\"C:\\...\"" );
+		CHECK( w4_read( p, k + L::kuser_interrupt_time, 8 ) == 0 && w4_read( p, k + L::kuser_system_time, 8 ) == 0, "time fields 0 until M6" );
+		bool kuser_ro = false;
+		for ( auto& r : p.eng().regions() )
+			if ( r.base == k ) kuser_ro = r.prot == UC_PROT_READ;
+		CHECK( kuser_ro, "KUSER mapped read-only" );
+		if ( w.r.have_final )
+		{
+			uint64_t gs = 0, ds = 0, fs = 0, es = 0;
+			emu::reg::get_u64( w.r.final, "gs_base", gs );
+			emu::reg::get_u64( w.r.final, "ds", ds );
+			emu::reg::get_u64( w.r.final, "fs", fs );
+			emu::reg::get_u64( w.r.final, "es", es );
+			CHECK( gs == teb && ds == 0x2B && es == 0x2B && fs == 0x53, "GS base = TEB; DS / ES = 2BH, FS = 53H (ksamd64.inc KGDT64_R3_DATA / R3_CMTEB | 3)" );
+		}
+		CHECK( w.r.user_rflags == 0x202 && w.r.user_rsp == p.user_rsp(), "user RFLAGS (R11) 202H, RSP unchanged at the SYSCALL" );
+	}
+
+	// T1's shape: NtTerminateProcess( NtCurrentProcess(), 2AH ) in both modes and at another base: the same observable result
+	void t_win_env_terminate()
+	{
+		const auto f = w4_build( w4_t1( 0x2C ) );
+		std::vector<std::string> first;
+		for ( auto [ b, rebase ] : { std::pair{ emu::env_boundary::sys, false }, std::pair{ emu::env_boundary::hle, false }, std::pair{ emu::env_boundary::sys, true },
+									 std::pair{ emu::env_boundary::hle, true } } )
+		{
+			auto w = w4_go( f, b, rebase );
+			CHECK( w.p && w.ok, "process: " + w.error );
+			if ( !w.p ) continue;
+			std::cout << "  " << emu::name_of( b ) << ( rebase ? " rebased" : "" ) << ": " << emu::win::name_of( w.r.stop ) << ", exit status " << w.r.exit_status << ", "
+					  << w.r.insns << " instructions\n";
+			CHECK( w.r.stop == emu::win::stop_kind::terminated && w.r.exit_status == 0x2A, "terminated with 2AH: " + w.r.detail );
+			CHECK( w.r.syscall_insns == 1 && w.r.syscalls_handled == 1 && w.r.syscalls.size() == 1 && w.r.syscalls[ 0 ].name == "NtTerminateProcess",
+				   "one SYSCALL executed, one handled by the kernel layer" );
+			const bool mode_line = std::any_of( w.p->log().begin(), w.p->log().end(), [ & ]( const std::string& l ) { return l.rfind( std::string( "boundary: --" ) + emu::name_of( b ), 0 ) == 0; } );
+			CHECK( mode_line, "the mode is recorded in the log" );
+			const auto obs = w.p->observable( w.r );
+			if ( !rebase && b == emu::env_boundary::sys ) first = obs;
+			if ( !rebase && b == emu::env_boundary::hle ) CHECK( obs == first, "--Sys and --HLE: identical observable results" );
+			if ( rebase ) CHECK( w.p->image_base() == 0x7FF700000000ull, "mapped at the requested base" );
+		}
+	}
+
+	// loud stops with a state dump: unknown / unimplemented services, unsupported arguments; faults, return, bound
+	void t_win_env_loud_stops()
+	{
+		struct stop_case { const char* what; w4_pe pe; emu::win::stop_kind want; const char* detail; uint64_t max_insns; };
+		std::vector<stop_case> cases = {
+			{ "unknown number 1FFH", w4_t1( 0x1FF ), emu::win::stop_kind::unknown_syscall, "unknown", 10000 },
+			{ "EAX FFFFFFFFH (bits 15:12 set)", w4_t1( 0xFFFFFFFF ), emu::win::stop_kind::unknown_syscall, "unknown", 10000 },
+			{ "NtClose: known, not implemented in M4", w4_t1( 0x0F ), emu::win::stop_kind::unimplemented_syscall, "not implemented in milestone M4", 10000 },
+			{ "NtTerminateProcess( 1234H )", w4_t1( 0x2C, 0x2A, { 0xB8, 0x2C, 0, 0, 0, 0x41, 0xBA, 0x34, 0x12, 0, 0, 0x0F, 0x05, 0x0F, 0x0B } ), emu::win::stop_kind::unimplemented_syscall,
+			  "ProcessHandle 0x1234", 10000 },
+			{ "INT 2EH", w4_t1( 0x2C, 0x2A, { 0xCD, 0x2E, 0x0F, 0x0B } ), emu::win::stop_kind::fault, "INT 2EH", 10000 },
+			{ "write to .rdata", w4_t1( 0x2C, 0x2A, { 0x48, 0x8D, 0x05, 0xF9, 0x0F, 0x00, 0x00, 0xC6, 0x00, 0x01, 0x0F, 0x0B } ), emu::win::stop_kind::fault, "#PF write", 10000 },
+			{ "return from the entry", w4_t1( 0x2C, 0x2A, { 0xC3 } ), emu::win::stop_kind::returned, "returned", 10000 },
+			{ "instruction bound", w4_t1( 0x2C, 0x2A, { 0xEB, 0xFE } ), emu::win::stop_kind::count, "bound", 1000 },
+			{ "#UD", w4_t1( 0x2C, 0x2A, { 0x0F, 0x0B } ), emu::win::stop_kind::fault, "#UD", 10000 },
+		};
+		for ( auto& c : cases )
+		{
+			auto w = w4_go( w4_build( c.pe ), emu::env_boundary::sys, false, c.max_insns );
+			CHECK( w.p && w.ok, std::string( c.what ) + ": " + w.error );
+			if ( !w.p ) continue;
+			const auto dump = w.p->state_dump( w.r );
+			std::cout << "  " << c.what << ": " << emu::win::name_of( w.r.stop ) << " - " << w.r.detail << " (" << dump.size() << " dump lines)\n";
+			CHECK( w.r.stop == c.want && w.r.detail.find( c.detail ) != std::string::npos, std::string( c.what ) + ": " + w.r.detail );
+			CHECK( dump.size() > 90 && dump[ 0 ].find( "STATE DUMP" ) == 0, std::string( c.what ) + ": the state dump (registers + memory map)" );
+			if ( c.want == emu::win::stop_kind::unknown_syscall || c.want == emu::win::stop_kind::unimplemented_syscall )
+				CHECK( has_line( dump, "user mode at the SYSCALL: rip" ) && w.r.syscalls_handled == 1 && w.r.exit_status == 0, std::string( c.what ) + ": the system call in the dump, no exit status" );
+		}
+	}
+
+	// refused before anything runs (milestone M5 items, a DLL, no environment, collisions, the stack bound)
+	void t_win_env_refusals()
+	{
+		auto imports = w4_t1( 0x2C );
+		imports.dirs[ 1 ] = { 0x2000, 0x14 };
+		auto tls = w4_t1( 0x2C );
+		tls.dirs[ 9 ] = { 0x2000, 0x28 };
+		auto dll = w4_t1( 0x2C );
+		dll.file_characteristics |= IMAGE_FILE_DLL;
+		auto clash = w4_t1( 0x2C );
+		clash.image_base = emu::win::guest_stack_top - 0x10000;   // inside the stack area
+		auto high = w4_t1( 0x2C );
+		high.image_base = 0x7FFFFFFF0000ull;                      // above lpMaximumApplicationAddress
+		auto big_stack = w4_t1( 0x2C );
+		big_stack.stack_reserve = 0x4000000;
+		const struct { const char* what; w4_pe pe; const char* expect; } cases[] = {
+			{ "imports", imports, "milestone M5" }, { "TLS", tls, "TLS" }, { "DLL", dll, "DLL" }, { "image in the stack area", clash, "overlaps" },
+			{ "image above the user range", high, "user address range" }, { "stack reserve 4000000H", big_stack, "stack area" },
+		};
+		for ( auto& c : cases )
+		{
+			auto w = w4_go( w4_build( c.pe ) );
+			std::cout << "  " << c.what << ": " << ( w.p ? "accepted" : w.error ) << "\n";
+			CHECK( !w.p && w.error.find( c.expect ) != std::string::npos, std::string( c.what ) + " refused with \"" + c.expect + "\": " + w.error );
+		}
+		emu::engine_config ec;
+		ec.profile = emu::cpu_profile_choice::max;
+		auto f = w4_facts();
+		f.env = emu::win::environment::none;
+		std::vector<std::string> log;
+		std::string err;
+		CHECK( !emu::win::process::create( ec, f, {}, w4_build( w4_t1( 0x2C ) ), log, err ) && err.find( "no Windows environment" ) != std::string::npos, "no environment: " + err );
+	}
+
+	// runtime half of no_host_passthrough: the guest's NtTerminateProcess( NtCurrentProcess() ) ends only the EMULATED
+	// process - this test process continues; the SYSCALL was seen and handled in the engine; no guest byte sits in host-executable
+	// memory and every executable region is gone with the engine
+	void t_win_env_no_passthrough_runtime()
+	{
+		const auto pe = w4_t1( 0x2C, 0x2A );
+		{
+			auto w = w4_go( w4_build( pe ) );
+			CHECK( w.p && w.ok && w.r.stop == emu::win::stop_kind::terminated, "terminated: " + w.r.detail );
+			std::cout << "  guest exit status " << w.r.exit_status << "; this process continues (the host process was not terminated)\n";
+			CHECK( w.r.syscall_insns == w.r.syscalls_handled && w.r.syscalls_handled == 1, "every SYSCALL the guest executed was handled by the emulated kernel" );
+			const auto& code = pe.sections[ 0 ].data;
+			const auto in_exec = emu::host_guard::find_pattern( code.data(), code.size(), true );
+			std::cout << "  guest .text bytes in host-executable memory: " << in_exec.size() << "\n";
+			CHECK( in_exec.empty(), "the guest code is in no host-executable region" );
+		}
+		const auto after = emu::host_guard::foreign_executable();
+		CHECK( after.empty(), "no executable region outside images after the engine is closed" );
+	}
+
 	struct test_case { const char* name; void ( *fn )(); };
 	const test_case cases[] = {
 		{ "options_oep_defaults", t_options_oep_defaults },
@@ -1021,6 +1581,15 @@ namespace
 		{ "snippet_json", t_snippet_json },
 		{ "snippet_input_file", t_snippet_input_file },
 		{ "snippet_options", t_snippet_options },
+		{ "pe_parse_refusals", t_pe_parse_refusals },
+		{ "pe_fuzz", t_pe_fuzz },
+		{ "pe_map_relocate", t_pe_map_relocate },
+		{ "sysdll_syscall_table", t_sysdll_syscall_table },
+		{ "win_env_layout", t_win_env_layout },
+		{ "win_env_terminate", t_win_env_terminate },
+		{ "win_env_loud_stops", t_win_env_loud_stops },
+		{ "win_env_refusals", t_win_env_refusals },
+		{ "win_env_no_passthrough_runtime", t_win_env_no_passthrough_runtime },
 	};
 }
 

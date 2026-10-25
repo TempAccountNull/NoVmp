@@ -83,6 +83,14 @@ namespace emu
 		std::vector<std::string> dump_mems;    // --dump-mem ADDR:LEN
 		int avx512 = 0, amx = 0, avx10 = 0, apx = 0;   // --avx512 / --amx / --avx10 N / --apx (engine opt-ins, as emu-alltest)
 
+		// U1984 (plan 3.M4): emu-oep runs a PE in the win_env environment
+		bool dry_run = false;                  // --dry-run: print the configuration and stop (the M1 behaviour: nothing opened)
+		uint64_t image_base = 0;               // --image-base ADDR: map the image here (relocated) instead of its ImageBase
+		bool image_base_given = false;
+		std::string sysdlls_dir;               // --sysdlls DIR: the environment's DLL capture folder (decision 3.0.8; default: found
+		                                       // under the capture root, see emu/sysdll.hpp)
+		std::string syscall_query;             // --syscall-number NAME: print NAME's service number from the environment's ntdll
+
 		bool help = false;
 	};
 
@@ -116,7 +124,7 @@ namespace emu
 
 	std::string usage( tool_kind tool );
 
-	// the Phase 3 milestone this lib implements (the tools print it): "M3" = emu-snippet v1 on the engine core (emu::snippet,
-	// U1972-U1975; M2: emu::engine, emu::reg, emu::profile, U1951-U1954); emu-oep still parses options only (M4 / M5)
+	// the Phase 3 milestone this lib implements (the tools print it): "M4" = emu-oep runs a PE in the minimum Windows environment
+	// (emu::win, emu::pe, U1981-U1984; M3: emu-snippet v1, U1972-U1975; M2: emu::engine, emu::reg, emu::profile, U1951-U1954)
 	const char* milestone();
 }

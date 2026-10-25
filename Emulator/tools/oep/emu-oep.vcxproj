@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Plan 3.M1 / 3.A 2.2 (ledger U1940): emu-oep - run a packed PE to its OEP purely in emulation (plan 5.C). M1 skeleton: options only (Emulator lib emu::parse_options); opens nothing, emulates nothing. The sample never runs natively or under a debugger (AGENT_RULES Host safety). -->
+<!-- Plan 3.M1 / 3.A 2.2 (ledger U1940): emu-oep - run a packed PE to its OEP purely in emulation (plan 5.C). Plan 3.M4 (ledger U1984): runs a 64-bit PE (read as data, mapped into guest memory) in the Emulator lib's minimum Windows environment (emu::win); bounded sample runs come with M5 (decision 3.0.4). The sample never runs natively or under a debugger (AGENT_RULES Host safety). -->
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|x64"><Configuration>Debug</Configuration><Platform>x64</Platform></ProjectConfiguration>

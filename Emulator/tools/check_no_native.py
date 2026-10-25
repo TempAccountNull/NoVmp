@@ -43,6 +43,9 @@ syscall, an I/O request or a memory access to the real host kernel. emu-alltest 
      outside Emulator/ (never NoVmp/emulator/*), none has a MASM / .asm item (no host syscall stub), none references
      NoVmp.vcxproj or links ntdll.lib; Emulator.vcxproj is a static library referencing unicorn / capstone / keystone; the
      solution flags (v143, /MT in Release, C++latest, /permissive-).
+  S5 (U1989, plan 3.M4) test PEs = GUEST code (Emulator/tests/pe/*: T1 ...): every such project in NoVmp.sln references no
+     project, writes its executable to build\\x64\\<cfg>\\tests\\test_pe\\ (data for emu-oep), and no Emulator project references
+     it - guest code is never linked into the emulator; the emulator reads the built file as data only.
   S4 imports of the built emu-oep / emu-snippet / emu-selftest (--build DIR): nothing from ntdll.dll, no Nt* / Zw* import,
      none of DENY_IMPORTS (process creation / injection / debugging, DeviceIoControl, LoadLibraryA / W / ExA; the static
      CRT's own LoadLibraryExW is the one loader import allowed).
@@ -320,6 +323,15 @@ def run_controls():
         fails.append('synthetic ntdll / CreateProcessW import not refused')
     if import_violations({'KERNEL32.dll': ['VirtualQuery', 'LoadLibraryExW', 'GetLastError']}):
         fails.append('a clean import set was refused')
+    # U1989 (S5): a test PE that references a project / writes elsewhere, and an Emulator project that references a test PE
+    bad_pe = ('<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003"><PropertyGroup><OutDir>..\\bin\\</OutDir></PropertyGroup>'
+              '<ItemGroup><ProjectReference Include="..\\..\\..\\Emulator.vcxproj" /></ItemGroup></Project>')
+    if len(test_pe_problems('t9_bad', bad_pe, ['..\\..\\tests\\pe\\t9_bad\\t9_bad.vcxproj'])) != 3:
+        fails.append('S5 synthetic bad test-PE project not refused three ways')
+    good_pe = ('<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003"><PropertyGroup><OutDir>$(X)..\\build\\tests\\test_pe\\</OutDir>'
+               '</PropertyGroup></Project>')
+    if test_pe_problems('t9_good', good_pe, ['..\\msvc\\unicorn.vcxproj']):
+        fails.append('S5 a clean test-PE project was refused')
     return fails
 
 # ----------------------------------------------------------------------------------------------------------- checks
@@ -398,6 +410,43 @@ def check_projects(root, report):
                     fails.append('S3 %s is under Emulator/%s but in no Emulator project' % (relp(root, ap), sub))
                     files.append(ap)
     return sorted(set(files)), fails
+
+
+TEST_PE_DIR = 'emulator/tests/pe/'
+
+
+def test_pe_problems(name, xml_text, emu_refs):
+    """S5 for one test-PE project (its XML text); emu_refs = the ProjectReference includes of the Emulator projects"""
+    fails = []
+    prj, _items = project_items(None, xml_text)
+    refs = [el.get('Include', '') for el in prj.iter(MSB + 'ProjectReference')]
+    if refs:
+        fails.append('S5 test PE %s references projects %s (guest code links nothing of the emulator)' % (name, refs))
+    outs = [e.text or '' for e in prj.iter(MSB + 'OutDir')]
+    if not outs or any('tests\\test_pe\\' not in o.replace('/', '\\') for o in outs):
+        fails.append('S5 test PE %s: OutDir %s is not build\\...\\tests\\test_pe\\' % (name, outs))
+    for r in emu_refs:
+        if TEST_PE_DIR.replace('/', '\\') in r.replace('/', '\\').lower() or 'tests\\pe\\' in r.replace('/', '\\').lower() or r.lower().endswith(name.lower() + '.vcxproj'):
+            fails.append('S5 an Emulator project references the test PE %s (%s)' % (name, r))
+    return fails
+
+
+def check_test_pes(root, report):
+    sln = open(os.path.join(root, 'NoVmp.sln'), encoding='utf-8-sig').read()
+    pes = [(n, p) for n, p in re.findall(r'Project\("\{[0-9A-F-]+\}"\) = "([^"]+)", "([^"]+\.vcxproj)"', sln, re.I) if p.replace('\\', '/').lower().startswith(TEST_PE_DIR)]
+    emu_refs = []
+    for _n, rel in EMU_PROJECTS:
+        p = os.path.join(root, rel.replace('/', os.sep))
+        if os.path.isfile(p):
+            emu_refs += [el.get('Include', '') for el in project_items(p)[0].iter(MSB + 'ProjectReference')]
+    fails = []
+    for n, rel in pes:
+        p = os.path.join(root, rel.replace('\\', os.sep))
+        if not os.path.isfile(p):
+            fails.append('S5 test PE %s: %s missing' % (n, rel)); continue
+        fails += test_pe_problems(n, open(p, encoding='utf-8-sig').read(), emu_refs)
+    report.append('S5 %d test-PE project(s) (guest code): %s' % (len(pes), ', '.join(n for n, _ in pes) or '-'))
+    return fails
 
 
 def check_emulator_sources(root, files, report):
@@ -497,7 +546,7 @@ def main(argv):
     files, f3 = check_projects(root, report)
     f1, emu_found = check_emulator_sources(root, files, report)
     nv_found = check_novmp(root, report)
-    fails += f3 + f1
+    fails += f3 + f1 + check_test_pes(root, report)
 
     allow = None if no_allow else load_allowlist(root)
     if not no_allow and allow is None:

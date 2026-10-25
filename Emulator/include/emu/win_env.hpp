@@ -1,0 +1,199 @@
+// emu::win (plan 3.M4 = 3.B 6.1 / 6.2 / 6.6 part, ledger U1983): the minimum Windows x64 user environment for ONE PE image,
+// built entirely in the engine's guest memory from the captures and profiles - nothing is read from or forwarded to the host
+// (AGENT_RULES "Host safety"; decision 3.0.1: ported from emu_extentions\win_env.hpp only where it fits the rules, the rest
+// rewritten - see notes\eread\P34_phase3_m4.md).
+//
+// What a run (process::create + process::run) builds:
+//   image     the PE mapped AS DATA (emu::pe::map): headers R, sections with their protections, relocations when not at the
+//             preferred base (--image-base); a PE with imports, delay imports or a TLS directory is refused (milestone M5)
+//   KUSER     KUSER_SHARED_DATA at the user address MM_SHARED_USER_DATA_VA = 7FFE0000H, read-only, SYNTHESIZED field by
+//             field (never a copy of the host page - the old code's memcpy of the live host page is NOT ported)
+//   PEB, TEB  one process, one thread; GS base = the TEB (the Windows x64 user convention: TEB.NtTib.Self at gs:[30H])
+//   stack     SizeOfStackReserve of the image (at most F00000H), fully committed, [RSP] = a return sentinel at the entry
+//   kernel    two emulator pages above lpMaximumApplicationAddress (the profile's 7FFFFFFEFFFFH): a GDT with the Windows x64
+//             selectors and the system-call entry (IA32_LSTAR) holding one SYSRETQ. User mode is entered by SYSRETQ
+//             (CPL 3, CS 33H, SS 2BH); DS / ES / GS = 2BH and FS = 53H are loaded by MOV in a start stub before it.
+//             Without paging in the engine a high-half (kernel) linear address is cut to the 52-bit physical width
+//             (probed: a read of FFFFF80000000000H faults at FF80000000000H), so the pages sit in the low half.
+//   syscalls  SYSCALL executes as the SDM defines it (fork U901: RCX := RIP, R11 := RFLAGS, CPL 0, RIP := IA32_LSTAR); the
+//             UC_X86_INS_SYSCALL hook then IS the kernel: it dispatches on EAX AND FFFFH (plan 6.4.a; bit 12 = the win32k
+//             table, unknown in M4) with the numbers parsed from the environment's ntdll capture (plan 6.4.b, decision
+//             3.0.8). M4 implements NtTerminateProcess( NtCurrentProcess(), ExitStatus ) only. An unknown number, a known
+//             but unimplemented service, or an unsupported argument STOPS the run loudly with a state dump (plan 6.4,
+//             AGENT_RULES "Host safety": never a silent success). The SYSRETQ at LSTAR returns to user mode when a
+//             service completes. INT 2EH and SYSENTER are faults / #UD in M4 (stopped, never forwarded).
+// --Sys / --HLE (D3, plan 6.1): recorded in every log line set; M4 maps no system DLL in either mode (imports come in M5),
+// and both share this one kernel layer, so the observable result is the same in both modes (checked by the suites).
+//
+// Layouts (cited per field in win_env.cpp; checked by Emulator\tools\check_win_layout.py and static_asserts):
+//   TEB   Windows SDK / WDK 10.0.26100.0 shared\ksamd64.inc "Te*" offsets (TeSelf 30H, TeClientId 40H, TePeb 60H, ...);
+//         um\winnt.h NT_TIB; um\winternl.h TEB.ProcessEnvironmentBlock / TlsSlots
+//   PEB   ksamd64.inc PeBeingDebugged 2H / PeProcessParameters 20H; winternl.h PEB.BeingDebugged / Ldr / ProcessParameters;
+//         ImageBaseAddress 10H, ProcessHeap 30H, OSMajorVersion 118H, OSMinorVersion 11CH, OSBuildNumber 120H, OSPlatformId
+//         124H: the Intel Pin kit's adaptor\windows\ntdll.h PEB (an independent layout, notes\sdeida\06_pinrt_runtime.md
+//         section 3; field offsets recomputed by check_win_layout.py)
+//   KUSER WDK km\ntddk.h KUSER_SHARED_DATA C_ASSERT(FIELD_OFFSET(...)) lines (and the ksamd64.inc "Us*" offsets)
+//   GDT   ksamd64.inc KGDT64_* (R0 code 10H, R0 data 18H, R3 compat code 20H, R3 data 28H, R3 code 30H, R3 compat TEB 50H),
+//         RPL_MASK 3; descriptor format 253668-093 Vol3A 3.4.5 (L flag p. 3-12)
+//   SYSCALL / SYSRET  253667-093 Vol2B SYSCALL Operation p. 4-700, SYSRET Operation p. 4-710; FS / GS loads in 64-bit mode
+//         253668-093 Vol3A 3.4.4 p. 3-9 ("load a standard 32-bit base ... bits above the standard 32 bits are cleared")
+// Values: the OS version / product type / system root from the environment's capture manifest; processor count, physical
+// memory, processor architecture and the user address range from the platform profile (views\environment.txt); time fields
+// stay 0 until the one virtual time base (milestone M6); ProcessorFeatures stay 0 until their first consumer (M5).
+#pragma once
+
+#include <emu/engine.hpp>
+#include <emu/options.hpp>
+#include <emu/pe_image.hpp>
+#include <emu/reg.hpp>
+#include <emu/sysdll.hpp>
+
+#include <array>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace emu::win
+{
+	// ---- guest addresses of the environment (synthesized; the KUSER address is the documented one)
+	inline constexpr uint64_t guest_kuser_va = 0x7FFE0000;                 // ksamd64.inc MM_SHARED_USER_DATA_VA (:986)
+	inline constexpr uint64_t guest_kernel_gdt_va = 0x00007FFFFFFF0000ull;  // the emulator's kernel pages (see above)
+	inline constexpr uint64_t guest_kernel_entry_va = 0x00007FFFFFFF1000ull;
+	inline constexpr uint64_t guest_return_sentinel = 0x00007FFFFFFFF000ull; // never mapped: returning from the entry ends the run
+	inline constexpr uint64_t guest_stack_top = 0x1000000ull;
+	inline constexpr uint64_t guest_stack_max_reserve = 0xF00000ull;
+	inline constexpr uint64_t guest_peb_va = 0x1010000ull;
+	inline constexpr uint64_t guest_teb_va = 0x1020000ull;
+	inline constexpr uint64_t guest_teb_size = 0x2000;                       // TeTlsExpansionSlots 1780H + 8 fits
+	inline constexpr uint64_t guest_process_id = 0x1000, guest_thread_id = 0x1004;   // synthesized client id
+	inline constexpr uint64_t guest_initial_rflags = 0x202;                  // IF (ksamd64.inc EFLAGS_IF_MASK 200H) + bit 1
+
+	// ---- field offsets (sources in win_env.cpp; names never start with Nt / Zw: no_host_passthrough)
+	namespace layout
+	{
+		// TEB (ksamd64.inc Te* :661-694)
+		inline constexpr uint64_t teb_exception_list = 0x0000, teb_stack_base = 0x0008, teb_stack_limit = 0x0010, teb_self = 0x0030,
+								  teb_client_id = 0x0040, teb_tls_pointer = 0x0058, teb_peb = 0x0060, teb_last_error = 0x0068,
+								  teb_deallocation_stack = 0x1478, teb_tls_slots = 0x1480;
+		// PEB
+		inline constexpr uint64_t peb_being_debugged = 0x002, peb_image_base_address = 0x010, peb_ldr = 0x018, peb_process_parameters = 0x020,
+								  peb_process_heap = 0x030, peb_os_major_version = 0x118, peb_os_minor_version = 0x11C, peb_os_build_number = 0x120,
+								  peb_os_csd_version = 0x122, peb_os_platform_id = 0x124;
+		// KUSER_SHARED_DATA (ntddk.h C_ASSERT :9540-9634)
+		inline constexpr uint64_t kuser_tick_count_multiplier = 0x004, kuser_interrupt_time = 0x008, kuser_system_time = 0x014,
+								  kuser_time_zone_bias = 0x020, kuser_image_number_low = 0x02C, kuser_image_number_high = 0x02E,
+								  kuser_system_root = 0x030, kuser_build_number = 0x260, kuser_product_type = 0x264,
+								  kuser_product_type_is_valid = 0x268, kuser_native_processor_architecture = 0x26A,
+								  kuser_major_version = 0x26C, kuser_minor_version = 0x270, kuser_processor_features = 0x274,
+								  kuser_kd_debugger_enabled = 0x2D4, kuser_number_of_physical_pages = 0x2E8, kuser_safe_boot_mode = 0x2EC,
+								  kuser_system_call = 0x308, kuser_active_processor_count = 0x3C0, kuser_active_group_count = 0x3C4;
+		inline constexpr uint64_t kuser_system_root_chars = 260;   // WCHAR NtSystemRoot[260] (ntddk.h; next field at 238H)
+		// GDT (ksamd64.inc KGDT64_* :1017-1024, RPL_MASK :1170)
+		inline constexpr uint16_t gdt_r0_code = 0x10, gdt_r0_data = 0x18, gdt_r3_cmcode = 0x20, gdt_r3_data = 0x28, gdt_r3_code = 0x30,
+								  gdt_sys_tss = 0x40, gdt_r3_cmteb = 0x50, rpl3 = 3;
+		inline constexpr uint64_t gdt_limit = 0x57;   // up to and including the R3 compat-TEB descriptor (50H..57H)
+	}
+
+	// everything the guest observes about the OS, from the captures / profiles (never from the running machine)
+	struct environment_facts
+	{
+		environment env = environment::none;
+		uint32_t os_major = 0, os_minor = 0, os_build = 0, product_type = 0;
+		std::string system_root;
+		uint32_t processors = 0, processor_architecture = 0;
+		uint64_t total_phys = 0, min_app_address = 0, max_app_address = 0;
+		syscall_table syscalls;
+		std::string capture_dir, platform_source;   // where they came from (for the log)
+	};
+	// the capture manifest + ntdll syscall table of ENV, and the platform profile facts
+	bool load_environment_facts( environment env, const std::string& capture_dir_explicit, const std::string& data_dir, environment_facts& f,
+								 std::vector<std::string>& log, std::string& error );
+
+	struct process_options
+	{
+		env_boundary boundary = env_boundary::sys;
+		bool image_base_given = false;
+		uint64_t image_base = 0;
+		uint64_t max_insns = 100000000;   // every run is bounded (no host time)
+		std::string image_name = "image";
+	};
+
+	enum class stop_kind { none, terminated, unknown_syscall, unimplemented_syscall, fault, count, returned, error };
+	const char* name_of( stop_kind k );
+
+	struct syscall_record
+	{
+		uint64_t index = 0;          // 1, 2, ...
+		uint64_t at = 0;             // the SYSCALL instruction's address (user mode)
+		uint64_t rax = 0;            // EAX as the guest left it (the full register)
+		uint32_t number = 0;         // EAX AND FFFFH
+		std::string name;            // from the environment's ntdll ("" = unknown)
+		std::array<uint64_t, 6> args{};   // R10, RDX, R8, R9, [RSP+28H], [RSP+30H]
+		bool stack_args_read = false;
+		std::string outcome;
+	};
+
+	struct run_result
+	{
+		stop_kind stop = stop_kind::none;
+		std::string detail;
+		uint32_t exit_status = 0;              // stop_kind::terminated
+		uint64_t insns = 0;                    // instructions executed (user code + the environment's start stub / SYSRETQ)
+		uint64_t syscall_insns = 0;            // SYSCALL instructions the guest executed (seen by the code hook)
+		uint64_t syscalls_handled = 0;         // handled by this kernel layer (the UC_X86_INS_SYSCALL hook)
+		std::vector<syscall_record> syscalls;
+		int fault_vector = -1;
+		int64_t fault_error_code = -1;
+		uint64_t fault_address = 0;            // #PF: the address; returned: the sentinel
+		uint64_t user_rip = 0, user_rflags = 0, user_rsp = 0;   // at a syscall stop: the SYSCALL instruction, R11, RSP
+		reg::dump final;
+		bool have_final = false;
+	};
+
+	class process
+	{
+	public:
+		// open the engine, map the image and build the environment; false (nullptr) with the reason
+		static std::unique_ptr<process> create( const engine_config& ec, const environment_facts& facts, const process_options& po,
+												const std::vector<uint8_t>& pe_file, std::vector<std::string>& log, std::string& error );
+		~process();
+		process( const process& ) = delete;
+		process& operator=( const process& ) = delete;
+
+		bool run( run_result& r, std::string& error );
+
+		engine& eng() { return *e_; }
+		const std::vector<std::string>& log() const { return log_; }
+		uint64_t image_base() const { return map_.base; }
+		uint64_t entry() const { return map_.entry; }
+		uint64_t peb() const { return guest_peb_va; }
+		uint64_t teb() const { return guest_teb_va; }
+		uint64_t user_rsp() const { return user_rsp_; }
+		const pe::image& img() const { return img_; }
+		const syscall_table& syscalls() const { return facts_.syscalls; }
+
+		// the result lines that must not depend on --Sys / --HLE (the suites compare them between the two modes)
+		std::vector<std::string> observable( const run_result& r ) const;
+		// the loud-failure state dump: stop, syscall record, user-mode RIP / RFLAGS, register dump, memory map
+		std::vector<std::string> state_dump( const run_result& r ) const;
+		// the environment fields written (name = value), part of observable()
+		const std::vector<std::string>& environment_lines() const { return env_lines_; }
+
+		struct hook_ctx;   // the hooks' state (win_env.cpp)
+
+	private:
+		process() = default;
+		bool build( const environment_facts& facts, const process_options& po, const std::vector<uint8_t>& pe_file, std::string& error );
+
+		std::unique_ptr<engine> e_;
+		pe::image img_;
+		pe::mapping map_;
+		environment_facts facts_;
+		process_options po_;
+		uint64_t user_rsp_ = 0, stack_base_ = 0, stack_reserve_ = 0, start_stub_ = 0, start_sysret_ = 0;
+		std::vector<std::string> log_;
+		std::vector<std::string> env_lines_;
+		std::unique_ptr<hook_ctx> hc_;
+	};
+}

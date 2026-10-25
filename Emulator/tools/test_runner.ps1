@@ -706,7 +706,8 @@ Add-Suite 'pg_profile_check_host' 'tools platform' 'exit' 'emu-profilegen' @( '-
 # no-native case no_native_runtime. emu_oep_options / emu_snippet_options: the M1 skeleton tools parse and print their options
 # and stop - INPUT / --image / --out-dir are recorded, never opened or created (the paths below do not exist).
 Add-Suite 'emu_selftest' 'emulator unit' 'exit' 'emu-selftest' @()
-Add-Suite 'emu_oep_options' 'emulator' 'exit' 'emu-oep' @( '--guest', '--HLE', '--HostSeed', '--max-insns', '0x100000000', '--out-dir', ( Join-Path $T 'emu_oep_out_not_created' ), ( Join-Path $T 'emu_oep_input_not_opened.exe' ) )
+# U1984 (plan 3.M4): emu-oep now runs its INPUT, so this options suite passes --dry-run (the M1 behaviour: nothing opened)
+Add-Suite 'emu_oep_options' 'emulator' 'exit' 'emu-oep' @( '--dry-run', '--guest', '--HLE', '--HostSeed', '--max-insns', '0x100000000', '--out-dir', ( Join-Path $T 'emu_oep_out_not_created' ), ( Join-Path $T 'emu_oep_input_not_opened.exe' ) )
 Add-Suite 'emu_snippet_options' 'emulator' 'exit' 'emu-snippet' @( '--hex', '48 31 c0 c3', '--stop-ret-depth', '1', '--max-insns', '16', '--expect', 'rax=0' )
 # U1942-U1943 (agent p3m1, plan 3.M1): no_native_check = Emulator\tools\check_no_native.py - no native execution of guest code
 # and no host-kernel pass-through (AGENT_RULES "Host safety"): S1 emulator source scan, S2 NoVmp's native executor (allow-listed
@@ -720,6 +721,18 @@ Add-Suite 'no_native_check' 'emulator safety tools' 'py' ( Join-Path $Root 'Emul
 # bare-host profiles: emu-snippet's final state must equal emu-alltest's Unicorn engine state on every line (reference SAME).
 Add-Suite 'emu_snippet_expect_bad' 'emulator snippet' 'snipcli1' 'emu-snippet' @( '--hex', '48 c7 c0 05 00 00 00', '--expect', 'rax=6', '--quiet' )
 Add-Suite 'emu_snippet_hw_sample' 'emulator snippet hw' 'py' ( Join-Path $Root 'Emulator\tools\snippet_hw_sample.py' ) @( $Root, $T )
+# U1980-U1989 (agent p3m4, plan 3.M4, notes\eread\P34_phase3_m4.md): win_env minimum for a PE. win_env_t1 = the test PE T1
+# (Emulator\tests\pe\t1_exit, self-written guest code: one direct SYSCALL NtTerminateProcess( NtCurrentProcess(), 2AH )) with the
+# service number of the VMware-guest environment's ntdll capture (decision 3.0.8; capture_sysdlls.py, local only): emu-oep --Sys
+# and --HLE exit status 2AH with identical observable results (also relocated), --host refused while no bare-host capture exists,
+# loud stops with state dumps, and the native reference of decision 3.0.7 (only when the live ntdll equals the capture).
+# win_env_layout = Emulator\tools\check_win_layout.py: every PEB / TEB / KUSER offset, GDT selector and the KUSER address against
+# the SDK / WDK headers (ksamd64.inc, ntddk.h) and the Pin kit's PEB. no_host_passthrough = Emulator\tools\check_no_passthrough.py:
+# the static "no host pass-through" scan of the emulator code + the runtime proof that an emulated system call never reaches
+# the host.
+Add-Suite 'win_env_t1' 'emulator win_env' 'py' ( Join-Path $Root 'Emulator\tools\win_env_t1.py' ) @( $Root, $T )
+Add-Suite 'win_env_layout' 'emulator win_env tools' 'py' ( Join-Path $Root 'Emulator\tools\check_win_layout.py' ) @( $Root )
+Add-Suite 'no_host_passthrough' 'emulator safety tools win_env' 'py' ( Join-Path $Root 'Emulator\tools\check_no_passthrough.py' ) @( $Root, '--build', $T )
 
 # ---------------------------------------------------------------------------------------- selection
 $Groups = [ordered]@{}
