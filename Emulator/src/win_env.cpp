@@ -69,6 +69,33 @@ namespace emu::win
 		}
 	}
 
+	namespace
+	{
+		// U2031: the files the --Sys loader start needs in the capture (U2024)
+		bool loader_files_present( const environment_facts& f )
+		{
+			if ( !f.files ) return false;
+			for ( const char* n : { "ntdll.dll", "kernel32.dll", "kernelbase.dll", "apisetschema.dll" } )
+				if ( !f.files->count( n ) ) return false;
+			return !f.manifest.nls_acp_file.empty() && !f.manifest.nls_oemcp_file.empty() && !f.manifest.nls_case_file.empty();
+		}
+
+		// U2030: _CONTEXT member offsets (guest ntdll.pdb, emu/win_fields.hpp) and winnt.h CONTEXT_* flags (SDK um\winnt.h :4218-4226)
+		constexpr uint32_t ctx_flags = fields::offset_of( fields::context, "ContextFlags" ), ctx_mxcsr = fields::offset_of( fields::context, "MxCsr" ),
+						   ctx_segcs = fields::offset_of( fields::context, "SegCs" ), ctx_eflags = fields::offset_of( fields::context, "EFlags" ),
+						   ctx_rax = fields::offset_of( fields::context, "Rax" ), ctx_rsp = fields::offset_of( fields::context, "Rsp" ),
+						   ctx_rip = fields::offset_of( fields::context, "Rip" ), ctx_fltsave = fields::offset_of( fields::context, "FltSave" ),
+						   ctx_xmm0 = fields::offset_of( fields::context, "Xmm0" );
+		static_assert( ctx_flags == 0x30 && ctx_mxcsr == 0x34 && ctx_segcs == 0x38 && ctx_eflags == 0x44 && ctx_rax == 0x78 && ctx_rsp == 0x98 && ctx_rip == 0xF8 &&
+						   ctx_fltsave == 0x100 && ctx_xmm0 == 0x1A0 && fields::context_size == 0x4D0,
+					   "_CONTEXT (guest ntdll.pdb)" );
+		constexpr uint32_t context_amd64 = 0x100000, context_control = context_amd64 | 1, context_integer = context_amd64 | 2, context_segments = context_amd64 | 4,
+						   context_floating_point = context_amd64 | 8, context_full = context_control | context_integer | context_floating_point;
+		// the user RFLAGS bits a CONTEXT may set (ReactOS 0.4.16 sdk/include/ndk/amd64/ketypes.h:207 EFLAGS_USER_SANITIZE 3F4DD7H, minus
+		// VM (bit 17, meaningless in 64-bit mode)); IF and bit 1 always set
+		constexpr uint64_t eflags_user_sanitize = 0x3F4DD7 & ~0x20000ull;
+	}
+
 	const char* name_of( stop_kind k )
 	{
 		switch ( k )
@@ -142,6 +169,9 @@ namespace emu::win
 			}
 			( *files )[ "ntdll.dll" ] = nt;   // the system image ntdll.dll (the syscall table's source, size = the manifest)
 			f.files = files;
+			auto reg = std::make_shared<std::map<std::string, nt::registry_key>>();   // U2034
+			if ( !load_registry( f.capture_dir, *reg, error ) ) return false;
+			f.registry = reg;
 		}
 		log.push_back( "  capture: " + f.capture_dir + " (manifest format 1, captured " + m.captured + "; ntdll.dll " + std::to_string( bytes.size() ) +
 					   " bytes = the manifest size; the SHA-256 is checked by the harness)" );
@@ -360,10 +390,15 @@ namespace emu::win
 			s.rax = read_reg( uc, UC_X86_REG_RAX );
 			s.number = uint32_t( s.rax & 0xFFFF );
 			const uint64_t rcx = read_reg( uc, UC_X86_REG_RCX ), r11 = read_reg( uc, UC_X86_REG_R11 ), rsp = read_reg( uc, UC_X86_REG_RSP );
-			s.args = { read_reg( uc, UC_X86_REG_R10 ), read_reg( uc, UC_X86_REG_RDX ), read_reg( uc, UC_X86_REG_R8 ), read_reg( uc, UC_X86_REG_R9 ), 0, 0 };
-			uint64_t stack[ 2 ] = {};
+			s.args = { read_reg( uc, UC_X86_REG_R10 ), read_reg( uc, UC_X86_REG_RDX ), read_reg( uc, UC_X86_REG_R8 ), read_reg( uc, UC_X86_REG_R9 ) };
+			uint64_t stack[ 8 ] = {};   // U2031: [RSP+28H] .. [RSP+60H] (arguments 5..12)
 			std::string err;
-			if ( rsp <= UINT64_MAX - 0x38 && c.p->eng().read( rsp + 0x28, stack, sizeof( stack ), err ) )
+			if ( rsp <= UINT64_MAX - 0x68 && c.p->eng().read( rsp + 0x28, stack, sizeof( stack ), err ) )
+			{
+				for ( int i = 0; i < 8; i++ ) s.args[ size_t( 4 + i ) ] = stack[ i ];
+				s.stack_args_read = true;
+			}
+			else if ( rsp <= UINT64_MAX - 0x38 && c.p->eng().read( rsp + 0x28, stack, 16, err ) )
 			{
 				s.args[ 4 ] = stack[ 0 ];
 				s.args[ 5 ] = stack[ 1 ];
@@ -391,8 +426,25 @@ namespace emu::win
 			call.name = s.name;
 			call.args = s.args;
 			call.stack_args = s.stack_args_read;
+			call.insns = r.insns;   // U2032: the virtual clock
 			const nt::reply rep = c.p->kern().dispatch( call );
 			s.writes = rep.writes;
+			if ( rep.kind == nt::reply_kind::resume )   // U2030: NtContinue - the full CPU state from the CONTEXT, back to user mode by IRETQ
+			{
+				std::string why;
+				if ( !c.p->resume_context( uc, rep.context, why ) )
+				{
+					s.outcome += "not answered: " + why;
+					r.syscalls.push_back( s );
+					c.stop( stop_kind::unimplemented_syscall, s.name + " at rip " + hex( s.at ) + ": " + why + " - stopped with a state dump" );
+					uc_emu_stop( uc );
+					return;
+				}
+				s.answered = true;
+				s.outcome += rep.text;
+				r.syscalls.push_back( s );
+				return;
+			}
 			if ( rep.kind == nt::reply_kind::done )
 			{
 				const uint64_t st = rep.status;   // NTSTATUS in EAX, the upper half of RAX zero
@@ -530,17 +582,25 @@ namespace emu::win
 		const bool has_imports = img_.dirs[ IMAGE_DIRECTORY_ENTRY_IMPORT ].rva || img_.dirs[ IMAGE_DIRECTORY_ENTRY_IMPORT ].size;
 		const bool has_tls = img_.dirs[ IMAGE_DIRECTORY_ENTRY_TLS ].rva || img_.dirs[ IMAGE_DIRECTORY_ENTRY_TLS ].size;
 		std::vector<pe::import_module> imports;
-		if ( po.boundary == env_boundary::sys && ( has_imports || has_tls ) )
+		// plan 3.M5 part 2 (U2031): --Sys --loader with the environment's loader files in the capture (ntdll, kernel32, kernelbase,
+		// apisetschema, the NLS tables) starts the process in the real ntdll!LdrInitializeThunk - every image, as Windows does; the
+		// loader then maps kernel32 / kernelbase, resolves the imports and runs the TLS callbacks itself. OPT-IN: the real loader
+		// meets system services no allowed source describes (P36: NtQuerySecurityAttributesToken first) and stops there loudly; the
+		// default --Sys start stays the direct one of milestone M5 until those services have a source.
+		if ( po.loader && po.boundary != env_boundary::sys ) return refuse( "--loader is a --Sys option (the real ntdll loader); --HLE reimplements the loader's part" );
+		if ( po.loader && !loader_files_present( f ) )
+			return refuse( "--Sys --loader needs the loader files in the capture (kernel32.dll, kernelbase.dll, apisetschema.dll, the NLS tables: capture_sysdlls.py --dll / "
+						   "--nls, U2024)" );
+		loader_start_ = po.boundary == env_boundary::sys && po.loader;
+		if ( po.boundary == env_boundary::sys && !loader_start_ && ( has_imports || has_tls ) )
 		{
 			std::string what, why;
 			if ( has_imports && pe::imports( file, img_, imports, why ) )
 				for ( auto& m : imports ) what += ( what.empty() ? "" : ", " ) + m.dll;
 			return refuse( "--Sys: " + po.image_name + ( has_imports ? " imports" + ( what.empty() ? std::string( " (a malformed import directory)" ) : " " + what ) : std::string() ) +
 						   ( has_imports && has_tls ? " and" : "" ) + ( has_tls ? " has a TLS directory" : "" ) +
-						   ": under --Sys the process starts in the environment's real ntdll!LdrInitializeThunk (plan 6.1), which needs the kernel's "
-						   "process-creation state - PEB members beyond the documented layouts (the API set map, the NLS code-page tables), the "
-						   "loader's initial thread context, and kernelbase's CSR / BaseSrv connection - for which the project has no cited source; not "
-						   "modelled in milestone M5 (user decision pending, notes\\eread\\P35_phase3_m5.md). --HLE runs this image." );
+						   ": under --Sys an image with imports / TLS starts in the environment's real ntdll!LdrInitializeThunk (plan 6.1) - the "
+						   "opt-in --Sys --loader start (U2031), which stops at the first system service without a source (P36). --HLE runs this image." );
 		}
 		if ( !pe::imports( file, img_, imports, error ) ) return refuse( error );
 		if ( img_.file_characteristics & IMAGE_FILE_DLL ) return refuse( po.image_name + " is a DLL (IMAGE_FILE_DLL): the process image must be an executable" );
@@ -577,7 +637,8 @@ namespace emu::win
 			 !map( guest_peb_va, page_size, UC_PROT_READ | UC_PROT_WRITE, "PEB" ) || !map( guest_teb_va, guest_teb_size, UC_PROT_READ | UC_PROT_WRITE, "TEB (main thread)" ) ||
 			 !map( guest_kuser_va, page_size, UC_PROT_READ, "KUSER_SHARED_DATA (synthesized, read-only)" ) ||
 			 !map( guest_kernel_gdt_va, page_size, UC_PROT_READ, "emulator kernel: GDT" ) ||
-			 !map( guest_kernel_entry_va, page_size, UC_PROT_READ | UC_PROT_EXEC, "emulator kernel: system-call entry (SYSRETQ) + start stub" ) )
+			 !map( guest_kernel_entry_va, page_size, UC_PROT_READ | UC_PROT_EXEC, "emulator kernel: system-call entry (SYSRETQ) + start stub" ) ||
+			 !map( guest_kernel_stack_va, page_size, UC_PROT_READ | UC_PROT_WRITE, "emulator kernel: stack page (IRETQ frames, U2030)" ) )
 			return false;
 
 		auto w = [ & ]( uint64_t va, const void* data, uint64_t n, const std::string& label, const std::string& shown ) {
@@ -614,6 +675,11 @@ namespace emu::win
 		if ( !w( guest_kernel_entry_va, sysretq, sizeof( sysretq ), "", "" ) || !w( start_stub_, stub, sizeof( stub ), "", "" ) ||
 			 !w( start_sysret_, sysretq, sizeof( sysretq ), "", "" ) )
 			return false;
+		// U2030: +200H = IRETQ (48 CF; 253667-093 Vol2A IRET / IRETD / IRETQ Operation "IA-32e mode": RIP, CS, RFLAGS, RSP, SS popped) - the
+		// return to user mode with a full register state (NtContinue, the --Sys loader start), where SYSRETQ would lose RCX / R11
+		iretq_stub_ = guest_kernel_entry_va + 0x200;
+		const uint8_t iretq[] = { 0x48, 0xCF };
+		if ( !w( iretq_stub_, iretq, sizeof( iretq ), "", "" ) ) return false;
 
 		// KUSER_SHARED_DATA (WDK km\ntddk.h C_ASSERT offsets; values from the facts; everything else 0)
 		const uint64_t k = guest_kuser_va;
@@ -691,6 +757,9 @@ namespace emu::win
 		kf.thread_id = guest_thread_id;
 		kf.peb = pb;
 		kf.teb = tb;
+		kf.total_phys = f.total_phys;   // U2032
+		kf.processors = f.processors;
+		kf.registry = facts_.registry.get();   // U2034 (facts_ owns it for the process' lifetime)
 		kernel_ = std::make_unique<nt::kernel>( *e_, kf );
 		hle_ = std::make_unique<hle::module>();
 		start_va_ = map_.entry;
@@ -702,7 +771,11 @@ namespace emu::win
 		{
 			std::vector<module_image> sys;
 			std::vector<std::string> mlog;
-			if ( !map_system_images( *e_, f, sys, mlog, err ) ) return refuse( "system images: " + err );
+			// --HLE (and --Sys without the loader files): the three system images as data; the --Sys loader start: the kernel maps
+			// ntdll.dll only (ReactOS 0.4.16 ntoskrnl/ps/process.c PspCreateProcess -> PspMapSystemDll; the loader maps the rest)
+			std::vector<std::string> names( std::begin( system_images_order ), std::end( system_images_order ) );
+			if ( loader_start_ ) names = { "ntdll.dll" };
+			if ( !map_system_images( *e_, f, names, sys, mlog, err ) ) return refuse( "system images: " + err );
 			for ( auto& l : mlog ) log_.push_back( l );
 			const process_identity id = make_identity( f, po.image_file_name );
 			module_image self;
@@ -719,26 +792,33 @@ namespace emu::win
 			for ( auto& m : sys ) modules_.push_back( std::move( m ) );
 			for ( const auto& m : modules_ )
 				if ( m.is_dll ) env_lines_.push_back( "system image " + m.name + " at " + hex( m.base ) + ", SizeOfImage " + hex( m.size ) + ", entry " + hex( m.entry ) + " (as data)" );
+			for ( const auto& m : modules_ )   // U2031: every image is a MEM_IMAGE section view of the process
+				if ( !kernel_->add_image_view( m.base, m.size, m.name, err ) ) return refuse( "image view " + m.name + ": " + err );
 			std::vector<std::string> plines;
-			if ( !build_process_parameters( *e_, *kernel_, f, id, pstate_, plines, err ) || !build_process_heap( *e_, *kernel_, pstate_, plines, err ) ||
-				 !build_loader_data( *e_, *kernel_, modules_, pstate_, plines, err ) )
+			if ( !build_process_parameters( *e_, *kernel_, f, id, pstate_, plines, err ) ) return refuse( err );
+			// the heap and the loader data: the environment's (--HLE, --Sys without the loader files) or the real loader's (the --Sys
+			// loader start: ntdll's LdrpInitializeProcess creates the process heap and the loader lists itself)
+			if ( !loader_start_ && ( !build_process_heap( *e_, *kernel_, pstate_, plines, err ) || !build_loader_data( *e_, *kernel_, modules_, pstate_, plines, err ) ) )
 				return refuse( err );
+			if ( loader_start_ && !build_kernel_views( f, plines, err ) ) return refuse( err );
 			for ( auto& l : plines ) env_lines_.push_back( l );
 			constexpr uint64_t peb_size = fields::peb_size;   // 7C8H: ProcessHeaps = PEB + sizeof(PEB) (MmCreatePeb, procsup.c:618-619)
 			const uint64_t heaps = pb + peb_size, max_heaps = ( page_size - peb_size ) / 8;
 			// CriticalSectionTimeout: the NT value 720 hours (ReactOS mminit.c:388 comment), negative = relative, 100 ns units
 			const uint64_t cs_timeout = uint64_t( -int64_t( 720ull * 60 * 60 * 10000000ull ) );
 			const uint32_t session = 1;   // the interactive session (session 0 hosts services); chosen
-			if ( !w64( pb + 0x018, pstate_.ldr, 8, "PEB Ldr (18H) = the loader data" ) ||
-				 !w64( pb + 0x020, pstate_.parameters, 8, "PEB ProcessParameters (20H)" ) || !w64( pb + 0x030, pstate_.heap, 8, "PEB ProcessHeap (30H)" ) ||
+			if ( !w64( pb + 0x018, pstate_.ldr, 8, loader_start_ ? "PEB Ldr (18H) = 0: the real loader sets it" : "PEB Ldr (18H) = the loader data" ) ||
+				 !w64( pb + 0x020, pstate_.parameters, 8, "PEB ProcessParameters (20H)" ) ||
+				 !w64( pb + 0x030, pstate_.heap, 8, loader_start_ ? "PEB ProcessHeap (30H) = 0: the real loader creates it" : "PEB ProcessHeap (30H)" ) ||
 				 !w64( pb + 0x0B8, f.processors, 4, "PEB NumberOfProcessors (B8H)" ) ||
 				 !w64( pb + 0x0BC, 0, 4, "PEB NtGlobalFlag (BCH) = 0: no global flags, no debugger (MmCreatePeb copies the system's NtGlobalFlag)" ) ||
 				 !w64( pb + 0x0C0, cs_timeout, 8, "PEB CriticalSectionTimeout (C0H)" ) || !w64( pb + 0x0C8, 0x100000, 8, "PEB HeapSegmentReserve (C8H, mminit.c:367)" ) ||
 				 !w64( pb + 0x0D0, 0x2000, 8, "PEB HeapSegmentCommit (D0H, mminit.c:368)" ) ||
 				 !w64( pb + 0x0D8, 0x10000, 8, "PEB HeapDeCommitTotalFreeThreshold (D8H, mminit.c:369)" ) ||
 				 !w64( pb + 0x0E0, 0x1000, 8, "PEB HeapDeCommitFreeBlockThreshold (E0H, mminit.c:370)" ) ||
-				 !w64( pb + 0x0E8, 1, 4, "PEB NumberOfHeaps (E8H)" ) || !w64( pb + 0x0EC, max_heaps, 4, "PEB MaximumNumberOfHeaps (ECH)" ) ||
-				 !w64( pb + 0x0F0, heaps, 8, "PEB ProcessHeaps (F0H) = PEB + 7C8H" ) || !w64( heaps, pstate_.heap, 8, "PEB ProcessHeaps[0] = the process heap" ) ||
+				 !w64( pb + 0x0E8, loader_start_ ? 0 : 1, 4, "PEB NumberOfHeaps (E8H)" ) || !w64( pb + 0x0EC, max_heaps, 4, "PEB MaximumNumberOfHeaps (ECH)" ) ||
+				 !w64( pb + 0x0F0, heaps, 8, "PEB ProcessHeaps (F0H) = PEB + 7C8H" ) ||
+				 ( !loader_start_ && !w64( heaps, pstate_.heap, 8, "PEB ProcessHeaps[0] = the process heap" ) ) ||
 				 !w64( pb + 0x128, img_.subsystem, 4, "PEB ImageSubsystem (128H)" ) || !w64( pb + 0x12C, img_.subsystem_major, 4, "PEB ImageSubsystemMajorVersion (12CH)" ) ||
 				 !w64( pb + 0x130, img_.subsystem_minor, 4, "PEB ImageSubsystemMinorVersion (130H)" ) ||
 				 !w64( pb + 0x138, f.active_processor_mask, 8, "PEB ActiveProcessAffinityMask (138H)" ) || !w64( pb + 0x2C0, session, 4, "PEB SessionId (2C0H, chosen)" ) )
@@ -754,7 +834,54 @@ namespace emu::win
 							   fields::offset_of( fields::peb, "ProcessParameters" ) == 0x20 && fields::offset_of( fields::peb, "ProcessHeap" ) == 0x30,
 						   "the PEB members written above (guest ntdll.pdb _PEB)" );
 		}
-		if ( !imports.empty() )   // --HLE (U2009): the imports bound to the API stubs
+		if ( loader_start_ )
+		{
+			// U2031: the first thread's start (Wine 11.0 dlls/ntdll/unix/signal_x86_64.c:2896-2973 init_syscall_frame, licensed OSS
+			// reference; the main thread's entry = the image entry, its argument = the PEB: dlls/ntdll/unix/server.c:1768): a CONTEXT
+			// below the stack top - Rcx = the entry, Rdx = the PEB, Rsp = StackBase - 28H, Rip = ntdll!RtlUserThreadStart, CS 33H,
+			// DS / ES / GS / SS 2BH, FS 53H, EFlags 200H, the x87 control word 27FH, MXCSR 1F80H, ContextFlags CONTEXT_FULL - and the
+			// thread enters ntdll!LdrInitializeThunk( CONTEXT ) with RSP = the CONTEXT - 8; LdrInitializeThunk continues at the CONTEXT
+			// (NtContinue) when the process is initialized (dlls/ntdll/signal_x86_64.c:1039-1043)
+			const module_image* nt = nullptr;
+			for ( const auto& m : modules_ )
+				if ( m.name == "ntdll.dll" ) nt = &m;
+			if ( !nt ) return refuse( "--Sys loader start: ntdll.dll is not mapped" );
+			auto export_va = [ & ]( const char* n ) -> uint64_t {
+				for ( const auto& [ rva, name ] : nt->exports_by_rva )
+					if ( name == n ) return nt->base + rva;
+				return 0;
+			};
+			const uint64_t ldr_thunk = export_va( "LdrInitializeThunk" ), user_start = export_va( "RtlUserThreadStart" );
+			if ( !ldr_thunk || !user_start ) return refuse( "--Sys loader start: ntdll.dll exports no LdrInitializeThunk / RtlUserThreadStart" );
+			const uint64_t ctx_rsp_value = stack_base_ - 0x28;
+			const uint64_t ctx = ( ctx_rsp_value & ~0xFull ) - fields::context_size;
+			std::vector<uint8_t> c( size_t( fields::context_size ), 0 );
+			auto put = [ & ]( uint32_t off, uint64_t v, unsigned n ) { std::memcpy( c.data() + off, &v, n ); };
+			put( ctx_flags, context_full, 4 );
+			put( ctx_mxcsr, 0x1F80, 4 );
+			put( ctx_segcs, 0x33, 2 );
+			put( ctx_segcs + 2, 0x2B, 2 );   // SegDs
+			put( ctx_segcs + 4, 0x2B, 2 );   // SegEs
+			put( ctx_segcs + 6, 0x53, 2 );   // SegFs
+			put( ctx_segcs + 8, 0x2B, 2 );   // SegGs
+			put( ctx_segcs + 10, 0x2B, 2 );  // SegSs
+			put( ctx_eflags, 0x200, 4 );
+			put( ctx_rax + 8, map_.entry, 8 );   // Rcx
+			put( ctx_rax + 16, pb, 8 );          // Rdx
+			put( ctx_rsp, ctx_rsp_value, 8 );
+			put( ctx_rip, user_start, 8 );
+			put( ctx_fltsave, 0x27F, 2 );        // FltSave.ControlWord (_XSAVE_FORMAT +0)
+			put( ctx_fltsave + 0x18, 0x1F80, 4 );   // FltSave.MxCsr (_XSAVE_FORMAT +18H)
+			if ( !w( ctx, c.data(), c.size(), "", "" ) ) return false;
+			start_context_ = ctx;
+			start_rsp_ = ctx - 8;
+			ntdll_base_ = nt->base;
+			start_va_ = ldr_thunk;
+			env_lines_.push_back( "--Sys loader start: CONTEXT at " + hex( ctx ) + " (Rcx = the entry " + hex( map_.entry ) + ", Rdx = the PEB, Rsp " + hex( ctx_rsp_value ) +
+								  ", Rip = ntdll!RtlUserThreadStart " + hex( user_start ) + "); the thread enters ntdll!LdrInitializeThunk " + hex( ldr_thunk ) + " with RCX = the CONTEXT, RDX = the ntdll base, RSP " +
+								  hex( start_rsp_ ) );
+		}
+		if ( !imports.empty() && !loader_start_ )   // --HLE (U2009): the imports bound to the API stubs
 		{
 			std::vector<std::string> blog;
 			if ( !hle_->bind( *e_, imports, base, blog, err ) ) return refuse( "binding the imports: " + err );
@@ -765,7 +892,7 @@ namespace emu::win
 								  "API stubs at " + hex( hle::module_va ) + ", " + std::to_string( impl ) + " of them implemented" );
 			for ( auto& b : hle_->bindings() ) env_lines_.push_back( "import " + b.label() + " -> " + hex( b.stub ) + ( b.id == hle::api::unknown ? " (not implemented)" : "" ) );
 		}
-		if ( has_tls )   // --HLE (U2010): the loader's TLS start - index 0, the thread's block from the template, the callbacks
+		if ( has_tls && !loader_start_ )   // --HLE (U2010): the loader's TLS start - index 0, the thread's block from the template, the callbacks
 		{
 			if ( !pe::tls( *e_, img_, map_, tls_, err ) ) return refuse( err );
 			const uint64_t tmpl = tls_.end - tls_.start, block = tmpl + tls_.zero_fill;
@@ -821,6 +948,26 @@ namespace emu::win
 				log_.push_back( "FAILED: " + error );
 				return false;
 			}
+		uint64_t begin = start_sysret_;
+		if ( loader_start_ )
+		{
+			// U2031: the --Sys loader start enters user mode by IRETQ (RCX = the CONTEXT is kept): the frame RIP = LdrInitializeThunk,
+			// CS 33H, RFLAGS 202H, RSP = the CONTEXT - 8, SS 2BH on the emulator kernel's stack page
+			const uint64_t frame[ 5 ] = { start_va_, uint64_t( layout::gdt_r3_code | layout::rpl3 ), guest_initial_rflags, start_rsp_, uint64_t( layout::gdt_r3_data | layout::rpl3 ) };
+			std::string werr;
+			const uint64_t fva = guest_kernel_stack_va + page_size - sizeof( frame );
+			// RDX = the system DLL's base: ReactOS 0.4.16 ntoskrnl/ps/thread.c:74-79 queues LdrInitializeThunk (PspSystemDllEntryPoint)
+			// with SystemArgument1 = PspSystemDllBase - its second argument
+			const uint64_t rcx = start_context_, rdx = ntdll_base_;
+			if ( !e_->write( fva, frame, sizeof( frame ), werr ) || uc_reg_write( uc, UC_X86_REG_RSP, &fva ) != UC_ERR_OK || uc_reg_write( uc, UC_X86_REG_RCX, &rcx ) != UC_ERR_OK ||
+				 uc_reg_write( uc, UC_X86_REG_RDX, &rdx ) != UC_ERR_OK )
+			{
+				error = "the IRETQ frame of the loader start: " + werr;
+				log_.push_back( "FAILED: " + error );
+				return false;
+			}
+			begin = iretq_stub_;
+		}
 		// 3. hooks: the kernel (SYSCALL), faults, the instruction counter
 		uc_hook h{};
 		if ( uc_hook_add( uc, &h, UC_HOOK_INSN, (void*)on_syscall, hc_.get(), 1, 0, UC_X86_INS_SYSCALL ) != UC_ERR_OK ||
@@ -879,10 +1026,10 @@ namespace emu::win
 			log_.push_back( "trace: one line per instruction (index, RIP, region +offset, bytes, Capstone text) -> " + po_.trace_path + " (at most " +
 							std::to_string( po_.trace_max_bytes ) + " bytes)" );
 		}
-		log_.push_back( "run: SYSRETQ to " + ( start_va_ == map_.entry ? "the entry " + hex( map_.entry ) : "the TLS start trampoline " + hex( start_va_ ) + " (then the entry " + hex( map_.entry ) + ")" ) +
+		log_.push_back( loader_start_ ? "run: IRETQ to ntdll!LdrInitializeThunk " + hex( start_va_ ) + " with RCX = the CONTEXT " + hex( start_context_ ) + " (the --Sys loader start), at most " + std::to_string( po_.max_insns ) + " instructions" : "run: SYSRETQ to " + ( start_va_ == map_.entry ? "the entry " + hex( map_.entry ) : "the TLS start trampoline " + hex( start_va_ ) + " (then the entry " + hex( map_.entry ) + ")" ) +
 						" at CPL 3, at most " + std::to_string( po_.max_insns ) + " instructions" );
 		// 4. the run: until the return sentinel, a stop of the hooks, or the instruction bound (no host time)
-		ue = e_->emulate( start_sysret_, guest_return_sentinel, po_.max_insns );
+		ue = e_->emulate( begin, guest_return_sentinel, po_.max_insns );
 		std::string rerr;
 		r.have_final = reg::read( uc, r.final, rerr );
 		const uint64_t rip = read_reg( uc, UC_X86_REG_RIP );
@@ -918,6 +1065,134 @@ namespace emu::win
 			log_.push_back( "trace: " + std::to_string( r.probes.trace_lines ) + " lines, " + std::to_string( r.probes.trace_bytes ) + " bytes" +
 							( r.probes.trace_truncated ? " (TRUNCATED at the size limit)" : "" ) + " -> " + po_.trace_path );
 		}
+		return true;
+	}
+
+	// ------------------------------------------------------------------------------------------------ U2030: NtContinue
+	// The CPU state of a CONTEXT (guest ntdll.pdb _CONTEXT; winnt.h CONTEXT_* flags): CONTEXT_CONTROL (Rip, Rsp, EFlags - sanitized:
+	// only the user-modifiable flags, IF set) is required; CONTEXT_INTEGER loads the other 15 GPRs; CONTEXT_FLOATING_POINT loads MXCSR,
+	// XMM0-15 and the x87 control word of FltSave. The segment selectors stay the user ones (CS 33H, SS / DS / ES / GS 2BH, FS 53H;
+	// the bases are not changed: GS base = the TEB). Debug registers in the CONTEXT: a loud stop when any is non-zero (milestone M7).
+	// The return to user mode is IRETQ from the emulator kernel's stack page.
+	bool process::resume_context( uc_engine* uc, uint64_t ctx, std::string& why )
+	{
+		std::vector<uint8_t> c( size_t( fields::context_size ), 0 );
+		if ( !e_->read( ctx, c.data(), c.size(), why ) ) return false;
+		auto g = [ & ]( uint32_t off, unsigned n ) {
+			uint64_t v = 0;
+			std::memcpy( &v, c.data() + off, n );
+			return v;
+		};
+		const uint32_t flags = uint32_t( g( ctx_flags, 4 ) );
+		if ( ( flags & context_control ) != context_control )
+		{
+			why = "CONTEXT " + hex( ctx ) + " ContextFlags " + hex( flags ) + " without CONTEXT_CONTROL: not modelled";
+			return false;
+		}
+		if ( ( flags & ( context_amd64 | 0x10 ) ) == ( context_amd64 | 0x10 ) )
+			for ( uint32_t o = 0x48; o < 0x78; o += 8 )
+				if ( g( o, 8 ) )
+				{
+					why = "CONTEXT " + hex( ctx ) + " sets debug registers (CONTEXT_DEBUG_REGISTERS): not modelled before milestone M7";
+					return false;
+				}
+		if ( flags & ~uint32_t( context_full | context_segments | 0x10 | 0x40 ) )
+		{
+			why = "CONTEXT " + hex( ctx ) + " ContextFlags " + hex( flags ) + ": bits beyond CONTROL / INTEGER / SEGMENTS / FLOATING_POINT / DEBUG_REGISTERS / XSTATE not modelled";
+			return false;
+		}
+		if ( ( flags & context_integer ) == context_integer )
+		{
+			static const int gpr[ 16 ] = { UC_X86_REG_RAX, UC_X86_REG_RCX, UC_X86_REG_RDX, UC_X86_REG_RBX, -1, UC_X86_REG_RBP, UC_X86_REG_RSI, UC_X86_REG_RDI,
+										   UC_X86_REG_R8, UC_X86_REG_R9, UC_X86_REG_R10, UC_X86_REG_R11, UC_X86_REG_R12, UC_X86_REG_R13, UC_X86_REG_R14, UC_X86_REG_R15 };
+			for ( int i = 0; i < 16; i++ )
+			{
+				if ( gpr[ i ] < 0 ) continue;   // RSP: CONTEXT_CONTROL
+				const uint64_t v = g( ctx_rax + 8 * i, 8 );
+				uc_reg_write( uc, gpr[ i ], &v );
+			}
+		}
+		if ( ( flags & context_floating_point ) == context_floating_point )
+		{
+			const uint32_t mx = uint32_t( g( ctx_mxcsr, 4 ) );
+			const uint16_t fcw = uint16_t( g( ctx_fltsave, 2 ) );
+			uc_reg_write( uc, UC_X86_REG_MXCSR, &mx );
+			uc_reg_write( uc, UC_X86_REG_FPCW, &fcw );
+			for ( int i = 0; i < 16; i++ ) uc_reg_write( uc, UC_X86_REG_XMM0 + i, c.data() + ctx_xmm0 + 16 * i );
+		}
+		const uint64_t rflags = ( g( ctx_eflags, 4 ) & eflags_user_sanitize ) | 0x202;
+		const uint64_t frame[ 5 ] = { g( ctx_rip, 8 ), uint64_t( layout::gdt_r3_code | layout::rpl3 ), rflags, g( ctx_rsp, 8 ), uint64_t( layout::gdt_r3_data | layout::rpl3 ) };
+		const uint64_t fva = guest_kernel_stack_va + page_size - sizeof( frame );
+		if ( !e_->write( fva, frame, sizeof( frame ), why ) ) return false;
+		if ( uc_reg_write( uc, UC_X86_REG_RSP, &fva ) != UC_ERR_OK || uc_reg_write( uc, UC_X86_REG_RIP, &iretq_stub_ ) != UC_ERR_OK )
+		{
+			why = "register write failed";
+			return false;
+		}
+		return true;
+	}
+
+	// ------------------------------------------------------------------------------------------------ U2031: the kernel's views
+	// The NLS tables (one read-only view: the ANSI code-page file, the OEM one, the case table, each from a page boundary - ReactOS
+	// 0.4.16 boot/freeldr/freeldr/ntldr/wlregistry.c:406-500 WinLdrLoadNLSData; mapped into every process and pointed at by the PEB,
+	// ntoskrnl/mm/ARM3/procsup.c:588-594 MmCreatePeb) and the API set schema (the apisetschema.dll file mapped read-only, PEB ApiSetMap =
+	// its ".apiset" section's raw data when the schema is version 6 and fits the section - Wine 11.0 dlls/ntdll/unix/loader.c:1780-1844)
+	bool process::build_kernel_views( const environment_facts& f, std::vector<std::string>& lines, std::string& error )
+	{
+		const auto& m = f.manifest;
+		std::vector<uint8_t> nls;
+		uint64_t off[ 3 ] = {};
+		int k = 0;
+		for ( const std::string* n : { &m.nls_acp_file, &m.nls_oemcp_file, &m.nls_case_file } )
+		{
+			const auto it = f.files->find( *n );
+			if ( it == f.files->end() )
+			{
+				error = "NLS file " + *n + " missing from the capture";
+				return false;
+			}
+			off[ k++ ] = nls.size();
+			nls.insert( nls.end(), it->second.begin(), it->second.end() );
+			nls.resize( ( nls.size() + page_size - 1 ) & ~( page_size - 1 ), 0 );
+		}
+		uint64_t nls_base = 0;
+		if ( !kernel_->map_data_view( nls, "NLS tables (" + m.nls_acp_file + ", " + m.nls_oemcp_file + ", " + m.nls_case_file + ")", nls_base, error ) ) return false;
+		const auto& as = f.files->at( "apisetschema.dll" );
+		pe::image ai;
+		if ( !pe::parse( as, ai, error ) )
+		{
+			error = "apisetschema.dll: " + error;
+			return false;
+		}
+		const pe::section* aps = nullptr;
+		for ( const auto& s : ai.sections )
+			if ( s.name == ".apiset" ) aps = &s;
+		uint32_t version = 0, size = 0;
+		if ( !aps || uint64_t( aps->raw_offset ) + 8 > as.size() )
+		{
+			error = "apisetschema.dll has no .apiset section";
+			return false;
+		}
+		std::memcpy( &version, as.data() + aps->raw_offset, 4 );
+		std::memcpy( &size, as.data() + aps->raw_offset + 4, 4 );
+		if ( version != 6 || size > aps->virtual_size || uint64_t( aps->raw_offset ) + aps->virtual_size > as.size() )
+		{
+			error = "apisetschema.dll .apiset: version " + std::to_string( version ) + ", size " + hex( size ) + " - not a schema version 6 that fits its section";
+			return false;
+		}
+		uint64_t as_base = 0;
+		if ( !kernel_->map_data_view( as, "apisetschema.dll (data view)", as_base, error ) ) return false;
+		const uint64_t pb = guest_peb_va;
+		const uint64_t vals[] = { nls_base + off[ 0 ], nls_base + off[ 1 ], nls_base + off[ 2 ], as_base + aps->raw_offset };
+		static_assert( fields::offset_of( fields::peb, "AnsiCodePageData" ) == 0xA0 && fields::offset_of( fields::peb, "OemCodePageData" ) == 0xA8 &&
+						   fields::offset_of( fields::peb, "UnicodeCaseTableData" ) == 0xB0 && fields::offset_of( fields::peb, "ApiSetMap" ) == 0x68,
+					   "_PEB NLS / ApiSetMap members" );
+		const uint64_t offs[] = { 0xA0, 0xA8, 0xB0, 0x68 };
+		for ( int i = 0; i < 4; i++ )
+			if ( !e_->write( pb + offs[ i ], &vals[ i ], 8, error ) ) return false;
+		lines.push_back( "NLS view at " + hex( nls_base ) + ": PEB AnsiCodePageData (A0H) " + hex( vals[ 0 ] ) + " (" + m.nls_acp_file + "), OemCodePageData (A8H) " + hex( vals[ 1 ] ) +
+						 " (" + m.nls_oemcp_file + "), UnicodeCaseTableData (B0H) " + hex( vals[ 2 ] ) + " (" + m.nls_case_file + ")" );
+		lines.push_back( "API set schema view at " + hex( as_base ) + ": PEB ApiSetMap (68H) = " + hex( vals[ 3 ] ) + " (.apiset raw data, schema version 6, size " + hex( size ) + ")" );
 		return true;
 	}
 

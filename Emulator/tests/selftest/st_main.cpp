@@ -1836,15 +1836,20 @@ namespace
 		const uint64_t top = w4_read( *p, S, 8 );
 		CHECK( w5_ok( r ) && top > 0x7FF000000000ull && top + 0x10000 - 1 <= 0x7FFFFFFEFFFFull, "MEM_TOP_DOWN: the highest free 64 KiB in the user range" );
 		// 8. release errors and queries of environment / out-of-range addresses
+		// U2035: MEM_RELEASE of a part (Wine NtFreeVirtualMemory / free_pages): the first page goes, the rest stays a reservation
 		w5_put( *p, S, base );
 		w5_put( *p, S + 8, 0x1000 );
-		CHECK( w5_stop( w5_call( *p, "NtFreeVirtualMemory", { cp, S, S + 8, N::mem::release } ) ), "MEM_RELEASE with a size: stop" );
-		w5_put( *p, S, base + 0x1000 );
+		r = w5_call( *p, "NtFreeVirtualMemory", { cp, S, S + 8, N::mem::release } );
+		CHECK( w5_ok( r ) && !p->eng().accessible( base, 1, UC_PROT_READ ) && p->eng().accessible( base + 0x2000, 1, UC_PROT_READ ) &&
+				   p->kern().allocations().count( base + 0x1000 ) == 1 && p->kern().allocations().count( base ) == 0,
+			   "MEM_RELEASE with a size: that part released, the rest a reservation of its own: " + r.text );
+		w5_put( *p, S, base + 0x2000 );
 		w5_put( *p, S + 8, 0 );
-		CHECK( w5_stop( w5_call( *p, "NtFreeVirtualMemory", { cp, S, S + 8, N::mem::release } ) ), "MEM_RELEASE not at the base: stop" );
+		CHECK( w5_stop( w5_call( *p, "NtFreeVirtualMemory", { cp, S, S + 8, N::mem::release } ) ), "MEM_RELEASE size 0 not at the base: stop" );
 		CHECK( w5_stop( w5_call( *p, "NtFreeVirtualMemory", { cp, S, S + 8, 0x1 } ) ), "FreeType 1: stop" );
-		w5_query( *p, w5_base + 0x1000, r );
-		CHECK( w5_stop( r ) && r.text.find( "environment region" ) != std::string::npos, "query of the image: stop (no cited source for Windows' answer)" );
+		m = w5_query( *p, w5_base + 0x1000, r );
+		CHECK( w5_ok( r ) && m.type == 0x1000000 && m.alloc_base == w5_base && m.alloc_protect == N::page::execute_writecopy && m.protect == N::page::execute_read,
+			   "query of the image (U2031): MEM_IMAGE, AllocationBase = the image, AllocationProtect PAGE_EXECUTE_WRITECOPY, .text PAGE_EXECUTE_READ: " + r.text );
 		w5_query( *p, 0x7FFFFFFF0000ull, r );
 		CHECK( w5_stop( r ), "query above the user range: stop" );
 		m = w5_query( *p, 0x20000000, r );
@@ -1853,10 +1858,10 @@ namespace
 		CHECK( w5_stop( w5_call( *p, "NtQueryVirtualMemory", { cp, base, 0, S + 0x100, 0x20, 0 } ) ), "short buffer: stop" );
 		CHECK( w5_status( w5_call( *p, "NtQueryVirtualMemory", { cp, base, 0, w5_base + 0x2000, 0x30, 0 } ), N::status::access_violation ), "read-only buffer: STATUS_ACCESS_VIOLATION" );
 		CHECK( w5_ok( w5_call( *p, "NtQueryVirtualMemory", { cp, base, 0, S + 0x100, 0x30, 0 } ) ), "ReturnLength NULL is optional" );
-		w5_put( *p, S, base );
+		w5_put( *p, S, base + 0x1000 );
 		w5_put( *p, S + 8, 0 );
 		r = w5_call( *p, "NtFreeVirtualMemory", { cp, S, S + 8, N::mem::release } );
-		CHECK( w5_ok( r ) && !p->eng().accessible( base, 1, UC_PROT_READ ), "release of the first allocation" );
+		CHECK( w5_ok( r ) && !p->eng().accessible( base + 0x2000, 1, UC_PROT_READ ), "release of the rest of the first allocation" );
 		for ( auto& l : p->kern().describe() ) std::cout << "  " << l << "\n";
 		// U2025-U2027: + the environment's three (process parameters, process heap, loader data)
 		CHECK( p->kern().allocations().size() == 1 + 3, "one allocation left (the MEM_TOP_DOWN one) beside the environment's three" );
@@ -2414,6 +2419,210 @@ namespace
 		}
 	}
 
+	// U2030-U2035 (plan 3.M5 part 2): the kernel services of the --Sys process start (nt_kernel_sys.cpp) and the lazy reservations,
+	// each against its source's rules (Wine / WDK, cited in the code), on synthetic facts (+ a synthetic captured registry subset)
+	void t_nt_kernel_sys_services()
+	{
+		std::string err;
+		auto facts = w5_facts();
+		auto reg = std::make_shared<std::map<std::string, emu::nt::registry_key>>();
+		emu::nt::registry_value v5;
+		v5.type = 4;
+		v5.data = { 5, 0, 0, 0 };
+		emu::nt::registry_value gone;
+		gone.type = ~0u;
+		( *reg )[ "\\registry\\machine\\pb\\a" ].present = true;
+		( *reg )[ "\\registry\\machine\\pb\\a" ].values = { { "v", v5 }, { "w", gone } };
+		( *reg )[ "\\registry\\machine\\pb\\a\\sub" ].present = true;
+		( *reg )[ "\\registry\\machine\\pb\\b" ].present = false;
+		facts.registry = reg;
+		emu::engine_config ec;
+		ec.profile = emu::cpu_profile_choice::guest;
+		emu::win::process_options po;
+		po.max_insns = 1000;
+		po.image_name = "pb";
+		std::vector<std::string> log;
+		auto p = emu::win::process::create( ec, facts, po, w5_build( { w5_trivial }, err ), log, err );
+		CHECK( p != nullptr, "process: " + err );
+		if ( !p ) return;
+		namespace N = emu::nt;
+		const uint64_t S = w5_scratch, cp = N::current_process;
+		auto rd = [ & ]( uint64_t va, int n ) { return w4_read( *p, va, n ); };
+		// 1. the virtual clock
+		auto r = w5_call( *p, "NtQueryPerformanceCounter", { S, S + 8 } );
+		CHECK( w5_ok( r ) && rd( S + 8, 8 ) == 10000000 && rd( S, 8 ) == 0, "NtQueryPerformanceCounter: counter = the instructions (0 here), frequency 10 MHz: " + r.text );
+		CHECK( w5_status( w5_call( *p, "NtQueryPerformanceCounter", { 0x10, 0 } ), N::status::access_violation ), "NtQueryPerformanceCounter: bad pointer = STATUS_ACCESS_VIOLATION" );
+		// 2. NtProtectVirtualMemory
+		w5_put( *p, S, 0 );
+		w5_put( *p, S + 8, 0x2000 );
+		CHECK( w5_ok( w5_call( *p, "NtAllocateVirtualMemory", { cp, S, 0, S + 8, N::mem::commit | N::mem::reserve, N::page::readwrite } ) ), "allocate 2 pages" );
+		const uint64_t a = rd( S, 8 );
+		w5_put( *p, S + 0x20, a + 0x10 );
+		w5_put( *p, S + 0x28, 0x10 );
+		r = w5_call( *p, "NtProtectVirtualMemory", { cp, S + 0x20, S + 0x28, N::page::readonly, S + 0x30 } );
+		CHECK( w5_ok( r ) && rd( S + 0x20, 8 ) == a && rd( S + 0x28, 8 ) == 0x1000 && rd( S + 0x30, 4 ) == N::page::readwrite && !p->eng().accessible( a, 1, UC_PROT_WRITE ) &&
+				   p->eng().accessible( a + 0x1000, 1, UC_PROT_WRITE ),
+			   "protect the first page read-only: base / size rounded to the page, OldProtect PAGE_READWRITE: " + r.text );
+		w5_put( *p, S + 0x20, a );
+		w5_put( *p, S + 0x28, 0x1000 );
+		CHECK( w5_status( w5_call( *p, "NtProtectVirtualMemory", { cp, S + 0x20, S + 0x28, N::page::writecopy, S + 0x30 } ), N::status::invalid_page_protection ),
+			   "PAGE_WRITECOPY for private memory: STATUS_INVALID_PAGE_PROTECTION" );
+		CHECK( w5_status( w5_call( *p, "NtProtectVirtualMemory", { cp, S + 0x20, S + 0x28, N::page::readonly, 0 } ), N::status::access_violation ), "OldProtect NULL: STATUS_ACCESS_VIOLATION" );
+		w5_put( *p, S + 0x28, 0 );
+		CHECK( w5_stop( w5_call( *p, "NtProtectVirtualMemory", { cp, S + 0x20, S + 0x28, N::page::readonly, S + 0x30 } ) ), "size 0: stop" );
+		w5_put( *p, S + 0x20, 0x30000000 );
+		w5_put( *p, S + 0x28, 0x1000 );
+		CHECK( w5_status( w5_call( *p, "NtProtectVirtualMemory", { cp, S + 0x20, S + 0x28, N::page::readonly, S + 0x30 } ), N::status::invalid_parameter ), "free memory: STATUS_INVALID_PARAMETER" );
+		w5_put( *p, S + 0x20, w5_base + 0x3000 );   // the image's .data: RW in an image = copy-on-write
+		r = w5_call( *p, "NtProtectVirtualMemory", { cp, S + 0x20, S + 0x28, N::page::readwrite, S + 0x30 } );
+		CHECK( w5_ok( r ) && rd( S + 0x30, 4 ) == N::page::writecopy && r.text.find( "-> PAGE_WRITECOPY" ) != std::string::npos, "an image page: PAGE_READWRITE means PAGE_WRITECOPY: " + r.text );
+		// 3. events
+		r = w5_call( *p, "NtCreateEvent", { S + 0x40, 0x1F0003, 0, 1, 0 } );
+		const uint64_t ev = rd( S + 0x40, 8 );
+		CHECK( w5_ok( r ) && ev && ev % 4 == 0, "NtCreateEvent (synchronization, non-signaled): a handle, a multiple of 4: " + r.text );
+		CHECK( w5_stop( w5_call( *p, "NtWaitForSingleObject", { ev, 0, 0 } ) ), "a wait on a non-signaled event without a timeout: stop (one thread)" );
+		w5_put( *p, S + 0x48, 0 );
+		CHECK( w5_status( w5_call( *p, "NtWaitForSingleObject", { ev, 0, S + 0x48 } ), 0x102 ), "a zero timeout: STATUS_TIMEOUT" );
+		CHECK( w5_ok( w5_call( *p, "NtSetEvent", { ev, S + 0x50 } ) ) && rd( S + 0x50, 4 ) == 0, "NtSetEvent: PreviousState 0" );
+		CHECK( w5_ok( w5_call( *p, "NtWaitForSingleObject", { ev, 0, 0 } ) ), "the wait is satisfied" );
+		CHECK( w5_status( w5_call( *p, "NtWaitForSingleObject", { ev, 0, S + 0x48 } ), 0x102 ), "a synchronization event is reset by the satisfied wait" );
+		CHECK( w5_ok( w5_call( *p, "NtClose", { ev } ) ) && w5_status( w5_call( *p, "NtClose", { ev } ), N::status::invalid_handle ), "NtClose: closed, then invalid" );
+		CHECK( w5_stop( w5_call( *p, "NtCreateEvent", { S + 0x40, 0x1F0003, 0x5000, 0, 0 } ) ) || w5_status( w5_call( *p, "NtCreateEvent", { S + 0x40, 0x1F0003, 0x5000, 0, 0 } ), N::status::access_violation ),
+			   "NtCreateEvent with unreadable ObjectAttributes: no handle" );
+		// 4. NtQuerySystemInformation
+		for ( uint32_t cls : { 0u, 0x3Eu, 0x72u } )
+		{
+			r = w5_call( *p, "NtQuerySystemInformation", { cls, S + 0x100, 0x40, S + 0x60 } );
+			CHECK( w5_ok( r ) && rd( S + 0x108, 4 ) == 0x1000 && rd( S + 0x118, 8 ) == 0x10000 && rd( S + 0x138, 1 ) == facts.processors && rd( S + 0x60, 4 ) == 0x40,
+				   "system information class " + std::to_string( cls ) + ": the basic information (Wine layout): " + r.text );
+		}
+		r = w5_call( *p, "NtQuerySystemInformation", { 0, S + 0x100, 0x30, S + 0x60 } );
+		CHECK( w5_status( r, N::status::info_length_mismatch ) && rd( S + 0x60, 4 ) == 0x40, "a wrong length: STATUS_INFO_LENGTH_MISMATCH, ReturnLength 40H" );
+		r = w5_call( *p, "NtQuerySystemInformation", { 0xC0, S + 0x100, 0x20, S + 0x60 } );
+		CHECK( w5_status( r, N::status::invalid_info_class ) && r.writes.empty(), "class C0H (no layout source): STATUS_INVALID_INFO_CLASS, nothing written" );
+		CHECK( w5_stop( w5_call( *p, "NtQuerySystemInformation", { 0x37, S + 0x100, 0x408, S + 0x60 } ) ), "class 37H (no source for the Windows 10 layout): stop" );
+		// 5. process classes
+		r = w5_call( *p, "NtQueryInformationProcess", { cp, 0x22, S + 0x70, 4, S + 0x78 } );
+		CHECK( w5_ok( r ) && rd( S + 0x70, 4 ) == 0xD, "ProcessExecuteFlags: DISABLE | DISABLE_THUNK_EMULATION | PERMANENT" );
+		w5_put( *p, S + 0x70, 0x55 );
+		CHECK( w5_ok( w5_call( *p, "NtQueryInformationProcess", { cp, 0x24, S + 0x70, 4, 0 } ) ) && rd( S + 0x70, 4 ) == 0, "ProcessCookie 0 (Wine)" );
+		CHECK( w5_status( w5_call( *p, "NtQueryInformationProcess", { cp, 0x24, S + 0x70, 8, 0 } ), N::status::info_length_mismatch ), "ProcessCookie, 8 bytes: STATUS_INFO_LENGTH_MISMATCH" );
+		// 6. the captured registry subset
+		auto ustr = [ & ]( uint64_t at, const std::string& s ) {
+			std::vector<uint16_t> w;
+			for ( char ch : s ) w.push_back( uint16_t( uint8_t( ch ) ) );
+			std::string e2;
+			p->eng().write( at + 16, w.data(), w.size() * 2, e2 );
+			const uint64_t hdr = uint64_t( s.size() * 2 ) | ( uint64_t( s.size() * 2 ) << 16 );
+			w5_put( *p, at, hdr );
+			w5_put( *p, at + 8, at + 16 );
+		};
+		auto oa = [ & ]( uint64_t at, uint64_t root, uint64_t name ) {
+			w5_put( *p, at, 0x30 );
+			w5_put( *p, at + 8, root );
+			w5_put( *p, at + 0x10, name );
+			w5_put( *p, at + 0x18, 0x40 );
+			w5_put( *p, at + 0x20, 0 );
+			w5_put( *p, at + 0x28, 0 );
+		};
+		ustr( S + 0x200, "\\Registry\\Machine\\PB\\A" );
+		oa( S + 0x300, 0, S + 0x200 );
+		r = w5_call( *p, "NtOpenKey", { S + 0x380, 1, S + 0x300 } );
+		const uint64_t key = rd( S + 0x380, 8 );
+		CHECK( w5_ok( r ) && key, "NtOpenKey of a captured present key (case-insensitive): " + r.text );
+		ustr( S + 0x400, "Sub" );
+		oa( S + 0x300, key, S + 0x400 );
+		CHECK( w5_ok( w5_call( *p, "NtOpenKey", { S + 0x388, 1, S + 0x300 } ) ), "NtOpenKey relative to a key handle" );
+		ustr( S + 0x200, "\\Registry\\Machine\\PB\\B" );
+		oa( S + 0x300, 0, S + 0x200 );
+		CHECK( w5_status( w5_call( *p, "NtOpenKey", { S + 0x388, 1, S + 0x300 } ), N::status::object_name_not_found ), "a key captured absent: STATUS_OBJECT_NAME_NOT_FOUND" );
+		ustr( S + 0x200, "\\Registry\\Machine\\PB\\C" );
+		CHECK( w5_stop( w5_call( *p, "NtOpenKey", { S + 0x388, 1, S + 0x300 } ) ), "a key not captured: stop" );
+		ustr( S + 0x400, "V" );
+		r = w5_call( *p, "NtQueryValueKey", { key, S + 0x400, 2, S + 0x500, 0x40, S + 0x5F0 } );
+		CHECK( w5_ok( r ) && rd( S + 0x504, 4 ) == 4 && rd( S + 0x508, 4 ) == 4 && rd( S + 0x50C, 4 ) == 5 && rd( S + 0x5F0, 4 ) == 16, "KeyValuePartialInformation: REG_DWORD 5, ResultLength 10H: " + r.text );
+		w5_put( *p, S + 0x500, 0 );
+		w5_put( *p, S + 0x508, 0 );
+		r = w5_call( *p, "NtQueryValueKey", { key, S + 0x400, 2, S + 0x500, 12, S + 0x5F0 } );
+		CHECK( w5_status( r, N::status::buffer_overflow ) && rd( S + 0x504, 4 ) == 4 && rd( S + 0x50C, 4 ) == 0 && rd( S + 0x5F0, 4 ) == 16, "12 bytes: STATUS_BUFFER_OVERFLOW, the fixed part written" );
+		CHECK( w5_status( w5_call( *p, "NtQueryValueKey", { key, S + 0x400, 2, S + 0x500, 8, S + 0x5F0 } ), N::status::buffer_too_small ), "8 bytes: STATUS_BUFFER_TOO_SMALL" );
+		ustr( S + 0x400, "w" );
+		CHECK( w5_status( w5_call( *p, "NtQueryValueKey", { key, S + 0x400, 2, S + 0x500, 0x40, S + 0x5F0 } ), N::status::object_name_not_found ), "a value captured absent: STATUS_OBJECT_NAME_NOT_FOUND" );
+		ustr( S + 0x400, "x" );
+		CHECK( w5_stop( w5_call( *p, "NtQueryValueKey", { key, S + 0x400, 2, S + 0x500, 0x40, S + 0x5F0 } ) ), "a value not captured: stop" );
+		// 7. NtAllocateVirtualMemoryEx and lazy reservations
+		const uint64_t mapped0 = p->eng().mapped_bytes();
+		w5_put( *p, S + 0x600, 0x30000000 );   // MEM_ADDRESS_REQUIREMENTS
+		w5_put( *p, S + 0x608, 0x3FFFFFFF );
+		w5_put( *p, S + 0x610, 0x100000 );
+		w5_put( *p, S + 0x620, 1 );            // MEM_EXTENDED_PARAMETER: AddressRequirements
+		w5_put( *p, S + 0x628, S + 0x600 );
+		w5_put( *p, S, 0 );
+		w5_put( *p, S + 8, 0x10000 );
+		r = w5_call( *p, "NtAllocateVirtualMemoryEx", { cp, S, S + 8, N::mem::reserve | N::mem::top_down, N::page::readwrite, S + 0x620, 1 } );
+		const uint64_t x = rd( S, 8 );
+		CHECK( w5_ok( r ) && x >= 0x30000000 && x + 0x10000 - 1 <= 0x3FFFFFFF && !( x & 0xFFFFF ) && p->eng().mapped_bytes() == mapped0,
+			   "NtAllocateVirtualMemoryEx with address requirements: inside the limits, 1 MiB aligned, reserved without engine memory: " + r.text );
+		w5_put( *p, S + 0x610, 0x1000 );
+		w5_put( *p, S, 0 );
+		CHECK( w5_status( w5_call( *p, "NtAllocateVirtualMemoryEx", { cp, S, S + 8, N::mem::reserve, N::page::readwrite, S + 0x620, 1 } ), N::status::invalid_parameter ),
+			   "an alignment below the granularity: STATUS_INVALID_PARAMETER" );
+		w5_put( *p, S, 0 );
+		w5_put( *p, S + 8, 0x100000000ull );
+		r = w5_call( *p, "NtAllocateVirtualMemoryEx", { cp, S, S + 8, N::mem::reserve | N::mem::top_down, N::page::readwrite, 0, 0 } );
+		CHECK( w5_ok( r ) && p->eng().mapped_bytes() == mapped0, "a 4 GiB reservation costs no engine memory (U2035): " + r.text );
+		// 8. MemoryImageInformation / MemoryWorkingSetExInformation
+		r = w5_call( *p, "NtQueryVirtualMemory", { cp, w5_base + 0x1234, 6, S + 0x700, 0x18, S + 0x720 } );
+		CHECK( w5_ok( r ) && rd( S + 0x700, 8 ) == w5_base && rd( S + 0x710, 4 ) == ( 12u << 2 ), "MemoryImageInformation of the image: its base, signing level 12 (Wine): " + r.text );
+		CHECK( w5_status( w5_call( *p, "NtQueryVirtualMemory", { cp, 0x2F000000, 6, S + 0x700, 0x18, 0 } ), N::status::invalid_address ), "MemoryImageInformation of free memory: STATUS_INVALID_ADDRESS" );
+		w5_put( *p, S + 0x700, a + 0x1000 );
+		w5_put( *p, S + 0x710, 0x2F000000 );
+		r = w5_call( *p, "NtQueryVirtualMemory", { cp, 0, 4, S + 0x700, 0x20, S + 0x720 } );
+		CHECK( w5_ok( r ) && rd( S + 0x708, 8 ) == ( 1u | ( N::page::readwrite << 4 ) ) && rd( S + 0x718, 8 ) == 0, "MemoryWorkingSetExInformation: a committed page valid with its protection, free memory 0: " + r.text );
+		// 9. NtContinue: a resume of the CONTEXT (the CPU state is loaded by emu::win)
+		r = w5_call( *p, "NtContinue", { S + 0x800, 0 } );
+		CHECK( r.kind == N::reply_kind::resume && r.context == S + 0x800, "NtContinue: resume at the CONTEXT" );
+		CHECK( w5_status( w5_call( *p, "NtContinue", { 0x10, 0 } ), N::status::access_violation ), "NtContinue of an unreadable CONTEXT: STATUS_ACCESS_VIOLATION" );
+		CHECK( p->eng().check_regions( err ), "engine region table = Unicorn's: " + err );
+	}
+
+	// U2030: NtContinue loads the CPU state of a CONTEXT the guest built (CONTEXT_CONTROL | CONTEXT_INTEGER: Rip, Rsp, EFlags, the GPRs incl.
+	// RCX / R11, which a SYSRETQ return would lose) and returns to user mode through IRETQ - both modes share the kernel layer
+	void t_win_env_nt_continue()
+	{
+		auto facts = w5_facts();
+		facts.syscalls.by_number[ 0x43 ] = "NtContinue";
+		facts.syscalls.by_name[ "NtContinue" ] = 0x43;
+		const char* code =
+			"sub rsp, 0x600; and rsp, -16; mov rbx, rsp; mov rdi, rbx; xor eax, eax; mov ecx, 0x9A; rep stosq;"
+			"mov dword ptr [rbx+0x30], 0x100003; lea rax, [rip + resumed]; mov qword ptr [rbx+0xF8], rax; lea rax, [rbx+0x500]; mov qword ptr [rbx+0x98], rax;"
+			"mov dword ptr [rbx+0x44], 0x202; mov qword ptr [rbx+0x78], 0x1234; mov qword ptr [rbx+0x80], 0x5555; mov qword ptr [rbx+0x88], 0x2A;"
+			"mov qword ptr [rbx+0xD0], 0x6666; mov qword ptr [rbx+0x90], rbx;"
+			"mov rcx, rbx; mov r10, rcx; xor edx, edx; mov eax, 0x43; syscall; ud2;"
+			"resumed: cmp rax, 0x1234; jne bad; cmp rcx, 0x5555; jne bad; cmp r11, 0x6666; jne bad; lea rax, [rbx+0x500]; cmp rsp, rax; jne bad;"
+			"mov eax, 0x2C; mov r10, -1; syscall; bad: ud2";
+		std::string err;
+		const auto file = w5_build( { code }, err );
+		CHECK( !file.empty(), "image: " + err );
+		for ( auto b : { emu::env_boundary::sys, emu::env_boundary::hle } )
+		{
+			emu::engine_config ec;
+			ec.profile = emu::cpu_profile_choice::guest;
+			emu::win::process_options po;
+			po.boundary = b;
+			po.max_insns = 10000;
+			po.image_name = "pb";
+			std::vector<std::string> log;
+			auto p = emu::win::process::create( ec, facts, po, file, log, err );
+			CHECK( p != nullptr, "process: " + err );
+			if ( !p ) continue;
+			emu::win::run_result r;
+			CHECK( p->run( r, err ), "run: " + err );
+			CHECK( r.stop == emu::win::stop_kind::terminated && r.exit_status == 0x2A && r.syscalls.size() == 2 && r.syscalls[ 0 ].name == "NtContinue" && r.syscalls[ 0 ].answered,
+				   std::string( b == emu::env_boundary::sys ? "--Sys" : "--HLE" ) + ": NtContinue resumed with RAX, RCX, R11, RSP, RDX of the CONTEXT; exit 2AH: " + r.detail );
+		}
+	}
+
 	struct test_case { const char* name; void ( *fn )(); };
 	const test_case cases[] = {
 		{ "options_oep_defaults", t_options_oep_defaults },
@@ -2466,6 +2675,8 @@ namespace
 		{ "options_oep_probe", t_options_oep_probe },
 		{ "win_env_probe_counters", t_win_env_probe_counters },
 		{ "win_env_process_state", t_win_env_process_state },
+		{ "nt_kernel_sys_services", t_nt_kernel_sys_services },
+		{ "win_env_nt_continue", t_win_env_nt_continue },
 	};
 }
 

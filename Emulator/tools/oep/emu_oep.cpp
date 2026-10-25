@@ -117,6 +117,7 @@ int main( int argc, char** argv )
 		po.image_file_name = plain ? fn : "image.exe";
 	}
 	po.counters = o.counters;      // U2020
+	po.loader = o.loader;          // U2031
 	po.trace_path = o.trace_file;
 	std::vector<std::string> plog;
 	auto p = emu::win::process::create( ec, facts, po, file, plog, error );

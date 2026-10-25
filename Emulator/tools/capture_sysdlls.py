@@ -29,6 +29,7 @@ firmware view or another machine with 8 / 20 logical processors would have been 
 
 usage:
   python -I capture_sysdlls.py [--env vmware_guest|bare_host] [--root DIR] [--alltest EXE] [--dll NAME ...] [--nls] [--replace]
+          [--reg \\Registry\\Machine\\KEY ...] [--reg-value \\Registry\\Machine\\KEY|NAME ...]   (U2034: the registry subset, registry.txt)
           --env (optional) must equal the detected environment; the label written is always the detected one
   python -I capture_sysdlls.py [--env ...] --check        the capture of the detected environment equals the live files (exit 0 / 1)
   python -I capture_sysdlls.py --detect                   print the detected environment and the evidence (exit 0 / 1 refused)
@@ -197,6 +198,90 @@ def nls_files():
     return out
 
 
+REG_DENY = ('productid', 'digitalproductid', 'computername', 'hostname', 'nv hostname', 'registeredowner', 'registeredorganization', 'machineguid',
+            'installdate', 'installtime', 'username', 'domain', 'macaddress', 'serialnumber', 'systembiosversion')
+
+
+def nt_to_winreg(path):
+    """'\\Registry\\Machine\\X' -> (winreg.HKEY_LOCAL_MACHINE, 'X') (HKLM only: the machine's environment)."""
+    import winreg
+    p = path.replace('/', '\\')
+    low = p.lower()
+    pre = '\\registry\\machine\\'
+    if not low.startswith(pre) or len(p) > 400 or not p.isascii():
+        fail('--reg / --reg-value %s: only \\Registry\\Machine\\... keys (ASCII, <= 400 characters) are captured' % path)
+    return winreg.HKEY_LOCAL_MACHINE, p[len(pre):]
+
+
+def reg_raw(value, typ):
+    """the raw REG_* data bytes of a winreg value"""
+    import winreg
+    if typ in (winreg.REG_SZ, winreg.REG_EXPAND_SZ):
+        return (value + '\0').encode('utf-16-le')
+    if typ == winreg.REG_MULTI_SZ:
+        return ''.join(s + '\0' for s in value).encode('utf-16-le') + b'\0\0'
+    if typ == winreg.REG_DWORD:
+        return int(value).to_bytes(4, 'little')
+    if typ == winreg.REG_QWORD:
+        return int(value).to_bytes(8, 'little')
+    if typ in (winreg.REG_BINARY, winreg.REG_NONE):
+        return bytes(value or b'')
+    fail('registry type %d not captured' % typ)
+
+
+def capture_registry(dst, argv):
+    """U2034 (plan 3.M5 part 2): the registry subset the emulated kernel answers from (registry.txt, tab-separated, merged with the
+    lines already captured): 'key <present|absent> <lower-case NT path>' for each --reg KEY, and for each --reg-value KEY|NAME
+    'value <path> <lower-case name> <REG_* type> <hex data>' or 'value <path> <name> absent'. Values whose name identifies a machine or
+    a user are refused (REG_DENY); nothing is printed but names, types and sizes."""
+    import winreg
+    keys = [argv[i + 1] for i, a in enumerate(argv) if a == '--reg' and i + 1 < len(argv)]
+    vals = [argv[i + 1] for i, a in enumerate(argv) if a == '--reg-value' and i + 1 < len(argv)]
+    if not keys and not vals:
+        return
+    path = os.path.join(dst, 'registry.txt')
+    lines = {}
+    if os.path.isfile(path):
+        for l in open(path, encoding='ascii'):
+            l = l.rstrip('\r\n')
+            if l and not l.startswith('#'):
+                f = l.split('\t')
+                lines[(f[0], f[2] if f[0] == 'key' else f[1] + '\t' + f[2])] = l
+    for k in keys + [v.split('|', 1)[0] for v in vals]:
+        root, sub = nt_to_winreg(k)
+        try:
+            winreg.CloseKey(winreg.OpenKey(root, sub))
+            present = 'present'
+        except OSError:
+            present = 'absent'
+        lines[('key', k.lower())] = 'key\t%s\t%s' % (present, k.lower())
+        say('registry key %s: %s' % (k, present))
+    for v in vals:
+        if '|' not in v:
+            fail('--reg-value KEY|NAME')
+        k, name = v.split('|', 1)
+        if name.lower() in REG_DENY or not name.isascii() or len(name) > 128:
+            fail('--reg-value %s: the value name identifies a machine / user (or is not plain ASCII) - refused' % name)
+        root, sub = nt_to_winreg(k)
+        try:
+            with winreg.OpenKey(root, sub) as h:
+                data, typ = winreg.QueryValueEx(h, name)
+            raw = reg_raw(data, typ)
+            if len(raw) > 4096:
+                fail('--reg-value %s: more than 4096 bytes' % v)
+            lines[('value', k.lower() + '\t' + name.lower())] = 'value\t%s\t%s\t%d\t%s' % (k.lower(), name.lower(), typ, raw.hex())
+            say('registry value %s|%s: type %d, %d bytes' % (k, name, typ, len(raw)))
+        except OSError:
+            lines[('value', k.lower() + '\t' + name.lower())] = 'value\t%s\t%s\tabsent' % (k.lower(), name.lower())
+            say('registry value %s|%s: absent' % (k, name))
+    os.makedirs(dst, exist_ok=True)
+    with open(path, 'w', encoding='ascii', newline='\n') as f:
+        f.write('# U2034: the captured registry subset of this environment (capture_sysdlls.py --reg / --reg-value); local only, never committed\n')
+        for key in sorted(lines):
+            f.write(lines[key] + '\n')
+    say('registry subset: %s (%d lines)' % (path, len(lines)))
+
+
 def plain_name(n):
     return bool(n) and n.isascii() and len(n) <= 64 and not any(c in n for c in '\\/:*?"<>|') and n not in ('.', '..')
 
@@ -237,6 +322,10 @@ def capture(argv, detector):
                 say('capture %s: %s %s the live file' % (dst, name, 'EQUALS' if ok else 'DIFFERS FROM'))
                 same = same and ok
         return 0 if same else 1
+    if os.path.isfile(man_path) and sha(open(os.path.join(dst, 'ntdll.dll'), 'rb').read()) == sha(data):
+        capture_registry(dst, argv)   # U2034: only into a capture of this same environment
+    elif '--reg' in argv or '--reg-value' in argv:
+        fail('--reg / --reg-value need an existing capture of this environment (same ntdll.dll)')
     files = {}   # U2024: lower-case name -> bytes (the files beyond ntdll.dll: --dll, --nls, and those already captured)
     nls = []
     if '--nls' in argv:
@@ -374,6 +463,15 @@ def selftest(argv):
         except SystemExit as e:
             check(name, False, 'other stop: %s' % e)
 
+    print('[capture_sysdlls] selftest 2b: the registry subset refuses identifying value names and non-HKLM keys, writing nothing (U2034)')
+    for name, a in (('ComputerName value', ['--reg-value', '\\Registry\\Machine\\System\\CurrentControlSet\\Control\\ComputerName\\ComputerName|ComputerName']),
+                    ('ProductId value', ['--reg-value', '\\Registry\\Machine\\Software\\Microsoft\\Windows NT\\CurrentVersion|ProductId']),
+                    ('a user key', ['--reg', '\\Registry\\User\\.Default'])):
+        try:
+            capture_registry(nowhere, a)
+            check(name + ' refused', False, 'NOT refused')
+        except SystemExit as e:
+            check(name + ' refused', not os.path.exists(nowhere), str(e))
     print('[capture_sysdlls] selftest 3: the live detection through emu-alltest (%s)' % os.path.relpath(exe, ROOT))
     if not os.path.isfile(exe):
         check('emu-alltest present', False, exe)

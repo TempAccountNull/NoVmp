@@ -52,8 +52,13 @@ namespace emu::win
 	uint64_t system_image_slot( const std::string& lower_name );
 	inline constexpr const char* system_images_order[] = { "ntdll.dll", "kernel32.dll", "kernelbase.dll" };   // load / memory order
 
-	// map the capture's system DLL images (those of system_images_order the capture holds) as data; out in load order
-	bool map_system_images( engine& e, const environment_facts& f, std::vector<module_image>& out, std::vector<std::string>& log, std::string& error );
+	// map the capture's system DLL images NAMES (those the capture holds; --HLE: system_images_order, --Sys loader start: ntdll.dll -
+	// the loader maps the others through their sections) as data; out in the order of NAMES
+	bool map_system_images( engine& e, const environment_facts& f, const std::vector<std::string>& names, std::vector<module_image>& out, std::vector<std::string>& log,
+							std::string& error );
+	// one system image FILE (bytes of the capture) mapped as data at BASE: the module record (exports by RVA, time stamp)
+	bool map_one_image( engine& e, const std::string& name, const std::string& system_root, const std::vector<uint8_t>& file, uint64_t base, module_image& m,
+						std::vector<std::string>& log, std::string& error );
 
 	struct process_identity   // the synthesized placeholders of one run (no real identifier)
 	{

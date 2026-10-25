@@ -108,12 +108,15 @@ namespace emu::nt
 		return nullptr;
 	}
 
-	bool kernel::find_free( uint64_t span, bool top_down, uint64_t& base ) const
+	bool kernel::find_free( uint64_t span, bool top_down, uint64_t& base, uint64_t limit_low, uint64_t limit_high, uint64_t align ) const
 	{
-		const uint64_t g = f_.allocation_granularity;
+		// U2035: the limits / alignment of NtAllocateVirtualMemoryEx's MEM_ADDRESS_REQUIREMENTS (0 = the user range / the granularity)
+		const uint64_t g = align ? align : f_.allocation_granularity;
+		const uint64_t user_max = limit_high ? std::min( limit_high, f_.max_app_address ) : f_.max_app_address;
 		uint64_t lo = 0;
-		if ( !round_up( f_.min_app_address, g, lo ) || span == 0 || f_.max_app_address < lo || span - 1 > f_.max_app_address - lo ) return false;
-		const auto regions = e_.regions();   // sorted by base: everything mapped (environment + allocations)
+		if ( !round_up( std::max( f_.min_app_address, limit_low ), g, lo ) || span == 0 || user_max < lo || span - 1 > user_max - lo ) return false;
+		auto regions = e_.regions();   // everything mapped (environment, views, committed private pages) ...
+		for ( const auto& [ ab, a ] : allocs_ ) regions.push_back( { a.base, a.size, 0, "private reservation" } );   // ... + the reservations (U2035)
 		auto overlaps = [ & ]( uint64_t b ) {
 			const uint64_t l = b + ( span - 1 );
 			for ( const auto& r : regions )
@@ -125,7 +128,7 @@ namespace emu::nt
 			uint64_t c = lo;
 			for ( int guard = 0; guard < 100000; guard++ )
 			{
-				if ( c > f_.max_app_address || span - 1 > f_.max_app_address - c ) return false;
+				if ( c > user_max || span - 1 > user_max - c ) return false;
 				const mapped_region* hit = overlaps( c );
 				if ( !hit )
 				{
@@ -138,7 +141,7 @@ namespace emu::nt
 			}
 			return false;
 		}
-		uint64_t c = ( f_.max_app_address + 1 - span ) & ~( g - 1 );
+		uint64_t c = ( user_max + 1 - span ) & ~( g - 1 );
 		for ( int guard = 0; guard < 100000; guard++ )
 		{
 			if ( c < lo ) return false;
@@ -165,27 +168,114 @@ namespace emu::nt
 					  ": Windows' result is not documented (VirtualAlloc: committing a committed page does not fail) - not modelled";
 				return false;
 			}
+		// U2035: a reservation is address space only (not mapped in the engine: an access faults, as in Windows); committing maps each
+		// run of new pages with the protection and zero contents
 		const std::vector<uint8_t> zero( size_t( f_.page_size ), 0 );
-		for ( uint64_t i = first; i < first + count; i++ )
-			if ( !a.pages[ size_t( i ) ] && !e_.write( a.base + i * f_.page_size, zero.data(), f_.page_size, why ) ) return false;   // a new page reads zero
-		if ( !e_.protect( a.base + first * f_.page_size, count * f_.page_size, ucp, why ) ) return false;
-		for ( uint64_t i = first; i < first + count; i++ ) a.pages[ size_t( i ) ] = protect;
+		for ( uint64_t i = first; i < first + count; )
+		{
+			if ( a.pages[ size_t( i ) ] )
+			{
+				i++;
+				continue;
+			}
+			uint64_t j = i;
+			while ( j < first + count && !a.pages[ size_t( j ) ] ) j++;
+			const uint64_t va = a.base + i * f_.page_size, n = ( j - i ) * f_.page_size;
+			if ( !e_.map( va, n, UC_PROT_READ | UC_PROT_WRITE, "private allocation (committed)", why ) ) return false;
+			for ( uint64_t k = 0; k < j - i; k++ )
+				if ( !e_.write( va + k * f_.page_size, zero.data(), f_.page_size, why ) ) return false;   // a new page reads zero
+			if ( !e_.protect( va, n, ucp, why ) ) return false;
+			for ( uint64_t k = i; k < j; k++ ) a.pages[ size_t( k ) ] = protect;
+			i = j;
+		}
 		return true;
 	}
 
 	bool kernel::decommit_pages( allocation& a, uint64_t first, uint64_t count, std::string& why )
 	{
-		const std::vector<uint8_t> zero( size_t( f_.page_size ), 0 );
-		for ( uint64_t i = first; i < first + count; i++ )
-			if ( a.pages[ size_t( i ) ] && !e_.write( a.base + i * f_.page_size, zero.data(), f_.page_size, why ) ) return false;
-		if ( !e_.protect( a.base + first * f_.page_size, count * f_.page_size, UC_PROT_NONE, why ) ) return false;
-		for ( uint64_t i = first; i < first + count; i++ ) a.pages[ size_t( i ) ] = 0;
+		// U2035: a decommitted page is unmapped again (reserved address space only)
+		for ( uint64_t i = first; i < first + count; )
+		{
+			if ( !a.pages[ size_t( i ) ] )
+			{
+				i++;
+				continue;
+			}
+			uint64_t j = i;
+			while ( j < first + count && a.pages[ size_t( j ) ] ) j++;
+			if ( !e_.unmap_range( a.base + i * f_.page_size, ( j - i ) * f_.page_size, why ) ) return false;
+			for ( uint64_t k = i; k < j; k++ ) a.pages[ size_t( k ) ] = 0;
+			i = j;
+		}
+		return true;
+	}
+
+	// ------------------------------------------------------------------------------------------------ U2031: section views
+	view* kernel::view_of( uint64_t a )
+	{
+		for ( auto& [ b, v ] : views_ )
+			if ( a >= v.base && a - v.base < v.size ) return &v;
+		return nullptr;
+	}
+
+	bool kernel::add_image_view( uint64_t base, uint64_t size, const std::string& name, std::string& why )
+	{
+		const uint64_t ps = f_.page_size;
+		if ( !size || ( base & ( ps - 1 ) ) || ( size & ( ps - 1 ) ) || view_of( base ) )
+		{
+			why = "image view [" + hex( base ) + ", +" + hex( size ) + ") not page-aligned or overlapping";
+			return false;
+		}
+		view v;
+		v.base = base;
+		v.size = size;
+		v.type = mem2::image;
+		v.allocation_protect = page::execute_writecopy;
+		v.name = name;
+		const auto regions = e_.regions();
+		for ( uint64_t a = base; a < base + size; a += ps )
+		{
+			uint32_t p = 0;   // a hole between sections: reserved (no access)
+			for ( const auto& r : regions )
+				if ( a >= r.base && a - r.base < r.size )
+				{
+					const bool rd = r.prot & UC_PROT_READ, wr = r.prot & UC_PROT_WRITE, ex = r.prot & UC_PROT_EXEC;
+					p = ex ? ( wr ? page::execute_writecopy : page::execute_read ) : wr ? page::writecopy : rd ? page::readonly : page::noaccess;
+				}
+			v.pages.push_back( p );
+		}
+		views_[ base ] = v;
+		return true;
+	}
+
+	bool kernel::map_data_view( const std::vector<uint8_t>& bytes, const std::string& name, uint64_t& base, std::string& why )
+	{
+		uint64_t size = 0, span = 0;
+		if ( bytes.empty() || !round_up( bytes.size(), f_.page_size, size ) || !round_up( size, f_.allocation_granularity, span ) || !find_free( span, true, base ) )
+		{
+			why = "no free range for the view " + name;
+			return false;
+		}
+		if ( !e_.map( base, size, UC_PROT_READ | UC_PROT_WRITE, name, why ) ) return false;
+		std::vector<uint8_t> padded( bytes );
+		padded.resize( size_t( size ), 0 );
+		if ( !e_.write( base, padded.data(), size, why ) || !e_.protect( base, size, UC_PROT_READ, why ) ) return false;
+		view v;
+		v.base = base;
+		v.size = size;
+		v.type = mem2::mapped;
+		v.allocation_protect = page::readonly;
+		v.pages.assign( size_t( size / f_.page_size ), page::readonly );
+		v.name = name;
+		views_[ base ] = v;
 		return true;
 	}
 
 	std::vector<std::string> kernel::describe() const
 	{
 		std::vector<std::string> out;
+		for ( const auto& [ b, v ] : views_ )
+			out.push_back( std::string( "view " ) + ( v.type == mem2::image ? "MEM_IMAGE" : "MEM_MAPPED" ) + " [" + hex( v.base ) + ", +" + hex( v.size ) + ") " + v.name );
 		out.push_back( "private allocations: " + std::to_string( allocs_.size() ) );
 		for ( const auto& [ b, a ] : allocs_ )
 		{
@@ -198,7 +288,7 @@ namespace emu::nt
 	}
 
 	// ------------------------------------------------------------------------------------------------ the VM core
-	reply kernel::allocate( uint64_t& base, uint64_t& size, uint32_t type, uint32_t protect )
+	reply kernel::allocate( uint64_t& base, uint64_t& size, uint32_t type, uint32_t protect, uint64_t limit_low, uint64_t limit_high, uint64_t align )
 	{
 		const uint32_t known = mem::commit | mem::reserve | mem::top_down;
 		if ( type & ~known )
@@ -225,7 +315,7 @@ namespace emu::nt
 				// (ZwAllocateVirtualMemory); a NULL base with MEM_COMMIT alone reserves and commits (VirtualAlloc)
 				if ( !round_up( size, ps, pages_size ) ) return stopped( "*RegionSize " + hex( size ) + " overflows when rounded to pages" );
 				uint64_t span = 0;
-				if ( !round_up( pages_size, g, span ) || !find_free( span, ( type & mem::top_down ) != 0, start ) )
+				if ( !round_up( pages_size, g, span ) || !find_free( span, ( type & mem::top_down ) != 0, start, limit_low, limit_high, align ) )
 					return stopped( "no free range of " + hex( pages_size ) + " bytes in the user range [" + hex( f_.min_app_address ) + ", " + hex( f_.max_app_address ) +
 									"] (Windows' status for an exhausted address space is not modelled)" );
 				end = start + pages_size;
@@ -242,10 +332,14 @@ namespace emu::nt
 					if ( start <= r.base + ( r.size - 1 ) && r.base <= end - 1 )
 						return answered( status::conflicting_addresses, "reservation [" + hex( start ) + ", " + hex( end ) + ") overlaps " + r.name +
 																			" (ZwAllocateVirtualMemory: STATUS_CONFLICTING_ADDRESSES)" );
+				for ( const auto& [ ab, a ] : allocs_ )   // U2035: reservations are not mapped - check them too
+					if ( start <= a.base + ( a.size - 1 ) && a.base <= end - 1 )
+						return answered( status::conflicting_addresses, "reservation [" + hex( start ) + ", " + hex( end ) + ") overlaps the reservation at " + hex( a.base ) +
+																			" (ZwAllocateVirtualMemory: STATUS_CONFLICTING_ADDRESSES)" );
 				pages_size = end - start;
 			}
 			std::string why;
-			if ( !e_.map( start, pages_size, UC_PROT_NONE, "private allocation", why ) ) return stopped( "reserve: " + why );
+			if ( pages_size > ( 64ull << 30 ) ) return stopped( "reserve of " + hex( pages_size ) + " bytes: above the 64 GiB this layer models" );
 			allocation a;
 			a.base = start;
 			a.size = pages_size;
@@ -283,8 +377,24 @@ namespace emu::nt
 		if ( c.name == "NtFreeVirtualMemory" ) return svc_free_virtual_memory( c );
 		if ( c.name == "NtQueryVirtualMemory" ) return svc_query_virtual_memory( c );
 		if ( c.name == "NtQueryInformationProcess" ) return svc_query_information_process( c );
+		if ( c.name == "NtContinue" )
+		{
+			// U2030: NtContinue( ContextRecord, TestAlert ) - continue at the CONTEXT (Wine 11.0 dlls/ntdll/signal_x86_64.c:1039-1043:
+			// LdrInitializeThunk ends by continuing at its CONTEXT; the caller restores the state); no APC is ever queued here, so
+			// TestAlert delivers nothing
+			if ( !user_buffer( c.args[ 0 ], context_size, UC_PROT_READ ) )
+				return answered( status::access_violation, "ContextRecord " + hex( c.args[ 0 ] ) + ": not readable user memory (probe)" );
+			reply r;
+			r.kind = reply_kind::resume;
+			r.context = c.args[ 0 ];
+			r.text = "continue at the CONTEXT " + hex( c.args[ 0 ] ) + ( c.args[ 1 ] & 0xFF ? " (TestAlert: no APC queued)" : "" );
+			return r;
+		}
+		reply more;
+		if ( dispatch_more( c, more ) ) return more;   // U2032: the services of the --Sys process start (nt_kernel_sys.cpp)
 		return stopped( c.name + " (" + hex( c.number ) + ") is known but not implemented in milestone M5 (the services of M5: NtTerminateProcess, NtClose, "
-										   "NtAllocateVirtualMemory, NtFreeVirtualMemory, NtQueryVirtualMemory, NtQueryInformationProcess)" );
+										   "NtAllocateVirtualMemory, NtFreeVirtualMemory, NtQueryVirtualMemory, NtQueryInformationProcess, NtContinue + those of "
+										   "nt_kernel_sys.cpp)" );
 	}
 
 	reply kernel::svc_terminate_process( const call& c )
@@ -304,8 +414,15 @@ namespace emu::nt
 		const uint64_t h = c.args[ 0 ];
 		if ( h >= ~0ull - 15 )
 			return stopped( "NtClose of the pseudo handle " + hex( h ) + ": Windows' answer is not documented for ZwClose - not modelled" );
-		// km\wdm.h ZwClose: "STATUS_INVALID_HANDLE if Handle is not a valid handle" - no M5 service creates a handle
-		return answered( status::invalid_handle, "handle " + hex( h ) + " is not a handle of this process (no service of milestone M5 creates one)" );
+		// U2032: a handle of this process' table closes (STATUS_SUCCESS)
+		if ( const auto it = handles_.find( h ); it != handles_.end() )
+		{
+			const std::string what = it->second.kind + " \"" + it->second.name + "\"";
+			handles_.erase( it );
+			return answered( status::success, "handle " + hex( h ) + " (" + what + ") closed" );
+		}
+		// km\wdm.h ZwClose: "STATUS_INVALID_HANDLE if Handle is not a valid handle"
+		return answered( status::invalid_handle, "handle " + hex( h ) + " is not a handle of this process" );
 	}
 
 	reply kernel::svc_allocate_virtual_memory( const call& c )
@@ -338,11 +455,47 @@ namespace emu::nt
 		if ( type == mem::release )
 		{
 			// ZwFreeVirtualMemory: MEM_RELEASE needs *RegionSize 0 and *BaseAddress = the base returned when the region was reserved
+			if ( size != 0 )
+			{
+				// U2035: MEM_RELEASE of a part (Wine 11.0 dlls/ntdll/unix/virtual.c NtFreeVirtualMemory: the page range inside ONE
+				// reservation - beyond its end STATUS_UNABLE_TO_FREE_VM, in none STATUS_MEMORY_NOT_ALLOCATED; free_pages releases the
+				// range and the rest of the reservation stays as separate reservation(s) with their own base)
+				const uint64_t first = base & ~( ps - 1 );
+				uint64_t end = 0;
+				if ( base > UINT64_MAX - size || !round_up( base + size, ps, end ) ) return stopped( "*BaseAddress + *RegionSize above 2^64" );
+				allocation* a = owner( first, ps );
+				if ( !a ) return answered( 0xC00000A0, "MEM_RELEASE of " + hex( base ) + ": in no reservation (STATUS_MEMORY_NOT_ALLOCATED)" );
+				if ( end - a->base > a->size ) return answered( 0xC000001A, "MEM_RELEASE of [" + hex( first ) + ", " + hex( end ) + ") beyond the reservation's end (STATUS_UNABLE_TO_FREE_VM)" );
+				allocation whole = *a;
+				const size_t i0 = size_t( ( first - whole.base ) / ps ), i1 = size_t( ( end - whole.base ) / ps );
+				if ( !decommit_pages( *a, i0, i1 - i0, why ) ) return stopped( "release: " + why );
+				whole = *a;
+				allocs_.erase( whole.base );
+				if ( i0 > 0 )
+				{
+					allocation lo = whole;
+					lo.size = i0 * ps;
+					lo.pages.assign( whole.pages.begin(), whole.pages.begin() + std::ptrdiff_t( i0 ) );
+					allocs_[ lo.base ] = lo;
+				}
+				if ( i1 < whole.pages.size() )
+				{
+					allocation hi = whole;
+					hi.base = whole.base + i1 * ps;
+					hi.size = whole.size - i1 * ps;
+					hi.pages.assign( whole.pages.begin() + std::ptrdiff_t( i1 ), whole.pages.end() );
+					allocs_[ hi.base ] = hi;
+				}
+				const uint64_t rsize = end - first;
+				reply r = answered( status::success, "released the part [" + hex( first ) + ", +" + hex( rsize ) + ") of the reservation at " + hex( whole.base ) );
+				if ( !put( pbase, &first, 8, r ) || !put( psize, &rsize, 8, r ) ) return stopped( "writing *BaseAddress / *RegionSize failed after the probe" );
+				return r;
+			}
 			const auto it = allocs_.find( base );
-			if ( size != 0 || it == allocs_.end() )
-				return stopped( "MEM_RELEASE of " + hex( base ) + " size " + hex( size ) + ": not (the base of a reservation, size 0) - Windows' status is not documented - not modelled" );
+			if ( it == allocs_.end() )
+				return stopped( "MEM_RELEASE of " + hex( base ) + " size 0: not the base of a reservation - Windows' status is not documented - not modelled" );
 			const uint64_t rsize = it->second.size;
-			if ( !e_.unmap_range( base, rsize, why ) ) return stopped( "release: " + why );
+			if ( !decommit_pages( it->second, 0, it->second.pages.size(), why ) ) return stopped( "release: " + why );
 			allocs_.erase( it );
 			reply r = answered( status::success, "released [" + hex( base ) + ", +" + hex( rsize ) + ")" );
 			if ( !put( pbase, &base, 8, r ) || !put( psize, &rsize, 8, r ) ) return stopped( "writing *BaseAddress / *RegionSize failed after the probe" );
@@ -381,6 +534,8 @@ namespace emu::nt
 	{
 		if ( c.args[ 0 ] != current_process ) return stopped( "NtQueryVirtualMemory for ProcessHandle " + hex( c.args[ 0 ] ) + ": only NtCurrentProcess() is modelled" );
 		if ( !c.stack_args ) return stopped( "NtQueryVirtualMemory: the stack arguments (Length, ReturnLength) are not readable" );
+		if ( uint32_t( c.args[ 2 ] ) == 6 ) return query_memory_image( c );   // U2033: MemoryImageInformation (nt_kernel_sys.cpp)
+		if ( uint32_t( c.args[ 2 ] ) == 4 ) return query_working_set_ex( c );   // U2033: MemoryWorkingSetExInformation (nt_kernel_sys.cpp)
 		if ( uint32_t( c.args[ 2 ] ) != 0 )
 			return stopped( "MemoryInformationClass " + hex( uint32_t( c.args[ 2 ] ) ) + ": only MemoryBasicInformation (0) is modelled in milestone M5" );
 		const uint64_t addr = c.args[ 1 ], out = c.args[ 3 ], len = c.args[ 4 ], pret = c.args[ 5 ];
@@ -407,6 +562,20 @@ namespace emu::nt
 			m.type = mem::private_;
 			what = std::string( m.state == mem::commit ? "MEM_COMMIT " : "MEM_RESERVE " ) + page_text( m.protect ) + " MEM_PRIVATE";
 		}
+		else if ( const view* v = view_of( pg ) )   // U2031: a section view (image / mapped file)
+		{
+			const size_t i0 = size_t( ( pg - v->base ) / ps );
+			size_t i = i0;
+			while ( i < v->pages.size() && v->pages[ i ] == v->pages[ i0 ] ) i++;
+			m.base = pg;
+			m.alloc_base = v->base;
+			m.alloc_protect = v->allocation_protect;
+			m.region = uint64_t( i - i0 ) * ps;
+			m.state = v->pages[ i0 ] ? mem::commit : mem::reserve;
+			m.protect = v->pages[ i0 ];
+			m.type = v->type;
+			what = std::string( m.state == mem::commit ? "MEM_COMMIT " : "MEM_RESERVE " ) + page_text( m.protect ) + ( v->type == mem2::image ? " MEM_IMAGE " : " MEM_MAPPED " ) + v->name;
+		}
 		else
 		{
 			uint64_t next = f_.max_app_address + 1;
@@ -417,6 +586,8 @@ namespace emu::nt
 									"stack / PEB / TEB / shared pages) has no cited source yet - not modelled in milestone M5" );
 				if ( r.base > pg ) next = std::min( next, r.base );
 			}
+			for ( const auto& [ ab, a ] : allocs_ )   // U2035: the (unmapped) reservations end a free run too
+				if ( a.base > pg ) next = std::min( next, a.base );
 			m.base = pg;
 			m.region = next - pg;
 			m.state = mem::free_;
@@ -463,6 +634,7 @@ namespace emu::nt
 				what = "ProcessBreakOnTermination 0";
 				break;
 			default:
+				if ( reply more; query_process_more( c, more ) ) return more;   // U2033: the classes of the --Sys process start (nt_kernel_sys.cpp)
 				return stopped( "ProcessInformationClass " + hex( cls ) + ": not one of the classes winternl.h documents (0, 7, 1AH, 1DH); 1BH ProcessImageFileName "
 								"needs an image path identity - not modelled in milestone M5" );
 		}

@@ -214,6 +214,69 @@ namespace emu::win
 		return true;
 	}
 
+	bool load_registry( const std::string& dir, std::map<std::string, nt::registry_key>& out, std::string& error )
+	{
+		out.clear();
+		const std::string path = ( std::filesystem::path( dir ) / "registry.txt" ).string();
+		std::error_code ec;
+		if ( !std::filesystem::is_regular_file( path, ec ) ) return true;
+		auto split = []( std::string_view l ) {
+			std::vector<std::string> f;
+			size_t p = 0;
+			while ( true )
+			{
+				const size_t t = l.find( '\t', p );
+				f.emplace_back( l.substr( p, t == std::string_view::npos ? std::string_view::npos : t - p ) );
+				if ( t == std::string_view::npos ) break;
+				p = t + 1;
+			}
+			return f;
+		};
+		bool bad = false;
+		std::string why;
+		const bool ok = read_input_lines( path, 16384, max_registry_bytes, [ & ]( std::string_view l, uint64_t no ) {
+			if ( l.empty() || l[ 0 ] == '#' ) return true;
+			const auto f = split( l );
+			if ( f.size() == 3 && f[ 0 ] == "key" && ( f[ 1 ] == "present" || f[ 1 ] == "absent" ) )
+			{
+				out[ f[ 2 ] ].present = f[ 1 ] == "present";
+				return true;
+			}
+			if ( f[ 0 ] == "value" && ( f.size() == 4 || f.size() == 5 ) )
+			{
+				nt::registry_value v;
+				if ( f.size() == 4 && f[ 3 ] == "absent" )
+					v.type = ~0u;
+				else if ( f.size() == 5 && f[ 4 ].size() % 2 == 0 && f[ 4 ].size() <= 8192 )
+				{
+					uint64_t t = 0;
+					if ( !dec_u64( f[ 3 ], t ) || t > 11 ) { bad = true; why = "line " + std::to_string( no ) + ": bad type"; return false; }
+					v.type = uint32_t( t );
+					for ( size_t i = 0; i < f[ 4 ].size(); i += 2 )
+					{
+						const int hi = std::isxdigit( uint8_t( f[ 4 ][ i ] ) ) ? std::stoi( f[ 4 ].substr( i, 1 ), nullptr, 16 ) : -1,
+								  lo = std::isxdigit( uint8_t( f[ 4 ][ i + 1 ] ) ) ? std::stoi( f[ 4 ].substr( i + 1, 1 ), nullptr, 16 ) : -1;
+						if ( hi < 0 || lo < 0 ) { bad = true; why = "line " + std::to_string( no ) + ": bad hex"; return false; }
+						v.data.push_back( uint8_t( hi * 16 + lo ) );
+					}
+				}
+				else { bad = true; why = "line " + std::to_string( no ) + ": malformed value line"; return false; }
+				out[ f[ 1 ] ].values[ f[ 2 ] ] = v;
+				return true;
+			}
+			bad = true;
+			why = "line " + std::to_string( no ) + ": unknown line";
+			return false;
+		}, error );
+		if ( !ok ) return false;
+		if ( bad )
+		{
+			error = path + ": " + why;
+			return false;
+		}
+		return true;
+	}
+
 	bool load_capture_file( const std::string& dir, const capture_manifest& m, const std::string& name, std::vector<uint8_t>& out, std::string& error )
 	{
 		out.clear();

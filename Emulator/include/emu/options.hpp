@@ -94,6 +94,7 @@ namespace emu
 		bool counters = false;                 // --counters: probe counters (CPUID, RDTSC / RDTSCP / RDPID, PEB / TEB / KUSER reads,
 		                                       // system calls, API calls, exceptions) + the last instructions, summary at the stop
 		std::string trace_file;                // --trace FILE: one line per instruction into FILE (created; at most 1 GiB)
+		bool loader = false;                   // U2031: --loader (with --Sys): start in the real ntdll!LdrInitializeThunk (opt-in)
 
 		bool help = false;
 	};

@@ -29,7 +29,14 @@
 //             SYSRETQ at LSTAR returns to user mode with the status in RAX. INT 2EH and SYSENTER are faults / #UD (stopped,
 //             never forwarded).
 // --Sys / --HLE (D3, plan 6.1): recorded in every log line set; both share the one kernel layer (the --HLE APIs call into
-// it), so an image both modes run gives the same observable result (checked by the suites); M5 maps no system DLL.
+// it), so an image both modes run gives the same observable result (checked by the suites).
+// Plan 3.M5 part 2 (U2025-U2031, emu/win_process.hpp): the process state at the entry - the environment's system DLL images
+// (ntdll, kernel32, kernelbase of the capture) mapped as data at fixed slots (MEM_IMAGE views), PEB Ldr with the three module
+// lists, RTL_USER_PROCESS_PARAMETERS + environment block (placeholders), the process heap (_HEAP Flags HEAP_GROWABLE, ForceFlags
+// 0), NtGlobalFlag 0 and the kernel-side PEB members of MmCreatePeb. --Sys --loader (opt-in, U2031): the kernel maps ntdll only,
+// adds the NLS and API set views and starts the thread in the real ntdll!LdrInitializeThunk( CONTEXT ) by IRETQ; the real loader
+// then runs in emulation until the first system service without a source (P36). Under --HLE an instruction fetched from a system
+// image stops loudly naming the export.
 //
 // Layouts (cited per field in win_env.cpp; checked by Emulator\tools\check_win_layout.py and static_asserts):
 //   TEB   Windows SDK / WDK 10.0.26100.0 shared\ksamd64.inc "Te*" offsets (TeSelf 30H, TeClientId 40H, TePeb 60H, ...);
@@ -71,6 +78,7 @@ namespace emu::win
 	inline constexpr uint64_t guest_kernel_gdt_va = 0x00007FFFFFFF0000ull;  // the emulator's kernel pages (see above)
 	inline constexpr uint64_t guest_kernel_entry_va = 0x00007FFFFFFF1000ull;
 	inline constexpr uint64_t guest_return_sentinel = 0x00007FFFFFFFF000ull; // never mapped: returning from the entry ends the run
+	inline constexpr uint64_t guest_kernel_stack_va = 0x00007FFFFFFF2000ull;  // U2030: the emulator kernel's stack page (IRETQ frames)
 	inline constexpr uint64_t guest_stack_top = 0x1000000ull;
 	inline constexpr uint64_t guest_stack_max_reserve = 0xF00000ull;
 	inline constexpr uint64_t guest_peb_va = 0x1010000ull;
@@ -121,6 +129,7 @@ namespace emu::win
 		// the system DLL images and NLS tables of the environment (empty for a capture made before M5 part 2 / synthetic facts)
 		capture_manifest manifest;
 		std::shared_ptr<const std::map<std::string, std::vector<uint8_t>>> files;
+		std::shared_ptr<const std::map<std::string, nt::registry_key>> registry;   // U2034: the captured registry subset (may be empty)
 	};
 	// the capture manifest + ntdll syscall table of ENV, and the platform profile facts
 	bool load_environment_facts( environment env, const std::string& capture_dir_explicit, const std::string& data_dir, environment_facts& f,
@@ -134,6 +143,7 @@ namespace emu::win
 		uint64_t max_insns = 100000000;   // every run is bounded (no host time)
 		std::string image_name = "image";
 		std::string image_file_name = "image.exe";   // U2025: the image's base name in the loader data / process parameters
+		bool loader = false;                         // U2031: --Sys --loader: start in the real ntdll!LdrInitializeThunk (opt-in)
 		// U2020 (plan 3.M5 part 2): instrumentation, off by default (it observes, never changes, what the guest sees)
 		bool counters = false;                         // probe counters + the last trace_tail instructions, summary at the stop
 		uint32_t trace_tail = 32;
@@ -151,7 +161,7 @@ namespace emu::win
 		uint64_t rax = 0;            // EAX as the guest left it (the full register)
 		uint32_t number = 0;         // EAX AND FFFFH
 		std::string name;            // from the environment's ntdll ("" = unknown)
-		std::array<uint64_t, 6> args{};   // R10, RDX, R8, R9, [RSP+28H], [RSP+30H]
+		std::array<uint64_t, 12> args{};  // R10, RDX, R8, R9, [RSP+28H], [RSP+30H] (+ [RSP+38H] .. [RSP+60H], U2031)
 		bool stack_args_read = false;
 		std::string outcome;
 		bool answered = false;          // U2012: the kernel layer answered (status in RAX)
@@ -286,8 +296,17 @@ namespace emu::win
 		uint64_t start_va_ = 0;
 		std::vector<module_image> modules_;      // U2025: the process image + the system DLL images, load order
 		process_state pstate_;                   // U2025-U2027: loader data, process parameters, heap
+		bool loader_start_ = false;              // U2031: --Sys through the real ntdll!LdrInitializeThunk
+		uint64_t start_context_ = 0, iretq_stub_ = 0, start_rsp_ = 0, ntdll_base_ = 0;
+		bool build_kernel_views( const environment_facts& f, std::vector<std::string>& lines, std::string& error );
 
 	public:
+		bool loader_start() const { return loader_start_; }
+		// U2030: load the CPU state of the guest CONTEXT at CTX (NtContinue) and return to user mode through IRETQ; false = why not
+		bool resume_context( uc_engine* uc, uint64_t ctx, std::string& why );
+		uint64_t iretq_stub() const { return iretq_stub_; }
+		// U2031: a module the kernel mapped later (a DLL view of the loader) - for naming addresses
+		void add_module( module_image m ) { modules_.push_back( std::move( m ) ); }
 		const std::vector<module_image>& modules() const { return modules_; }
 		const process_state& state() const { return pstate_; }
 	};

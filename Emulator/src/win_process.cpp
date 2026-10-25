@@ -126,55 +126,64 @@ namespace emu::win
 		return 0;
 	}
 
-	bool map_system_images( engine& e, const environment_facts& f, std::vector<module_image>& out, std::vector<std::string>& log, std::string& error )
+	bool map_one_image( engine& e, const std::string& name, const std::string& system_root, const std::vector<uint8_t>& file, uint64_t base, module_image& m,
+						std::vector<std::string>& log, std::string& error )
+	{
+		m = module_image{};
+		m.name = name;
+		m.path = system_root + "\\System32\\" + name;
+		m.is_dll = true;
+		if ( !pe::parse( file, m.img, error ) )
+		{
+			error = name + ": " + error;
+			return false;
+		}
+		if ( !( m.img.file_characteristics & 0x2000 ) )   // winnt.h IMAGE_FILE_DLL
+		{
+			error = name + " of the capture is not a DLL";
+			return false;
+		}
+		pe::mapping mp;
+		if ( !pe::map( e, file, m.img, base, name, mp, error ) )
+		{
+			error = name + ": " + error;
+			return false;
+		}
+		for ( auto& l : mp.log ) log.push_back( "pe: " + l );
+		m.base = mp.base;
+		m.size = mp.size;
+		m.entry = mp.entry;
+		m.original_base = m.img.image_base;
+		std::vector<pe::export_entry> ex;
+		if ( !pe::exports( file, m.img, ex, error ) )
+		{
+			error = name + ": " + error;
+			return false;
+		}
+		for ( auto& x : ex )
+			if ( !x.forwarder && !x.name.empty() ) m.exports_by_rva.emplace( x.rva, x.name );
+		std::memcpy( &m.timestamp, file.data() + m.img.e_lfanew + 8, 4 );   // IMAGE_FILE_HEADER TimeDateStamp: e_lfanew + 8 (winnt.h)
+		log.push_back( "system image " + name + " mapped as data at " + hex( m.base ) + " (slot chosen; Windows: ASLR), SizeOfImage " + hex( m.size ) + ", entry " +
+					   hex( m.entry ) + ", " + std::to_string( m.exports_by_rva.size() ) + " named exports" +
+					   ( mp.relocated ? ", relocated (" + std::to_string( mp.relocations ) + " fixups)" : "" ) );
+		return true;
+	}
+
+	bool map_system_images( engine& e, const environment_facts& f, const std::vector<std::string>& names, std::vector<module_image>& out, std::vector<std::string>& log,
+							std::string& error )
 	{
 		out.clear();
 		if ( !f.files ) return true;
-		for ( const char* name : system_images_order )
+		for ( const auto& name : names )
 		{
 			const auto it = f.files->find( name );
 			if ( it == f.files->end() )
 			{
-				log.push_back( std::string( "system image " ) + name + ": not in the capture - not mapped" );
+				log.push_back( "system image " + name + ": not in the capture - not mapped" );
 				continue;
 			}
 			module_image m;
-			m.name = name;
-			m.path = f.system_root + "\\System32\\" + name;
-			m.is_dll = true;
-			if ( !pe::parse( it->second, m.img, error ) )
-			{
-				error = std::string( name ) + ": " + error;
-				return false;
-			}
-			if ( !( m.img.file_characteristics & 0x2000 ) )   // winnt.h IMAGE_FILE_DLL
-			{
-				error = std::string( name ) + " of the capture is not a DLL";
-				return false;
-			}
-			pe::mapping mp;
-			if ( !pe::map( e, it->second, m.img, system_image_slot( name ), name, mp, error ) )
-			{
-				error = std::string( name ) + ": " + error;
-				return false;
-			}
-			for ( auto& l : mp.log ) log.push_back( "pe: " + l );
-			m.base = mp.base;
-			m.size = mp.size;
-			m.entry = mp.entry;
-			m.original_base = m.img.image_base;
-			std::vector<pe::export_entry> ex;
-			if ( !pe::exports( it->second, m.img, ex, error ) )
-			{
-				error = std::string( name ) + ": " + error;
-				return false;
-			}
-			for ( auto& x : ex )
-				if ( !x.forwarder && !x.name.empty() ) m.exports_by_rva.emplace( x.rva, x.name );
-			// IMAGE_FILE_HEADER TimeDateStamp: e_lfanew + 8 (winnt.h)
-			std::memcpy( &m.timestamp, it->second.data() + m.img.e_lfanew + 8, 4 );
-			log.push_back( "system image " + std::string( name ) + " mapped as data at " + hex( m.base ) + " (slot chosen; Windows: ASLR), SizeOfImage " + hex( m.size ) +
-						   ", entry " + hex( m.entry ) + ", " + std::to_string( m.exports_by_rva.size() ) + " named exports" + ( mp.relocated ? ", relocated (" + std::to_string( mp.relocations ) + " fixups)" : "" ) );
+			if ( !map_one_image( e, name, f.system_root, it->second, system_image_slot( name ), m, log, error ) ) return false;
 			out.push_back( std::move( m ) );
 		}
 		return true;

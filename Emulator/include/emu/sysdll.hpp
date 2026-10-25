@@ -21,6 +21,7 @@
 // (plan 3.M5): dwPageSize, dwAllocationGranularity, dwActiveProcessorMask (powers of two; page 4 KiB, granularity >= page).
 #pragma once
 
+#include <emu/nt_kernel.hpp>
 #include <emu/options.hpp>
 
 #include <cstdint>
@@ -59,6 +60,12 @@ namespace emu::win
 
 	// U2024: the captured file NAME (lower case) of the manifest, read as data; its size must equal the manifest's
 	bool load_capture_file( const std::string& dir, const capture_manifest& m, const std::string& name, std::vector<uint8_t>& out, std::string& error );
+
+	// U2034: the captured registry subset (DIR\registry.txt, capture_sysdlls.py --reg / --reg-value; absent file = an empty subset):
+	// "key<TAB>present|absent<TAB>path", "value<TAB>path<TAB>name<TAB>type<TAB>hex" / "value<TAB>path<TAB>name<TAB>absent"
+	// (lower-case paths / names). TYPE absent = the value is captured as missing (registry_value::type = ~0u).
+	inline constexpr uint64_t max_registry_bytes = 1ull << 20;
+	bool load_registry( const std::string& dir, std::map<std::string, nt::registry_key>& out, std::string& error );
 
 	// the capture folder of ENV: EXPLICIT when given, else the first ancestor folder of DATA_DIR that holds
 	// capture\sysdlls\<env>\manifest.txt

@@ -747,6 +747,10 @@ Add-Suite 'win_env_probe' 'emulator win_env' 'py' ( Join-Path $Root 'Emulator\to
 # parameters, process heap, NtGlobalFlag) checked by the test PE tl_ldr: exit 30H natively (labelled reference) and in --HLE / --Sys;
 # the capture holds the core DLLs and NLS files of capture_sysdlls.py --dll / --nls (U2024).
 Add-Suite 'win_env_process' 'emulator win_env' 'py' ( Join-Path $Root 'Emulator\tools\win_env_process.py' ) @( $Root, $T )
+# U2039 (agent p3m5b, plan 3.M5 part 2): the opt-in --Sys --loader start through the environment's real ntdll!LdrInitializeThunk up to
+# its frontier - every service before it answered in order, a loud stop at the first service without a source (P36); T2 --Sys
+# without --loader refused as in M5.
+Add-Suite 'win_env_sys_loader' 'emulator win_env' 'py' ( Join-Path $Root 'Emulator\tools\win_env_sys_loader.py' ) @( $Root, $T )
 # U1990-U1991 (agent p3m4, user decision 2026-10-25, notes\eread\P34_phase3_m4.md): capture_sysdlls.py labels a capture only on
 # the positive evidence of U1893's environment detection (emu-alltest "tag environment:", run with an empty case file); the
 # self-test: mocked / forced (--tag-env) wrong environments and unknown (--tag-profiles none) refuse without writing, the live
