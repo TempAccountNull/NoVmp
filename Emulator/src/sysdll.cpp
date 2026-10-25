@@ -70,6 +70,22 @@ namespace emu::win
 
 	bool locate_capture( environment env, const std::string& explicit_dir, const std::string& data_dir, std::string& dir, std::string& error )
 	{
+		// U2042: the capture root named by NOVMP_CAPTURE_ROOT (the host path of the local capture, as capture_sysdlls.py /
+		// win_env_t1.py / emu-profilegen read it); bounded, never written into guest memory
+		std::string root;
+		char* v = nullptr;
+		size_t n = 0;
+		if ( _dupenv_s( &v, &n, "NOVMP_CAPTURE_ROOT" ) == 0 && v )
+		{
+			if ( n <= 32768 ) root = v;
+			free( v );
+		}
+		return locate_capture( env, explicit_dir, data_dir, root, dir, error );
+	}
+
+	bool locate_capture( environment env, const std::string& explicit_dir, const std::string& data_dir, const std::string& capture_root,
+						 std::string& dir, std::string& error )
+	{
 		namespace fs = std::filesystem;
 		if ( env == environment::none )
 		{
@@ -88,6 +104,15 @@ namespace emu::win
 			dir = explicit_dir;
 			return true;
 		}
+		if ( !capture_root.empty() )	// U2042: <capture root>\sysdlls\<env> before the ancestors (capture_sysdlls.py / win_env_t1.py order)
+		{
+			const fs::path c = fs::path( capture_root ) / "sysdlls" / name_of( env );
+			if ( fs::is_regular_file( c / "manifest.txt", ec ) )
+			{
+				dir = c.string();
+				return true;
+			}
+		}
 		fs::path p = fs::absolute( fs::path( data_dir ), ec );
 		for ( int depth = 0; depth < 16 && !p.empty(); depth++ )
 		{
@@ -101,10 +126,11 @@ namespace emu::win
 			p = p.parent_path();
 		}
 		error = std::string( "no system-DLL capture for the environment " ) + name_of( env ) +
-				" (searched the ancestors of " + data_dir + " for capture\\sysdlls\\" + name_of( env ) + "\\manifest.txt; decision 3.0.8: " +
+				" (searched " + ( capture_root.empty() ? std::string( "" ) : "the capture root NOVMP_CAPTURE_ROOT " + capture_root + " for sysdlls\\" + name_of( env ) + "\\manifest.txt and " ) +
+				"the ancestors of " + data_dir + " for capture\\sysdlls\\" + name_of( env ) + "\\manifest.txt; decision 3.0.8: " +
 				( env == environment::bare_host ? "the bare-host DLL capture comes with a host package - not made yet; use --guest"
 												: "run python -I Emulator\\tools\\capture_sysdlls.py --env vmware_guest in the VMware guest" ) +
-				"; or name the folder with --sysdlls DIR)";
+				"; or name the folder with --sysdlls DIR, or set NOVMP_CAPTURE_ROOT to the capture root)";
 		return false;
 	}
 

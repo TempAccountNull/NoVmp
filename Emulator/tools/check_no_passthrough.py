@@ -74,6 +74,9 @@ GUEST_KUSER_DEF = re.compile(r'(?i)\bguest_\w+\s*=\s*0x0*7ffe0000\b')
 GUEST_KUSER_FILE = 'Emulator/include/emu/win_env.hpp'
 EXEMPT = {
     ('Emulator/src/host_guard.cpp', 'pt_host_query'): (1, 'GetSystemInfo: the address bounds of the VirtualQuery walk over the OWN process (U1941), never guest-visible'),
+    # U2042 (P37, worktrees on E:\novmp_wt): the host folder of the local capture, as capture_sysdlls.py / win_env_t1.py / emu-profilegen
+    ('Emulator/src/sysdll.cpp', 'pt_host_query'): (1, '_dupenv_s("NOVMP_CAPTURE_ROOT"): the host path of the local system-DLL capture (locate_capture, U2042), '
+                                                     'read as a file location only, never written into guest memory'),
     # U2025-U2026 (plan 3.M5 part 2): guest-visible paths of the EMULATED environment, built from the capture's system root and
     # written into guest memory only (never opened on the host): the system images' FullDllName, ComSpec / Path of the synthesized
     # environment block; and the selftest's expectation of one of them

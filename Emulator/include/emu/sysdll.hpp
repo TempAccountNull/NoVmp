@@ -67,8 +67,12 @@ namespace emu::win
 	inline constexpr uint64_t max_registry_bytes = 1ull << 20;
 	bool load_registry( const std::string& dir, std::map<std::string, nt::registry_key>& out, std::string& error );
 
-	// the capture folder of ENV: EXPLICIT when given, else the first ancestor folder of DATA_DIR that holds
-	// capture\sysdlls\<env>\manifest.txt
+	// the capture folder of ENV: EXPLICIT when given, else (U2042) <CAPTURE_ROOT>\sysdlls\<env> when CAPTURE_ROOT is not empty and
+	// holds manifest.txt there, else the first ancestor folder of DATA_DIR that holds capture\sysdlls\<env>\manifest.txt
+	// (the order of capture_sysdlls.py / win_env_t1.py capture_dir; a worktree outside emulator\, e.g. E:\novmp_wt\<name>, needs it)
+	bool locate_capture( environment env, const std::string& explicit_dir, const std::string& data_dir, const std::string& capture_root,
+						 std::string& dir, std::string& error );
+	// the same with CAPTURE_ROOT = the host environment variable NOVMP_CAPTURE_ROOT (a host path of the capture; never guest-visible)
 	bool locate_capture( environment env, const std::string& explicit_dir, const std::string& data_dir, std::string& dir, std::string& error );
 	bool load_manifest( const std::string& dir, environment env, capture_manifest& m, std::string& error );
 

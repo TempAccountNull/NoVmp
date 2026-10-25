@@ -1402,6 +1402,30 @@ namespace
 			   "an explicit folder without a manifest is refused: " + err );
 	}
 
+	// U2042: locate_capture with a capture root (NOVMP_CAPTURE_ROOT, passed in here; no file is written - the selftest only reads):
+	// folders that do not exist, so the result does not depend on the machine; the found-capture path (root before the ancestors)
+	// is exercised by the win_env_* suites from a worktree outside emulator\ (E:\novmp_wt\<name>, P37).
+	void t_sysdll_capture_root()
+	{
+		using emu::win::environment;
+		const std::string root = "C:\\no_such_capture_root_for_emu_selftest_u2042";
+		const std::string data = "C:\\no_such_data_dir_for_emu_selftest_u2042\\Emulator\\data";
+		std::string dir, err;
+		CHECK( !emu::win::locate_capture( environment::vmware_guest, "", data, root, dir, err ) && dir.empty() &&
+				   err.find( "NOVMP_CAPTURE_ROOT " + root ) != std::string::npos && err.find( "the ancestors of " + data ) != std::string::npos,
+			   "a capture root without sysdlls\\vmware_guest\\manifest.txt: both places named in the refusal: " + err );
+		err.clear();
+		CHECK( !emu::win::locate_capture( environment::vmware_guest, "", data, "", dir, err ) && err.find( "NOVMP_CAPTURE_ROOT C:" ) == std::string::npos &&
+				   err.find( "set NOVMP_CAPTURE_ROOT" ) != std::string::npos,
+			   "no capture root: only the ancestors searched, the hint names NOVMP_CAPTURE_ROOT: " + err );
+		err.clear();
+		CHECK( !emu::win::locate_capture( environment::vmware_guest, root, data, root, dir, err ) && err.find( "--sysdlls " + root ) != std::string::npos,
+			   "an explicit --sysdlls folder is final (no fallback to the capture root): " + err );
+		err.clear();
+		CHECK( !emu::win::locate_capture( environment::none, "", data, root, dir, err ) && err.find( "no Windows environment" ) != std::string::npos,
+			   "--max has no environment, capture root or not: " + err );
+	}
+
 	// PEB / TEB / KUSER fields in guest memory (offsets: emu::win::layout, checked against the SDK in win_env.cpp / check_win_layout.py)
 	void t_win_env_layout()
 	{
@@ -2675,6 +2699,7 @@ namespace
 		{ "pe_fuzz", t_pe_fuzz },
 		{ "pe_map_relocate", t_pe_map_relocate },
 		{ "sysdll_syscall_table", t_sysdll_syscall_table },
+		{ "sysdll_capture_root", t_sysdll_capture_root },
 		{ "win_env_layout", t_win_env_layout },
 		{ "win_env_terminate", t_win_env_terminate },
 		{ "win_env_loud_stops", t_win_env_loud_stops },
