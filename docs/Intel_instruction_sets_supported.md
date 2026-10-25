@@ -1,6 +1,6 @@
 # Instruction sets supported (Intel + AMD/VIA)
 
-_Generated 2026-10-25 07:10 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `bce94a52 Ledger: U2000-U2016 (agent/p3m5, plan 1.K.8 + 3.M5 part 1), merged and
+_Generated 2026-10-25 11:45 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `c1715ac4 Ledger: U2020-U2037, U2039 (agent/p3m5b, plan 3.M5 part 2a), merged and
 verified`). Do not edit by hand._
 
 Every instruction form (mnemonic + encoding) of the Intel SDM / XED list `Emulator/data/isa_manual_forms.tsv`, AMD and VIA forms included: **2912 forms, each
