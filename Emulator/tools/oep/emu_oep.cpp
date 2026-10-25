@@ -11,7 +11,7 @@
 // one line per instruction. Both only observe: the guest sees the same machine with or without them.
 //
 //   emu-oep [--host | --guest | --max] [--Sys | --HLE] [--seeded | --HostSeed] [--max-insns N] [--image-base ADDR]
-//           [--sysdlls DIR] [--dry-run] [--out-dir DIR] [--counters] [--trace FILE] INPUT
+//           [--sysdlls DIR] [--dry-run] [--out-dir DIR] [--counters] [--trace FILE [--trace-regs] [--trace-last N]] INPUT
 //   emu-oep (--guest | --host) [--sysdlls DIR] --syscall-number NAME
 //   exit 0 = the guest terminated through NtTerminateProcess, 1 = another stop (fault, instruction bound, return from the
 //   entry), 2 = usage, 3 = set-up error (input, capture, refused feature), 4 = unknown / unimplemented system service or --HLE
@@ -119,6 +119,8 @@ int main( int argc, char** argv )
 	po.counters = o.counters;      // U2020
 	po.loader = o.loader;          // U2031
 	po.trace_path = o.trace_file;
+	po.trace_regs = o.trace_regs;   // U2040
+	po.trace_last = o.trace_last;
 	std::vector<std::string> plog;
 	auto p = emu::win::process::create( ec, facts, po, file, plog, error );
 	for ( auto& l : plog ) std::cout << "[emu-oep] " << l << "\n";

@@ -13,6 +13,10 @@ decision 3.0.8) with status 2FH. Checked (the image is read as data by emu-oep, 
       observes)
   --trace FILE: one line per counted instruction (lines = "instructions executed"), the first line the entry, the last the
       SYSCALL; a trace without --counters gives the same observable lines
+  --trace FILE --trace-regs (U2040): every line also holds the 17 registers RAX..R15 / RFLAGS (state before the instruction);
+      with --trace-last 6 exactly the last 6 instructions, the RIP-relative load of the service number shows its 4-byte read and
+      RAX = the number on the next line, the SYSCALL line RCX = R10 = -1 and RDX = 2FH; observable lines unchanged; --trace-regs
+      without --trace and --trace-last 0 are usage errors (exit 2)
   without --counters: no "probe:" line
   the NATIVE REFERENCE (decision 3.0.7, only when the live ntdll equals the capture): tp_probe natively exits 2FH
 Exit 0 = PASS, 1 = FAIL, 2 = usage.
@@ -147,6 +151,33 @@ def main(argv):
               '%s --trace: %d lines = %d instructions, first = #1, last = the SYSCALL, observable lines unchanged' % (mode, len(lines), n_insn))
         if os.path.exists(trace):
             os.remove(trace)
+        # U2040: --trace-regs (RAX..R15 / RFLAGS before each instruction + its memory accesses) and --trace-last N
+        rc, rout = T1H.run([oep, '--guest', mode, '--trace', trace, '--trace-regs', tpp])
+        full = open(trace, encoding='ascii').read().splitlines() if os.path.isfile(trace) else []
+        nregs = [len(re.findall(r'(?:^| )(?:r[a-z0-9]+)=[0-9a-f]{16}(?= |$)', l.split(' | ')[1] if ' | ' in l else '')) for l in full]
+        check(rc == 0 and len(full) == n_insn and nregs and min(nregs) == 17 and T1H.observable(rout) == obs[mode][0],
+              '%s --trace --trace-regs: %d lines = %d instructions, 17 registers on every line, observable lines unchanged' % (mode, len(full), n_insn))
+        if os.path.exists(trace):
+            os.remove(trace)
+        rc, lout = T1H.run([oep, '--guest', mode, '--trace', trace, '--trace-regs', '--trace-last', '6', tpp])
+        tl = open(trace, encoding='ascii').read().splitlines() if os.path.isfile(trace) else []
+        ok = rc == 0 and len(tl) == 6 and T1H.observable(lout) == obs[mode][0]
+        idx = [int(l.split(' ', 1)[0]) for l in tl] if ok else []
+        ok = ok and idx == list(range(n_insn - 5, n_insn + 1)) and '  syscall |' in tl[-1]
+        rg = [dict(re.findall(r'(?:^| )(r[a-z0-9]+)=([0-9a-f]{16})', l.split(' | ')[1])) for l in tl] if ok else []
+        ld = [k for k, l in enumerate(tl) if '  mov eax, dword ptr [rip' in l] if ok else []
+        ok = ok and len(ld) == 1 and ld[0] + 1 < len(tl) and (' | mem r:0x' in tl[ld[0]]) and \
+            tl[ld[0]].split(' | mem ')[1].split(':')[2] == '4=0x%x' % n and int(rg[ld[0] + 1]['rax'], 16) == n
+        ok = ok and int(rg[-1]['rcx'], 16) == 0xFFFFFFFFFFFFFFFF and int(rg[-1]['r10'], 16) == 0xFFFFFFFFFFFFFFFF and int(rg[-1]['rdx'], 16) == 0x2F
+        check(ok, '%s --trace --trace-regs --trace-last 6: the last 6 instructions (#%d..#%d), the RIP-relative load shows its read '
+              '(4 bytes = the service number) and RAX = it on the next line, the SYSCALL line RCX = R10 = -1, RDX = 2FH; observable unchanged'
+              % (mode, n_insn - 5, n_insn))
+        if os.path.exists(trace):
+            os.remove(trace)
+    rc, _ = T1H.run([oep, '--guest', '--HLE', '--trace-regs', tpp])
+    check(rc == 2, '--trace-regs without --trace: usage error, exit 2 (got %d)' % rc)
+    rc, _ = T1H.run([oep, '--guest', '--HLE', '--trace', os.path.join(scratch, 'x.trace'), '--trace-last', '0', tpp])
+    check(rc == 2 and not os.path.exists(os.path.join(scratch, 'x.trace')), '--trace-last 0: usage error, exit 2, no file (got %d)' % rc)
     live = os.path.join(os.environ.get('SystemRoot', r'C:\Windows'), 'System32', 'ntdll.dll')
     if check(hashlib.sha256(open(live, 'rb').read()).hexdigest() == hashlib.sha256(nt).hexdigest(),
              'the live ntdll.dll equals the guest capture (SHA-256): the number is valid for this kernel'):
@@ -156,7 +187,8 @@ def main(argv):
         say('FAIL (%d problem(s))' % len(fails))
         return 1
     say('PASS: tp_probe --counters in --Sys and --HLE (CPUID 4 pairs answered, RDTSC 2, RDTSCP 1, 6 environment reads by member, 1 system call), '
-        '--trace one line per instruction, instrumentation observable-neutral, native reference 2FH')
+        '--trace one line per instruction (--trace-regs registers + memory, --trace-last ring), instrumentation observable-neutral, '
+        'native reference 2FH')
     return 0
 
 

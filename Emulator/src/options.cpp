@@ -149,6 +149,9 @@ namespace emu
 				   "  --counters             probe counters: CPUID leaves (with the answers), RDTSC / RDTSCP / RDPID, reads of PEB / TEB / KUSER\n"
 				   "                         members, system calls, API calls, exceptions, the last 32 instructions - summary at the stop\n"
 				   "  --trace FILE           one line per instruction (index, RIP, region +offset, bytes, disassembly) into FILE (at most 1 GiB)\n"
+				   "  --trace-regs           with --trace: each line also holds RAX..R15 / RFLAGS before the instruction and its memory reads /\n"
+				   "                         writes (address, size, value)\n"
+				   "  --trace-last N         with --trace: keep only the last N lines (1 .. 4000000), written when the run stops\n"
 				   "  --loader               with --Sys: start in the environment's real ntdll!LdrInitializeThunk (opt-in; stops at the first system\n"
 				   "                         service without a source)\n"
 				   "  exit      0 the guest terminated (NtTerminateProcess), 1 another stop (fault, bound, return from the entry), 2 usage,\n"
@@ -320,6 +323,16 @@ namespace emu
 				if ( !o.trace_file.empty() ) return fail( raw + " given twice" );
 				if ( !value( o.trace_file ) || o.trace_file.empty() ) return fail( "missing value for " + raw + " (the trace file)" );
 			}
+			else if ( tool == tool_kind::oep && a == "--trace-regs" ) o.trace_regs = true;   // U2040
+			else if ( tool == tool_kind::oep && a == "--trace-last" )
+			{
+				// U2040: a ring of the last N lines (memory bound: N <= 4000000)
+				std::string v;
+				if ( !value( v ) ) return fail( "missing value for " + raw );
+				if ( o.trace_last_given ) return fail( raw + " given twice" );
+				if ( !parse_u64( v, o.trace_last ) || o.trace_last == 0 || o.trace_last > max_trace_last ) return fail( raw + " N must be 1 .. 4000000, got \"" + v + "\"" );
+				o.trace_last_given = true;
+			}
 			else if ( tool == tool_kind::oep && ( a == "--image-base" || a == "--sysdlls" || a == "--syscall-number" ) )
 			{
 				// U1984 (plan 3.M4)
@@ -354,6 +367,7 @@ namespace emu
 		if ( o.help ) { r.ok = true; return r; }
 		if ( tool == tool_kind::oep && !input_given && o.syscall_query.empty() ) return fail( "missing INPUT" );
 		if ( tool == tool_kind::oep && input_given && !o.syscall_query.empty() ) return fail( "--syscall-number takes no INPUT" );
+		if ( tool == tool_kind::oep && ( o.trace_regs || o.trace_last_given ) && o.trace_file.empty() ) return fail( "--trace-regs / --trace-last need --trace FILE" );   // U2040
 		if ( tool == tool_kind::snippet )
 		{
 			if ( !o.batch_file.empty() )
@@ -398,6 +412,9 @@ namespace emu
 			d.push_back( std::string( "loader: " ) + ( o.loader ? "the real ntdll!LdrInitializeThunk start (--Sys, opt-in)" : "off" ) );
 			d.push_back( std::string( "counters: " ) + ( o.counters ? "on (probe counters + the last instructions, summary at the stop)" : "off" ) );
 			d.push_back( "trace: " + ( o.trace_file.empty() ? std::string( "off" ) : o.trace_file + ( o.dry_run ? " (recorded, not created)" : " (one line per instruction)" ) ) );
+			if ( !o.trace_file.empty() && ( o.trace_regs || o.trace_last_given ) )   // U2040
+				d.push_back( std::string( "trace detail: " ) + ( o.trace_regs ? "registers before each instruction + its memory reads / writes" : "instruction only" ) +
+							 ( o.trace_last_given ? ", the last " + std::to_string( o.trace_last ) + " lines" : ", every line" ) );
 		}
 		else
 		{

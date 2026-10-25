@@ -206,6 +206,14 @@ namespace emu::win
 		size_t tail_next = 0;
 		std::unique_ptr<output_file> trace;   // the audited writer (no_native_check)
 		std::unique_ptr<disassembler> dis;
+		// U2040: register-level trace lines (process_options::trace_regs) and the ring of the last lines (trace_last)
+		bool regs = false;
+		uint64_t last = 0;
+		std::vector<std::string> ring;
+		size_t ring_next = 0;
+		std::string pending;          // the current instruction's line: written when the next instruction starts / the run stops
+		bool have_pending = false;
+		bool pending_mem = false;
 
 		void stop( stop_kind k, const std::string& detail )
 		{
@@ -230,6 +238,75 @@ namespace emu::win
 			p.ebx = uint32_t( read_reg( uc, UC_X86_REG_RBX ) );
 			p.ecx = uint32_t( read_reg( uc, UC_X86_REG_RCX ) );
 			p.edx = uint32_t( read_reg( uc, UC_X86_REG_RDX ) );
+		}
+
+		// U2040: one trace line out - straight to the file, or (trace_last) into the ring of the last lines
+		void trace_emit( process::hook_ctx& c, std::string&& l )
+		{
+			auto& pr = c.r->probes;
+			if ( pr.trace_truncated ) return;
+			if ( c.last )
+			{
+				if ( c.ring.size() < c.last ) c.ring.push_back( std::move( l ) );
+				else c.ring[ c.ring_next ] = std::move( l );
+				c.ring_next = size_t( ( c.ring_next + 1 ) % c.last );
+				return;
+			}
+			if ( c.trace->write( l ) )
+			{
+				pr.trace_bytes += l.size();
+				pr.trace_lines++;
+			}
+			else
+				pr.trace_truncated = true;
+		}
+
+		void trace_flush_pending( process::hook_ctx& c )
+		{
+			if ( !c.have_pending ) return;
+			c.have_pending = false;
+			c.pending += "\n";
+			trace_emit( c, std::move( c.pending ) );
+			c.pending.clear();
+		}
+
+		// U2040: at the stop - the last pending line, then the ring oldest first through the audited writer
+		void trace_finish( process::hook_ctx& c )
+		{
+			trace_flush_pending( c );
+			if ( !c.last ) return;
+			auto& pr = c.r->probes;
+			const size_t n = c.ring.size(), first = n < c.last ? 0 : c.ring_next;
+			for ( size_t k = 0; k < n && !pr.trace_truncated; k++ )
+			{
+				const std::string& l = c.ring[ ( first + k ) % n ];
+				if ( c.trace->write( l ) )
+				{
+					pr.trace_bytes += l.size();
+					pr.trace_lines++;
+				}
+				else
+					pr.trace_truncated = true;
+			}
+			c.ring.clear();
+		}
+
+		// U2040: the 16 general-purpose registers and RFLAGS before the instruction (" | rax=... rfl=...")
+		std::string trace_regs_text( uc_engine* uc )
+		{
+			static const struct { int id; const char* n; } R[] = {
+				{ UC_X86_REG_RAX, "rax" }, { UC_X86_REG_RBX, "rbx" }, { UC_X86_REG_RCX, "rcx" }, { UC_X86_REG_RDX, "rdx" }, { UC_X86_REG_RSI, "rsi" },
+				{ UC_X86_REG_RDI, "rdi" }, { UC_X86_REG_RBP, "rbp" }, { UC_X86_REG_RSP, "rsp" }, { UC_X86_REG_R8, "r8" }, { UC_X86_REG_R9, "r9" },
+				{ UC_X86_REG_R10, "r10" }, { UC_X86_REG_R11, "r11" }, { UC_X86_REG_R12, "r12" }, { UC_X86_REG_R13, "r13" }, { UC_X86_REG_R14, "r14" },
+				{ UC_X86_REG_R15, "r15" }, { UC_X86_REG_RFLAGS, "rfl" } };
+			std::string s = " |";
+			for ( auto& r : R )
+			{
+				char t[ 32 ];
+				std::snprintf( t, sizeof( t ), " %s=%016llx", r.n, (unsigned long long)read_reg( uc, r.id ) );
+				s += t;
+			}
+			return s;
 		}
 
 		// U2020: count CPUID / RDTSC / RDTSCP / RDPID from the instruction bytes (after legacy and REX prefixes), keep the tail,
@@ -297,15 +374,71 @@ namespace emu::win
 					l += h;
 				}
 				if ( c.dis && c.dis->ok() ) l += "  " + c.dis->decode( b, n, address ).text;
-				l += "\n";
-				if ( c.trace->write( l ) )
+				if ( c.regs )
 				{
-					pr.trace_bytes += l.size();
-					pr.trace_lines++;
+					// U2040: the previous instruction's line is complete (its memory accesses were appended by on_trace_mem)
+					trace_flush_pending( c );
+					l += trace_regs_text( uc );
+					c.pending = std::move( l );
+					c.have_pending = true;
+					c.pending_mem = false;
 				}
 				else
-					pr.trace_truncated = true;
+					trace_emit( c, l + "\n" );
 			}
+		}
+
+		// U2040: memory reads / writes of the current instruction, appended to its pending trace line (observation only: a read
+		// is shown with the bytes in guest memory at the access, read through the engine with the size bounded to 64)
+		void on_trace_mem( uc_engine* uc, uc_mem_type type, uint64_t address, int size, int64_t value, void* user )
+		{
+			auto& c = *static_cast<process::hook_ctx*>( user );
+			if ( !c.have_pending || c.r->probes.trace_truncated ) return;
+			if ( c.pending.size() > 4096 ) return;   // a string instruction's accesses: the first ones suffice
+			char t[ 96 ];
+			const unsigned long long a = (unsigned long long)address;
+			std::string s = c.pending_mem ? " " : " | mem ";
+			c.pending_mem = true;
+			if ( type == UC_MEM_WRITE )
+			{
+				if ( size > 0 && size <= 8 )
+				{
+					const uint64_t v = size == 8 ? uint64_t( value ) : uint64_t( value ) & ( ( 1ull << ( 8 * size ) ) - 1 );
+					std::snprintf( t, sizeof( t ), "w:0x%llx:%d=0x%llx", a, size, (unsigned long long)v );
+					s += t;
+				}
+				else
+				{
+					std::snprintf( t, sizeof( t ), "w:0x%llx:%d=bytes:", a, size );
+					s += t;
+				}
+			}
+			else
+			{
+				uint8_t v[ 64 ] = {};
+				const size_t m = size > 0 && size <= 64 ? size_t( size ) : 0;
+				const bool got = m && uc_mem_read( uc, address, v, m ) == UC_ERR_OK;
+				std::snprintf( t, sizeof( t ), "r:0x%llx:%d=", a, size );
+				s += t;
+				if ( got && m <= 8 )
+				{
+					uint64_t x = 0;
+					std::memcpy( &x, v, m );   // little-endian guest bytes as a number
+					std::snprintf( t, sizeof( t ), "0x%llx", (unsigned long long)x );
+					s += t;
+				}
+				else
+				{
+					s += "bytes:";
+					for ( size_t k = 0; got && k < m; k++ )
+					{
+						char h[ 4 ];
+						std::snprintf( h, sizeof( h ), "%02x", v[ k ] );
+						s += h;
+					}
+				}
+			}
+			c.pending += s;
 		}
 
 		void on_code( uc_engine* uc, uint64_t address, uint32_t size, void* user )
@@ -1023,8 +1156,22 @@ namespace emu::win
 				return false;
 			}
 			hc_->dis = std::make_unique<disassembler>();
-			log_.push_back( "trace: one line per instruction (index, RIP, region +offset, bytes, Capstone text) -> " + po_.trace_path + " (at most " +
-							std::to_string( po_.trace_max_bytes ) + " bytes)" );
+			// U2040: register-level lines (observation only: the memory hook reads, never writes guest state) / the ring of the last lines
+			hc_->regs = po_.trace_regs;
+			hc_->last = po_.trace_last;
+			hc_->ring.clear();
+			hc_->ring_next = 0;
+			hc_->have_pending = false;
+			if ( po_.trace_regs && uc_hook_add( uc, &h, UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE, (void*)on_trace_mem, hc_.get(), 1, 0 ) != UC_ERR_OK )
+			{
+				error = "uc_hook_add (trace memory accesses) failed";
+				log_.push_back( "FAILED: " + error );
+				return false;
+			}
+			log_.push_back( "trace: one line per instruction (index, RIP, region +offset, bytes, Capstone text" +
+							std::string( po_.trace_regs ? "; RAX..R15 / RFLAGS before the instruction; its memory reads / writes" : "" ) + ")" +
+							( po_.trace_last ? " - only the last " + std::to_string( po_.trace_last ) + " lines, written at the stop" : std::string() ) + " -> " +
+							po_.trace_path + " (at most " + std::to_string( po_.trace_max_bytes ) + " bytes)" );
 		}
 		log_.push_back( loader_start_ ? "run: IRETQ to ntdll!LdrInitializeThunk " + hex( start_va_ ) + " with RCX = the CONTEXT " + hex( start_context_ ) + " (the --Sys loader start), at most " + std::to_string( po_.max_insns ) + " instructions" : "run: SYSRETQ to " + ( start_va_ == map_.entry ? "the entry " + hex( map_.entry ) : "the TLS start trampoline " + hex( start_va_ ) + " (then the entry " + hex( map_.entry ) + ")" ) +
 						" at CPL 3, at most " + std::to_string( po_.max_insns ) + " instructions" );
@@ -1060,6 +1207,7 @@ namespace emu::win
 		}
 		if ( hc_->trace )
 		{
+			trace_finish( *hc_ );   // U2040
 			hc_->trace->close();
 			hc_->trace.reset();
 			log_.push_back( "trace: " + std::to_string( r.probes.trace_lines ) + " lines, " + std::to_string( r.probes.trace_bytes ) + " bytes" +

@@ -33,6 +33,8 @@ namespace emu
 		uint64_t value = 0;
 	};
 
+	constexpr uint64_t max_trace_last = 4000000;   // U2040: --trace-last N bound (the ring is held in memory)
+
 	struct run_options
 	{
 		tool_kind tool = tool_kind::oep;
@@ -94,6 +96,10 @@ namespace emu
 		bool counters = false;                 // --counters: probe counters (CPUID, RDTSC / RDTSCP / RDPID, PEB / TEB / KUSER reads,
 		                                       // system calls, API calls, exceptions) + the last instructions, summary at the stop
 		std::string trace_file;                // --trace FILE: one line per instruction into FILE (created; at most 1 GiB)
+		// U2040 (the #GP investigation, notes/eread/P37_gp_investigation.md): register-level trace lines, both need --trace
+		bool trace_regs = false;               // --trace-regs: + RAX..R15 / RFLAGS before the instruction + its memory reads / writes
+		uint64_t trace_last = 0;               // --trace-last N: keep only the last N lines (written at the stop); 0 = every line
+		bool trace_last_given = false;
 		bool loader = false;                   // U2031: --loader (with --Sys): start in the real ntdll!LdrInitializeThunk (opt-in)
 
 		bool help = false;

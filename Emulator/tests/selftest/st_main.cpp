@@ -2253,6 +2253,22 @@ namespace
 		CHECK( has_line( d, "counters: on" ) && has_line( d, "trace: t.txt (one line per instruction)" ), "describe names the instrumentation" );
 		CHECK( emu::usage( emu::tool_kind::oep ).find( "--counters" ) != std::string::npos && emu::usage( emu::tool_kind::oep ).find( "--trace FILE" ) != std::string::npos,
 			   "usage names --counters and --trace FILE" );
+		// U2040: --trace-regs / --trace-last N (both need --trace FILE; N 1 .. 4000000, once)
+		auto e = parse( emu::tool_kind::oep, { "--trace", "t.txt", "--trace-regs", "--trace-last", "200000", "a.exe" } );
+		CHECK( e.ok && e.options.trace_regs && e.options.trace_last_given && e.options.trace_last == 200000, "--trace-regs / --trace-last N: " + e.error );
+		CHECK( !b.options.trace_regs && !b.options.trace_last_given && b.options.trace_last == 0, "register trace off by default" );
+		CHECK( !parse( emu::tool_kind::oep, { "--trace-regs", "a.exe" } ).ok && !parse( emu::tool_kind::oep, { "--trace-last", "5", "a.exe" } ).ok,
+			   "--trace-regs / --trace-last without --trace refused" );
+		CHECK( !parse( emu::tool_kind::oep, { "--trace", "t.txt", "--trace-last", "0", "a.exe" } ).ok &&
+				   !parse( emu::tool_kind::oep, { "--trace", "t.txt", "--trace-last", "4000001", "a.exe" } ).ok &&
+				   !parse( emu::tool_kind::oep, { "--trace", "t.txt", "--trace-last", "5", "--trace-last", "5", "a.exe" } ).ok &&
+				   parse( emu::tool_kind::oep, { "--trace", "t.txt", "--trace-last", "4000000", "a.exe" } ).ok,
+			   "--trace-last bounds 1 .. 4000000, once" );
+		CHECK( !parse( emu::tool_kind::snippet, { "--hex", "90", "--trace-regs" } ).ok, "--trace-regs is an emu-oep option" );
+		CHECK( has_line( emu::describe( e.options ), "trace detail: registers before each instruction + its memory reads / writes, the last 200000 lines" ),
+			   "describe names the register trace" );
+		CHECK( emu::usage( emu::tool_kind::oep ).find( "--trace-regs" ) != std::string::npos && emu::usage( emu::tool_kind::oep ).find( "--trace-last N" ) != std::string::npos,
+			   "usage names --trace-regs and --trace-last N" );
 	}
 
 	w5_run pb_go( const std::vector<uint8_t>& file, emu::env_boundary b, bool counters )

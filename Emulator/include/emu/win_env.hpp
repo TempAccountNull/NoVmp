@@ -149,6 +149,10 @@ namespace emu::win
 		uint32_t trace_tail = 32;
 		std::string trace_path;                        // "" = no per-instruction trace file; else one line per instruction
 		uint64_t trace_max_bytes = 1ull << 30;         // the trace file stops growing here (disk rule), marked truncated
+		// U2040: register-level trace (observation only): each line + RAX..R15 / RFLAGS before the instruction + its memory reads /
+		// writes; trace_last > 0 keeps only the last trace_last lines in memory and writes them when the run stops
+		bool trace_regs = false;
+		uint64_t trace_last = 0;
 	};
 
 	enum class stop_kind { none, terminated, unknown_syscall, unimplemented_syscall, unimplemented_api, fault, count, returned, error };
