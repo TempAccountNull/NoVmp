@@ -3,38 +3,68 @@
 "--Sys DLLs per emulated environment (guest now; a bare-host DLL capture via a host package later), local only, never
 committed; syscall numbers from that environment's ntdll").
 
-Run it IN the environment it captures (the VMware guest for --env vmware_guest; the bare host, through a host package, for
---env bare_host). It copies %SystemRoot%\\System32\\ntdll.dll (as bytes) into <capture root>\\sysdlls\\<env>\\ and writes
-manifest.txt there (format 1): the OS version facts the emulated KUSER_SHARED_DATA / PEB need (from the registry of that
-environment: CurrentMajorVersionNumber, CurrentMinorVersionNumber, CurrentBuildNumber, SystemRoot, ProductOptions\\ProductType)
-and the size / SHA-256 of the copy. The capture root is OUTSIDE the repository: $NOVMP_CAPTURE_ROOT, else the first ancestor
-folder of the repository that holds a folder "capture" (as bare_host_cpuid.py). Nothing here goes into Git; no value of the
-manifest is an identifier of the machine (versions, sizes, hashes of a system file, a path).
+Run it IN the environment it captures (the VMware guest; the bare host through a host package). It copies
+%SystemRoot%\\System32\\ntdll.dll (as bytes) into <capture root>\\sysdlls\\<env>\\ and writes manifest.txt there (format 1): the
+OS version facts the emulated KUSER_SHARED_DATA / PEB need (from the registry of that environment: CurrentMajorVersionNumber,
+CurrentMinorVersionNumber, CurrentBuildNumber, SystemRoot, ProductOptions\\ProductType) and the size / SHA-256 of the copy. The
+capture root is OUTSIDE the repository: $NOVMP_CAPTURE_ROOT, else the first ancestor folder of the repository that holds a
+folder "capture" (as bare_host_cpuid.py). Nothing here goes into Git; no value of the manifest is an identifier of the machine
+(versions, sizes, hashes of a system file, a path, the environment evidence line).
 
 The emulator never reads the running machine's System32: it reads this capture only (emu::win::locate_capture /
 load_manifest / parse_syscall_table). DLLs beyond ntdll come with milestone M5 (--dll NAME, repeatable).
 
+The environment (U1990, user decision 2026-10-25): decided ONLY by the project's evidence-based environment detection of
+U1893 - emu-alltest's "tag environment:" line (at_cases.hpp tag_environment(): the native CPUID equal to a captured profile
+on the 14 identifying registers of tag_sig() -> guest / bare host P / E / either, else unknown). This script does not
+re-implement that register list: it runs emu-alltest with an empty case file (--cases NUL: no case line, no native snippet)
+and reads the one line. A label is written only on positive evidence ("the native CPUID equals the captured ... profile");
+"unknown", an explicit --tag-env override ("(explicit)": not evidence), a missing / doubled / malformed line or an
+emu-alltest failure = refused, nothing written. Not the processor count (the version of U1981 used it; a VmLoader-rewritten
+firmware view or another machine with 8 / 20 logical processors would have been labelled wrongly).
+
 usage:
-  python -I capture_sysdlls.py --env vmware_guest|bare_host [--root DIR] [--dll NAME ...] [--replace]
-  python -I capture_sysdlls.py --env vmware_guest --check     the capture equals the live files (exit 0 / 1)
-The environment is checked first: this machine's logical processor count must equal dwNumberOfProcessors of the named
-environment's platform profile (Emulator\\data\\platform\\<env>\\views\\environment.txt: guest 8, bare host 20); the BIOS strings
-cannot tell, VmLoader rewrites the guest's firmware view.
+  python -I capture_sysdlls.py [--env vmware_guest|bare_host] [--root DIR] [--alltest EXE] [--dll NAME ...] [--replace]
+          --env (optional) must equal the detected environment; the label written is always the detected one
+  python -I capture_sysdlls.py [--env ...] --check        the capture of the detected environment equals the live files (exit 0 / 1)
+  python -I capture_sysdlls.py --detect                   print the detected environment and the evidence (exit 0 / 1 refused)
+  python -I capture_sysdlls.py --selftest [--alltest EXE] RED / GREEN self-test (suite capture_sysdlls_selftest, U1991): forced /
+          mocked wrong or unknown environments must refuse without writing; the live detection must be positive
+--alltest default: <repo>\\build\\x64\\Release\\tests\\emu-alltest.exe (it reads the captured CPUID profiles next to itself or
+from <repo>\\Emulator\\data, as in the hardware gates).
 """
 import datetime
 import hashlib
 import os
+import subprocess
 import sys
-import winreg
+import tempfile
+
+sys.dont_write_bytecode = True   # python -I ignores PYTHONDONTWRITEBYTECODE
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ENV = 'NOVMP_CAPTURE_ROOT'
 ENVS = ('vmware_guest', 'bare_host')
 PRODUCT = {'winnt': 1, 'lanmannt': 2, 'servernt': 3}   # NT_PRODUCT_TYPE (Windows SDK shared\ntdef.h: NtProductWinNt = 1, ...)
+ALLTEST = os.path.join(ROOT, 'build', 'x64', 'Release', 'tests', 'emu-alltest.exe')
+# emu-alltest tag_env_text() labels (at_cases.hpp, U1875 / U1893) -> the capture environment
+LABELS = {'guest': 'vmware_guest', 'hostP': 'bare_host', 'hostE': 'bare_host', 'host (hostP | hostE)': 'bare_host'}
+# the positive-evidence wording of tag_environment() for each platform (at_cases.hpp e.why)
+EVIDENCE = {'vmware_guest': 'the native CPUID equals the captured VMware-guest profile ',
+            'bare_host': 'the native CPUID equals the captured bare-host profile '}
+TAG = 'tag environment: '
+
+
+class Refused(Exception):
+    pass
 
 
 def fail(msg):
     sys.exit('[capture_sysdlls] FAIL: ' + msg)
+
+
+def refuse(msg):
+    raise Refused(msg)
 
 
 def say(msg):
@@ -42,6 +72,7 @@ def say(msg):
 
 
 def reg(path, name):
+    import winreg
     with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path) as k:
         return winreg.QueryValueEx(k, name)[0]
 
@@ -63,21 +94,51 @@ def capture_root(explicit):
         p = q
 
 
-def environment_ok(env):
-    # The firmware view of the guest is rewritten by VmLoader (BIOS strings name no VMware there), so the environment is told
-    # by a fact of its own platform profile: the logical processor count (views\environment.txt dwNumberOfProcessors: the
-    # VMware guest has 8 vCPUs, the bare host 20 logical processors) must equal this machine's.
-    prof = os.path.join(ROOT, 'Emulator', 'data', 'platform', env, 'views', 'environment.txt')
-    want = None
-    for line in open(prof, encoding='utf-8', errors='replace'):
-        if 'dwNumberOfProcessors ' in line:
-            want = int(line.split('dwNumberOfProcessors ', 1)[1].split(',', 1)[0])
-            break
-    if want is None:
-        fail('%s has no dwNumberOfProcessors line' % prof)
-    if os.cpu_count() != want:
-        fail('--env %s, but this machine\'s logical processor count differs from that environment\'s platform profile (%s): '
-             'run the capture in the environment it names' % (env, os.path.relpath(prof, ROOT)))
+def run_alltest(exe, extra=()):
+    """emu-alltest --cases NUL [extra]: no case line runs; only the run header (incl. "tag environment:") is printed.
+    Returns (exit status, stdout text)."""
+    if not os.path.isfile(exe):
+        refuse('emu-alltest not found at %s (build the Release configuration first, or pass --alltest EXE)' % exe)
+    r = subprocess.run([exe, '--cases', os.devnull] + list(extra), capture_output=True, timeout=300)
+    return r.returncode, r.stdout.decode('utf-8', errors='replace')
+
+
+def decide(status, text):
+    """The capture environment from one emu-alltest run, positive evidence only: (env, label, evidence) or Refused."""
+    if status != 0:
+        refuse('emu-alltest --cases NUL exited %d: no environment evidence' % status)
+    lines = [l.strip() for l in text.splitlines() if l.startswith(TAG)]
+    if len(lines) != 1:
+        refuse('emu-alltest printed %d "%s" lines (want exactly 1): no environment evidence' % (len(lines), TAG.strip()))
+    rest = lines[0][len(TAG):]
+    if ' - ' not in rest:
+        refuse('malformed "%s" line' % TAG.strip())
+    label, why = rest.split(' - ', 1)
+    if label == 'unknown':
+        refuse('environment unknown - emu-alltest found no positive evidence (the native CPUID equals none of the captured '
+               'profiles on the identifying registers, U1893): refusing to label a capture')
+    if why.startswith('--tag-env') or '(explicit)' in why:
+        refuse('the environment "%s" was forced (--tag-env, explicit): an override is not evidence' % label)
+    env = LABELS.get(label)
+    if env is None:
+        refuse('unrecognised environment label "%s"' % label)
+    if not why.startswith(EVIDENCE[env]):
+        refuse('environment "%s" without the positive-evidence statement for %s' % (label, env))
+    return env, label, why
+
+
+def detect(exe, extra=()):
+    st, text = run_alltest(exe, extra)
+    return decide(st, text)
+
+
+def environment(asked, detector):
+    """Detect, then compare with --env (if given). Returns (env, evidence line) or Refused."""
+    env, label, why = detector()
+    if asked and asked != env:
+        refuse('--env %s, but the detected environment is %s (emu-alltest "tag environment: %s"): run the capture in the '
+               'environment it names' % (asked, env, label))
+    return env, '%s - %s' % (label, why.split(';', 1)[0])
 
 
 def facts():
@@ -103,17 +164,25 @@ def sha(b):
     return hashlib.sha256(b).hexdigest()
 
 
-def main(argv):
-    if '--env' not in argv or argv.index('--env') + 1 >= len(argv) or argv[argv.index('--env') + 1] not in ENVS:
-        print(__doc__.strip().split('usage:')[1].strip())
-        return 2
-    env = argv[argv.index('--env') + 1]
-    explicit = argv[argv.index('--root') + 1] if '--root' in argv else ''
+def arg(argv, name, default=''):
+    if name not in argv:
+        return default
+    i = argv.index(name)
+    if i + 1 >= len(argv):
+        fail('%s needs a value' % name)
+    return argv[i + 1]
+
+
+def capture(argv, detector):
+    asked = arg(argv, '--env')
+    if asked and asked not in ENVS:
+        fail('--env must be one of %s' % ' / '.join(ENVS))
     dlls = ['ntdll.dll'] + [argv[i + 1] for i, a in enumerate(argv) if a == '--dll' and i + 1 < len(argv)]
     if dlls[1:]:
         fail('--dll: DLLs beyond ntdll.dll are milestone M5')
-    environment_ok(env)
-    dst = os.path.join(capture_root(explicit), 'sysdlls', env)
+    env, evidence = environment(asked, detector)   # before anything is read or written
+    say('environment %s (emu-alltest: tag environment: %s)' % (env, evidence))
+    dst = os.path.join(capture_root(arg(argv, '--root')), 'sysdlls', env)
     major, minor, build, ptype, root = facts()
     data = open(live_path('ntdll.dll'), 'rb').read()
     man_path = os.path.join(dst, 'manifest.txt')
@@ -138,6 +207,7 @@ def main(argv):
     lines = [
         '# system-DLL capture of one emulated environment (Emulator/tools/capture_sysdlls.py, plan 3.M4, decision 3.0.8):',
         '# LOCAL ONLY, never committed; read by the Emulator lib (emu::win::load_manifest) and the harness (win_env_t1.py)',
+        '# environment evidence (U1990; emu-alltest "tag environment:", U1893): ' + evidence,
         'format 1',
         'environment ' + env,
         'captured ' + datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
@@ -153,6 +223,122 @@ def main(argv):
         f.write('\n'.join(lines) + '\n')
     say('captured %s: ntdll.dll %d bytes, manifest %s (OS version %d.%d build %d, product type %d)' % (dst, len(data), man_path, major, minor, build, ptype))
     return 0
+
+
+# ------------------------------------------------------------------------------------------------ self-test (U1991)
+GUEST_OK = (TAG + 'guest - the native CPUID equals the captured VMware-guest profile cpuid_i5-13600k.txt on the identifying CPUID '
+            'registers (14: leaf 0, 01H, 07H.0, 07H.1, 80000001H, 80000008H.EAX); CPUID.1:ECX[31] = 0, CPUID.07H.0:EDX[15] Hybrid = 0')
+HOSTP_OK = (TAG + 'hostP - the native CPUID equals the captured bare-host profile cpuid_i5-13600k_bare_host.txt on the identifying '
+            'CPUID registers (14: ...); CPUID.1:ECX[31] = 0, CPUID.07H.0:EDX[15] Hybrid = 1, native runs pinned to P-cores (--hw-cpu, CPUID.1AH)')
+HOST_EITHER_OK = (TAG + 'host (hostP | hostE) - the native CPUID equals the captured bare-host profile cpuid_i5-13600k_bare_host_ecore.txt '
+                  'on the identifying CPUID registers (14: ...); core type: either')
+UNKNOWN = (TAG + 'unknown - no positive evidence of either environment - VMware-guest profile: differs in 01H.EAX; bare-host P-core '
+           'profile: differs in 07H.0.EDX; bare-host E-core profile: differs in 07H.0.EDX: an environment-specific tag statement is '
+           'a harness error (U1893; --tag-env overrides)')
+
+
+def selftest(argv):
+    exe = arg(argv, '--alltest', ALLTEST)
+    checks = [0, 0]
+
+    def check(name, ok, detail=''):
+        checks[0] += 1
+        if not ok:
+            checks[1] += 1
+        print('  %-4s %s%s' % ('ok' if ok else 'FAIL', name, (' - ' + detail) if detail else ''))
+
+    def decided(st, text):
+        try:
+            return decide(st, text)[0]
+        except Refused as e:
+            return 'REFUSED: ' + str(e)
+
+    print('[capture_sysdlls] selftest 1: the decision on emu-alltest output (synthetic lines)')
+    for name, st, text, want in (
+            ('guest, positive evidence', 0, 'x\n' + GUEST_OK + '\ny\n', 'vmware_guest'),
+            ('hostP, positive evidence', 0, HOSTP_OK, 'bare_host'),
+            ('host either core, positive evidence', 0, HOST_EITHER_OK, 'bare_host'),
+            ('unknown', 0, UNKNOWN, None),
+            ('forced guest (--tag-env, explicit)', 0, TAG + 'guest - --tag-env guest (explicit)', None),
+            ('forced hostE (--tag-env, explicit)', 0, TAG + 'hostE - --tag-env hostE (explicit)', None),
+            ('guest label with bare-host evidence (inconsistent)', 0, TAG + 'guest - ' + EVIDENCE['bare_host'] + 'x.txt', None),
+            ('hostP label with guest evidence (inconsistent)', 0, TAG + 'hostP - ' + EVIDENCE['vmware_guest'] + 'x.txt', None),
+            ('unrecognised label', 0, TAG + 'vm - ' + EVIDENCE['vmware_guest'] + 'x.txt', None),
+            ('no line', 0, 'cases: 0, differing: 0\n', None),
+            ('two lines', 0, GUEST_OK + '\n' + GUEST_OK + '\n', None),
+            ('malformed line', 0, TAG + 'guest', None),
+            ('emu-alltest failed', 2, GUEST_OK, None)):
+        got = decided(st, text)
+        check(name, got == want if want else got.startswith('REFUSED'), got)
+
+    print('[capture_sysdlls] selftest 2: a capture with a mocked wrong / unknown / forced environment refuses and writes nothing')
+    nowhere = os.path.join(tempfile.gettempdir(), 'capture_sysdlls_selftest_%d_must_not_exist' % os.getpid())
+
+    def mocked(text):
+        return lambda: decide(0, text)
+
+    for name, asked, text in (
+            ('mocked bare host (positive), --env vmware_guest', 'vmware_guest', HOSTP_OK),
+            ('mocked VMware guest (positive), --env bare_host', 'bare_host', GUEST_OK),
+            ('mocked unknown, --env vmware_guest', 'vmware_guest', UNKNOWN),
+            ('mocked unknown, no --env', '', UNKNOWN),
+            ('mocked forced guest (explicit), --env vmware_guest', 'vmware_guest', TAG + 'guest - --tag-env guest (explicit)')):
+        a = ['--root', nowhere] + (['--env', asked] if asked else [])
+        try:
+            capture(a, mocked(text))
+            check(name, False, 'NOT refused')
+        except Refused as e:
+            check(name, not os.path.exists(nowhere), 'refused: ' + str(e))
+        except SystemExit as e:
+            check(name, False, 'other stop: %s' % e)
+
+    print('[capture_sysdlls] selftest 3: the live detection through emu-alltest (%s)' % os.path.relpath(exe, ROOT))
+    if not os.path.isfile(exe):
+        check('emu-alltest present', False, exe)
+    else:
+        for name, extra, asked in (
+                ('emu-alltest --tag-env hostP (forced wrong environment), --env vmware_guest', ['--tag-env', 'hostP'], 'vmware_guest'),
+                ('emu-alltest --tag-env guest (forced, not evidence), --env vmware_guest', ['--tag-env', 'guest'], 'vmware_guest'),
+                ('emu-alltest --tag-env host (forced), no --env', ['--tag-env', 'host'], ''),
+                ('emu-alltest --tag-profiles none (unknown), --env vmware_guest', ['--tag-profiles', 'none'], 'vmware_guest'),
+                ('emu-alltest --tag-profiles none (unknown), no --env', ['--tag-profiles', 'none'], '')):
+            a = ['--root', nowhere] + (['--env', asked] if asked else [])
+            try:
+                capture(a, lambda extra=extra: detect(exe, extra))
+                check(name, False, 'NOT refused')
+            except Refused as e:
+                check(name, not os.path.exists(nowhere), 'refused: ' + str(e))
+            except SystemExit as e:
+                check(name, False, 'other stop: %s' % e)
+        try:
+            env, label, why = detect(exe)
+            check('live detection: positive evidence', True, '%s (tag environment: %s)' % (env, label))
+            other = 'bare_host' if env == 'vmware_guest' else 'vmware_guest'
+            try:
+                capture(['--root', nowhere, '--env', other], lambda: detect(exe))
+                check('live detection, --env %s (the other environment)' % other, False, 'NOT refused')
+            except Refused as e:
+                check('live detection, --env %s (the other environment)' % other, not os.path.exists(nowhere), 'refused: ' + str(e))
+            print('[capture_sysdlls] detected environment: %s' % env)
+        except Refused as e:
+            check('live detection: positive evidence', False, 'refused: ' + str(e))
+    print('[capture_sysdlls] selftest: %d checks, %d failed -> %s' % (checks[0], checks[1], 'PASS' if checks[1] == 0 else 'FAIL'))
+    return 0 if checks[1] == 0 else 1
+
+
+def main(argv):
+    if '--selftest' in argv:
+        return selftest(argv)
+    exe = arg(argv, '--alltest', ALLTEST)
+    try:
+        if '--detect' in argv:
+            env, evidence = environment(arg(argv, '--env'), lambda: detect(exe))
+            say('detected environment: %s (tag environment: %s)' % (env, evidence))
+            return 0
+        return capture(argv, lambda: detect(exe))
+    except Refused as e:
+        print('[capture_sysdlls] REFUSED: %s' % e)
+        return 1
 
 
 if __name__ == '__main__':

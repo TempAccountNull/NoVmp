@@ -733,6 +733,11 @@ Add-Suite 'emu_snippet_hw_sample' 'emulator snippet hw' 'py' ( Join-Path $Root '
 Add-Suite 'win_env_t1' 'emulator win_env' 'py' ( Join-Path $Root 'Emulator\tools\win_env_t1.py' ) @( $Root, $T )
 Add-Suite 'win_env_layout' 'emulator win_env tools' 'py' ( Join-Path $Root 'Emulator\tools\check_win_layout.py' ) @( $Root )
 Add-Suite 'no_host_passthrough' 'emulator safety tools win_env' 'py' ( Join-Path $Root 'Emulator\tools\check_no_passthrough.py' ) @( $Root, '--build', $T )
+# U1990-U1991 (agent p3m4, user decision 2026-10-25, notes\eread\P34_phase3_m4.md): capture_sysdlls.py labels a capture only on
+# the positive evidence of U1893's environment detection (emu-alltest "tag environment:", run with an empty case file); the
+# self-test: mocked / forced (--tag-env) wrong environments and unknown (--tag-profiles none) refuse without writing, the live
+# detection is positive (the VMware guest here).
+Add-Suite 'capture_sysdlls_selftest' 'emulator win_env tools' 'py' ( Join-Path $Root 'Emulator\tools\capture_sysdlls.py' ) @( '--selftest', '--alltest', ( Join-Path $T 'emu-alltest.exe' ) )
 
 # ---------------------------------------------------------------------------------------- selection
 $Groups = [ordered]@{}
