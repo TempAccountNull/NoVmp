@@ -456,6 +456,10 @@ Add-Hw 'cases_lockpriv_hw' 'hw'
 # U1856-U1857 (H22 item 7, BDF97 "Follow SDM"): VCVTPS2PH m64 with a faulting store leaves MXCSR unchanged, #PF before
 # #XM; the P-core / VMware-guest values are the tagged known deviation (cases_bdf97_hw.txt).
 Add-Hw 'cases_bdf97_hw' 'hw sse'
+# U2043 (P37, the sample's #GP): the lazy flags of XOR / the previous instruction survive when the next instruction crosses
+# into the next page (the translator restart in a new TB) - our own routine written to CODE + 0FF7H, vs the i5-13600K
+# (cases_xpage_hw.txt).
+Add-Hw 'cases_xpage_hw' 'hw'
 # U870-U899: element-size memory operands, the MMX state at a fault, IMUL/MUL flags, ... vs the i5-13600K
 # (cases_fix5.txt, hardware lines plus SDM expected values where the host cannot show it).
 Add-Hw 'cases_fix5' 'hw'

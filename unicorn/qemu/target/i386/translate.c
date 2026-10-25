@@ -307,6 +307,20 @@ typedef struct DisasContext {
 #if __Use_Original_Qemu != 1 /* ours (U700) */
     TCGOp *insn_start_op;   /* this instruction's insn_start (its restore point, cc_op) */
 #endif /* __Use_Original_Qemu (U700) */
+#if __Use_Original_Qemu != 1 /* ours (U2043) */
+    /*
+     * The translator state at the start of the instruction, restored when it is restarted in a new TB because it
+     * crosses into the next page (disas_insn: sigsetjmp case 2). Kept here, not in disas_insn's locals: in the MSVC
+     * Release build the locals saved before sigsetjmp did not hold the saved values when siglongjmp returned into
+     * disas_insn (measured: CC_OP_LOGICQ (25) saved, 3 or C0H read back - also with the locals volatile), so the
+     * previous instruction's lazy flags were stored with a wrong cc_op (P37: after XOR, CF = OF = 1; the sample's VM
+     * stack pointer went 1 byte off and its VM fetched from a non-canonical address: #GP). The DisasContext is outside
+     * that frame. Test: unicorn test_x86_xpg_*, hardware: Emulator\data\cases_xpage_hw.txt.
+     */
+    bool restart_cc_op_dirty;
+    CCOp restart_cc_op;
+    target_ulong restart_pc_save;
+#endif /* __Use_Original_Qemu (U2043) */
 #if __Use_Original_Qemu != 1 /* ours (U1480) */
     /* XINUSE bits (env->xinuse_trk) already set by code emitted earlier in this block (gen_xinuse_set) */
     uint8_t xinuse_done;
@@ -5476,9 +5490,16 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
     int shift;
     MemOp ot, aflag, dflag;
     int modrm, reg, rm, mod, op, opreg, val;
+#if __Use_Original_Qemu == 1 /* original QEMU (U2043) */
     bool orig_cc_op_dirty = s->cc_op_dirty;
     CCOp orig_cc_op = s->cc_op;
     target_ulong orig_pc_save = s->pc_save;
+#else /* ours (U2043) */
+    /* the restart state lives in the DisasContext (U2043: a local is not reliable after siglongjmp) */
+    s->restart_cc_op_dirty = s->cc_op_dirty;
+    s->restart_cc_op = s->cc_op;
+    s->restart_pc_save = s->pc_save;
+#endif /* __Use_Original_Qemu (U2043) */
     target_ulong pc_start = s->base.pc_next;
     TCGOp *tcg_op, *prev_op = NULL;
     bool insn_hook = false;
@@ -5551,9 +5572,15 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
          * decoder is complete; we will be decoding the insn completely
          * before any code generation that might affect these variables.
          */
+#if __Use_Original_Qemu == 1 /* original QEMU (U2043) */
         s->cc_op_dirty = orig_cc_op_dirty;
         s->cc_op = orig_cc_op;
         s->pc_save = orig_pc_save;
+#else /* ours (U2043) */
+        s->cc_op_dirty = s->restart_cc_op_dirty;
+        s->cc_op = s->restart_cc_op;
+        s->pc_save = s->restart_pc_save;
+#endif /* __Use_Original_Qemu (U2043) */
         /* END TODO */
         s->base.num_insns--;
         tcg_remove_ops_after(tcg_ctx, s->prev_insn_end);

@@ -49074,6 +49074,137 @@ static void test_x86_kc_max_profile(void)
 }
 /* ---- end U2000-U2002 (kc_) ---- */
 
+/* ---- U2043 (xpg_): lazy flags kept when the NEXT instruction crosses a page (P37, the sample's #GP) ---- */
+/*
+ * The translator restarts an instruction that crosses into the next page in a new TB (advance_pc, siglongjmp 2). The
+ * flags of the instruction before it must survive that restart: XOR clears CF and OF and sets SF / ZF / PF from the
+ * result (334569-093 Vol2D p. 6-41 XOR "Flags Affected"); ADC adds CF (253666-093 Vol2A p. 3-10 ADC "Operation":
+ * DEST := DEST + SRC + CF).
+ * Layout (own bytes): 4 x NOP at 1FF3H, XOR R11, RSI at 1FF7H, MOV RAX, 0 at 1FFAH (7 bytes: crosses into 2000H),
+ * ADC R8, 8 at 2001H, SETC BL / SETS CL / SETZ DL after it.
+ */
+static int xpg_even_parity(unsigned v)
+{
+    int n = 0;
+    for (int i = 0; i < 8; i++) {
+        n += (v >> i) & 1;
+    }
+    return (n & 1) == 0;
+}
+
+static void xpg_nohook(uc_engine *uc, uint64_t address, uint32_t size, void *user_data)
+{
+    (void)uc; (void)address; (void)size;
+    (*(int *)user_data)++;
+}
+
+static void xpg_run(int hook, uint64_t r11, uint64_t rsi, uint64_t fl, uint64_t *r8, uint64_t *rbx, uint64_t *rcx, uint64_t *rdx, uint64_t *flags_after)
+{
+    /* 1FF3: 90 x4 | 1FF7: 4C 33 DE xor r11, rsi | 1FFA: 48 C7 C0 00000000 mov rax, 0 | 2001: 49 81 D0 08000000 adc r8, 8 |
+       2008: 0F 92 C3 setc bl | 200B: 0F 98 C1 sets cl | 200E: 0F 94 C2 setz dl | 2011 */
+    static const char code[] = "\x90\x90\x90\x90\x4c\x33\xde\x48\xc7\xc0\x00\x00\x00\x00\x49\x81\xd0\x08\x00\x00\x00"
+                               "\x0f\x92\xc3\x0f\x98\xc1\x0f\x94\xc2";
+    uc_engine *uc;
+    uc_hook h;
+    int n = 0;
+    uint64_t v = 0x1ff3, z = 0, f = fl, base = 0xfff100;
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_mem_map(uc, 0x1000, 0x2000, UC_PROT_ALL));
+    OK(uc_mem_write(uc, v, code, sizeof(code) - 1));
+    OK(uc_reg_write(uc, UC_X86_REG_R11, &r11));
+    OK(uc_reg_write(uc, UC_X86_REG_RSI, &rsi));
+    OK(uc_reg_write(uc, UC_X86_REG_R8, &base));
+    OK(uc_reg_write(uc, UC_X86_REG_RBX, &z));
+    OK(uc_reg_write(uc, UC_X86_REG_RCX, &z));
+    OK(uc_reg_write(uc, UC_X86_REG_RDX, &z));
+    OK(uc_reg_write(uc, UC_X86_REG_RFLAGS, &f));
+    if (hook) {
+        OK(uc_hook_add(uc, &h, UC_HOOK_CODE, xpg_nohook, &n, 1, 0));
+    }
+    OK(uc_emu_start(uc, v, v + sizeof(code) - 1, 0, 0));
+    OK(uc_reg_read(uc, UC_X86_REG_R8, r8));
+    OK(uc_reg_read(uc, UC_X86_REG_RBX, rbx));
+    OK(uc_reg_read(uc, UC_X86_REG_RCX, rcx));
+    OK(uc_reg_read(uc, UC_X86_REG_RDX, rdx));
+    OK(uc_reg_read(uc, UC_X86_REG_RFLAGS, flags_after));
+    if (hook) {
+        TEST_CHECK(n == 10);
+        TEST_MSG("code hook calls %d, expected 10 (one per instruction)", n);
+    }
+    OK(uc_close(uc));
+}
+
+static void xpg_check(int hook, uint64_t r11, uint64_t rsi, uint64_t fl)
+{
+    uint64_t r8, bl, cl, dl, fa, res = r11 ^ rsi;
+    xpg_run(hook, r11, rsi, fl, &r8, &bl, &cl, &dl, &fa);
+    TEST_CHECK(r8 == 0xfff108 && bl == 0);
+    TEST_MSG("hook %d, r11 %llx ^ rsi %llx, start flags %llx: ADC r8, 8 = %llx (expected FFF108H: CF = 0 after XOR), "
+             "SETC after ADC = %llu (expected 0)", hook, (unsigned long long)r11, (unsigned long long)rsi,
+             (unsigned long long)fl, (unsigned long long)r8, (unsigned long long)bl);
+    /* ADC r8, 8 (FFF100H + 8, no carry): SF = 0, ZF = 0 */
+    TEST_CHECK(cl == 0 && dl == 0);
+    TEST_MSG("hook %d: SETS / SETZ after ADC = %llu / %llu (expected 0 / 0); XOR result %llx", hook, (unsigned long long)cl,
+             (unsigned long long)dl, (unsigned long long)res);
+}
+
+static void xpg_xor_then_crossing_insn(void)
+{
+    /* the sample's operands (P37: #586995) and start flags; then other start flags / results */
+    xpg_check(1, 0x11fd0c6d0ULL, 0x9617201fULL, 0x216);
+    xpg_check(0, 0x11fd0c6d0ULL, 0x9617201fULL, 0x216);
+    xpg_check(1, 0x11fd0c6d0ULL, 0x9617201fULL, 0x8d7);
+    xpg_check(1, 1, 1, 0x216);
+    xpg_check(1, 0x8000000000000000ULL, 0, 0x2d7);
+}
+
+/* XOR's own flags read through SETcc right after the crossing instruction (no ADC in between) */
+static void xpg_xor_flags_survive(void)
+{
+    /* 1FF3: 90 x4 | 1FF7: 4C 33 DE xor r11, rsi | 1FFA: 48 C7 C0 00000000 mov rax, 0 (crosses) | 2001: 0F 92 C3 setc bl |
+       2004: 0F 90 C1 seto cl | 2007: 0F 94 C2 setz dl | 200A: 0F 98 C0 sets al | 200D: 0F 9A C4 setp ah | 2010 */
+    static const char code[] = "\x90\x90\x90\x90\x4c\x33\xde\x48\xc7\xc0\x00\x00\x00\x00\x0f\x92\xc3\x0f\x90\xc1\x0f\x94\xc2"
+                               "\x0f\x98\xc0\x0f\x9a\xc4";
+    static const struct { uint64_t r11, rsi, fl; } t[] = {
+        { 0x11fd0c6d0ULL, 0x9617201fULL, 0x216 }, { 1, 1, 0x8d7 }, { 0x8000000000000000ULL, 0, 0x216 }, { 0xff, 0, 0x2 } };
+    for (size_t i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        for (int hook = 0; hook < 2; hook++) {
+            uc_engine *uc;
+            uc_hook h;
+            int n = 0;
+            uint64_t v = 0x1ff3, z = 0, f = t[i].fl, a, b, c, d, res = t[i].r11 ^ t[i].rsi;
+            uint64_t r11 = t[i].r11, rsi = t[i].rsi;
+            int pf = xpg_even_parity((unsigned)(res & 0xff));
+            OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+            OK(uc_mem_map(uc, 0x1000, 0x2000, UC_PROT_ALL));
+            OK(uc_mem_write(uc, v, code, sizeof(code) - 1));
+            OK(uc_reg_write(uc, UC_X86_REG_R11, &r11));
+            OK(uc_reg_write(uc, UC_X86_REG_RSI, &rsi));
+            OK(uc_reg_write(uc, UC_X86_REG_RBX, &z));
+            OK(uc_reg_write(uc, UC_X86_REG_RCX, &z));
+            OK(uc_reg_write(uc, UC_X86_REG_RDX, &z));
+            OK(uc_reg_write(uc, UC_X86_REG_RFLAGS, &f));
+            if (hook) {
+                OK(uc_hook_add(uc, &h, UC_HOOK_CODE, xpg_nohook, &n, 1, 0));
+            }
+            OK(uc_emu_start(uc, v, v + sizeof(code) - 1, 0, 0));
+            OK(uc_reg_read(uc, UC_X86_REG_RAX, &a));
+            OK(uc_reg_read(uc, UC_X86_REG_RBX, &b));
+            OK(uc_reg_read(uc, UC_X86_REG_RCX, &c));
+            OK(uc_reg_read(uc, UC_X86_REG_RDX, &d));
+            /* CF = OF = 0; ZF = (res == 0); SF = bit 63; PF = even parity of bits 7:0 */
+            TEST_CHECK((b & 0xff) == 0 && (c & 0xff) == 0 && (d & 0xff) == (res == 0) && (a & 0xff) == (res >> 63) &&
+                       ((a >> 8) & 0xff) == (uint64_t)pf);
+            TEST_MSG("hook %d, %llx ^ %llx (start flags %llx): CF %llu OF %llu ZF %llu SF %llu PF %llu, expected 0 0 %d %d %d",
+                     hook, (unsigned long long)t[i].r11, (unsigned long long)t[i].rsi, (unsigned long long)t[i].fl,
+                     (unsigned long long)(b & 0xff), (unsigned long long)(c & 0xff), (unsigned long long)(d & 0xff),
+                     (unsigned long long)(a & 0xff), (unsigned long long)((a >> 8) & 0xff), res == 0, (int)(res >> 63), pf);
+            OK(uc_close(uc));
+        }
+    }
+}
+/* ---- end U2043 (xpg_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -49748,4 +49879,6 @@ TEST_LIST = {
     {"test_x86_hb_model_count", test_x86_hb_model_count},
     {"test_x86_kc_cache_models", test_x86_kc_cache_models},
     {"test_x86_kc_max_profile", test_x86_kc_max_profile},
+    {"test_x86_xpg_xor_then_crossing_insn", xpg_xor_then_crossing_insn},
+    {"test_x86_xpg_xor_flags_survive", xpg_xor_flags_survive},
     {NULL, NULL}};

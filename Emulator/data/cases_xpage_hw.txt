@@ -1,0 +1,19 @@
+# U2043 (P37, the sample's #GP): lazy flags of an instruction whose NEXT instruction crosses into the next page.
+# Hardware cases (the i5-13600K vs Unicorn): emu-alltest --cases Emulator\data\cases_xpage_hw.txt
+# Our own bytes only (never sample bytes): each snippet writes a short routine at CODE + 0FF7H (30000FF7H, inside the
+# harness's executable CODE region on both engines; the rest of CODE is HLT) and calls it. In the routine the instruction
+# after the flag-setting one starts at 30000FFAH and ends at 30001000H, in the next page: the translator restarts it in a
+# new TB (advance_pc, siglongjmp 2), which lost the previous instruction's cc_op before U2043 (CF / OF of XOR came out 1).
+# SDM 334569-093 Vol2D p. 6-41 XOR "Flags Affected": OF and CF cleared, SF / ZF / PF from the result, AF undefined;
+# 253666-093 Vol2A p. 3-10 ADC "Operation": DEST := DEST + SRC + CF; MOV / RET: no flags affected.
+#
+# routine A (30000FF7H): 4C 33 DE xor r11, rsi | 48 C7 C0 00000000 mov rax, 0 (crosses) | 49 81 D0 08000000 adc r8, 8 | C3 ret
+mov rdx, 0x30000ff7; mov rax, 0x0000c0c748de334c; mov qword ptr [rdx], rax; mov rax, 0x000008d081490000; mov qword ptr [rdx+8], rax; mov word ptr [rdx+16], 0xc300; call rdx | r11=0x11fd0c6d0 rsi=0x9617201f r8=0xfff100 rflags=0x216
+mov rdx, 0x30000ff7; mov rax, 0x0000c0c748de334c; mov qword ptr [rdx], rax; mov rax, 0x000008d081490000; mov qword ptr [rdx+8], rax; mov word ptr [rdx+16], 0xc300; call rdx | r11=1 rsi=1 r8=0xfff100 rflags=0x2d7
+# routine B (30000FF7H): 4C 33 DE xor r11, rsi | 48 C7 C0 00000000 mov rax, 0 (crosses) | C3 ret - the final RFLAGS are XOR's
+mov rdx, 0x30000ff7; mov rax, 0x0000c0c748de334c; mov qword ptr [rdx], rax; mov dword ptr [rdx+8], 0x00c30000; call rdx | r11=0x11fd0c6d0 rsi=0x9617201f rflags=0x216
+mov rdx, 0x30000ff7; mov rax, 0x0000c0c748de334c; mov qword ptr [rdx], rax; mov dword ptr [rdx+8], 0x00c30000; call rdx | r11=1 rsi=1 rflags=0x2d7
+mov rdx, 0x30000ff7; mov rax, 0x0000c0c748de334c; mov qword ptr [rdx], rax; mov dword ptr [rdx+8], 0x00c30000; call rdx | r11=0x8000000000000000 rsi=0 rflags=0x217
+mov rdx, 0x30000ff7; mov rax, 0x0000c0c748de334c; mov qword ptr [rdx], rax; mov dword ptr [rdx+8], 0x00c30000; call rdx | r11=0xff rsi=0 rflags=0xad7
+# control: the same routine B at 30000F00H (no page crossing)
+mov rdx, 0x30000f00; mov rax, 0x0000c0c748de334c; mov qword ptr [rdx], rax; mov dword ptr [rdx+8], 0x00c30000; call rdx | r11=0x11fd0c6d0 rsi=0x9617201f rflags=0x216
