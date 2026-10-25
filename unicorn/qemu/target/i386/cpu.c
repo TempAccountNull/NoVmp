@@ -294,7 +294,7 @@ static void encode_cache_cpuid80000006(CPUCacheInfo *l2,
 {
     assert(l2->size % 1024 == 0);
     assert(l2->associativity > 0);
-    assert(l2->lines_per_tag > 0);
+    /* backport 63dc9f52f6 (U2001): no lines_per_tag assertion (AMD has the field, Intel does not) */
     assert(l2->line_size > 0);
     *ecx = ((l2->size / 1024) << 16) |
            (AMD_ENC_ASSOC(l2->associativity) << 12) |
@@ -303,7 +303,6 @@ static void encode_cache_cpuid80000006(CPUCacheInfo *l2,
     if (l3) {
         assert(l3->size % (512 * 1024) == 0);
         assert(l3->associativity > 0);
-        assert(l3->lines_per_tag > 0);
         assert(l3->line_size > 0);
         *edx = ((l3->size / (512 * 1024)) << 18) |
                (AMD_ENC_ASSOC(l3->associativity) << 12) |
@@ -490,7 +489,8 @@ static CPUCacheInfo legacy_l2_cache = {
     .no_invd_sharing = true,
 };
 
-/*FIXME: CPUID leaf 2 descriptor is inconsistent with CPUID leaf 4 */
+/* backport 6699e5dc86 (U2000): leaf 2 descriptors only for the models without leaf 4 (cpuid_min_level < 4); with
+   leaf 4 the descriptor is FFH (the FIXME "CPUID leaf 2 descriptor is inconsistent with CPUID leaf 4" resolved) */
 static CPUCacheInfo legacy_l2_cache_cpuid2 = {
     .type = UNIFIED_CACHE,
     .level = 2,
@@ -500,7 +500,8 @@ static CPUCacheInfo legacy_l2_cache_cpuid2 = {
 };
 
 
-/*FIXME: CPUID leaf 0x80000006 is inconsistent with leaves 2 & 4 */
+/* backport 63dc9f52f6 (U2001): used by the non-Intel models only - an Intel model's 80000006H ECX describes the
+   leaf-4 L2 (the FIXME "CPUID leaf 0x80000006 is inconsistent with leaves 2 & 4" resolved) */
 static CPUCacheInfo legacy_l2_cache_amd = {
     .type = UNIFIED_CACHE,
     .level = 2,
@@ -5064,16 +5065,36 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
             host_cpuid(index, 0, eax, ebx, ecx, edx);
             break;
         }
+        /*
+         * backport fe77a78149 + 6699e5dc86 (U2000, plan 1.K.8): CPUID 0x2 and 0x4 present the same cache model.
+         * Upstream: "0x2 leaf provides a descriptor 0xFF to instruct software to check cache information in
+         * 0x4 leaf instead" - a model with leaf 4 (cpuid_min_level >= 4) reports FFH (SDM 253665-093 Vol1 Table
+         * 21-12 p. 21-19: FFH "CPUID leaf 2 does not report cache descriptor information, use CPUID leaf 4 to
+         * query cache parameters."); a model without leaf 4 keeps its descriptors, or FFH when one of its caches
+         * has no descriptor. Was: descriptors of a 2 MB 8-way L2 (7DH) beside a 4 MB 16-way leaf-4 L2 (the
+         * upstream FIXME). Upstream's "x-consistent-cache" machine property does not exist in Unicorn (always the
+         * new behaviour, as U488).
+         */
         *eax = 1; /* Number of CPUID[EAX=2] calls required */
         *ebx = 0;
-        if (!cpu->enable_l3_cache) {
-            *ecx = 0;
-        } else {
-            *ecx = cpuid2_cache_descriptor(env->cache_info_cpuid2.l3_cache);
+        *ecx = 0;
+        {
+            uint8_t l1d = cpuid2_cache_descriptor(env->cache_info_cpuid2.l1d_cache);
+            uint8_t l1i = cpuid2_cache_descriptor(env->cache_info_cpuid2.l1i_cache);
+            uint8_t l2 = cpuid2_cache_descriptor(env->cache_info_cpuid2.l2_cache);
+            uint8_t l3 = cpuid2_cache_descriptor(env->cache_info_cpuid2.l3_cache);
+            bool unmatched = l1d == CACHE_DESCRIPTOR_UNAVAILABLE || l1i == CACHE_DESCRIPTOR_UNAVAILABLE ||
+                             l2 == CACHE_DESCRIPTOR_UNAVAILABLE || l3 == CACHE_DESCRIPTOR_UNAVAILABLE;
+
+            if (env->cpuid_min_level < 0x4 && !unmatched) {
+                if (cpu->enable_l3_cache) {
+                    *ecx = l3;
+                }
+                *edx = (l1d << 16) | (l1i << 8) | l2;
+            } else {
+                *edx = CACHE_DESCRIPTOR_UNAVAILABLE;
+            }
         }
-        *edx = (cpuid2_cache_descriptor(env->cache_info_cpuid2.l1d_cache) << 16) |
-               (cpuid2_cache_descriptor(env->cache_info_cpuid2.l1i_cache) <<  8) |
-               (cpuid2_cache_descriptor(env->cache_info_cpuid2.l2_cache));
         break;
     case 4:
         /* cache info: needed for Core compatibility */
@@ -5622,6 +5643,19 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
         /* cache info (L2 cache) */
         if (cpu->cache_info_passthrough) {
             host_cpuid(index, 0, eax, ebx, ecx, edx);
+            break;
+        }
+        /*
+         * backport 63dc9f52f6 (U2001, plan 1.K.8): "Per SDM, Intel supports CPUID[0x80000006]. But only L2
+         * information is encoded in ECX ... all other fields are reserved." - for an Intel model ECX describes the
+         * leaf-4 L2 (SDM 253665-093 Vol1 Table 21-95 p. 21-93: ECX[7:0] line size, ECX[15:12] associativity per
+         * Table 21-96, ECX[31:16] size in 1K units; EAX / EBX / EDX reserved). Was: the AMD legacy L2 (512 KB)
+         * beside a 4 MB leaf-4 L2 (the upstream FIXME). Upstream also checks its "x-vendor-cpuid-only-v2" machine
+         * property and Zhaoxin; Unicorn has neither (always the new behaviour, as U488).
+         */
+        if (IS_INTEL_CPU(env)) {
+            *eax = *ebx = 0;
+            encode_cache_cpuid80000006(env->cache_info_cpuid4.l2_cache, NULL, ecx, edx);
             break;
         }
         *eax = (AMD_ENC_ASSOC(L2_DTLB_2M_ASSOC) << 28) | \

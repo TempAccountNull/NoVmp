@@ -48953,6 +48953,127 @@ static void test_x86_hb_model_count(void)
 }
 /* ---- end U1970-U1971 (hb_) ---- */
 
+/*
+ * ---- NoVmp U2000-U2002: plan 1.K.8 (P12) - every built-in Intel model presents ONE cache model in CPUID 2, 4 and
+ * 80000006H (kc_) ----
+ * SDM 253665-093 Vol1 Table 21-12 p. 21-19 (leaf 2 descriptor FFH: "use CPUID leaf 4 to query cache parameters"),
+ * Table 21-14 p. 21-21 (leaf 4), Tables 21-95 / 21-96 p. 21-93 (80000006H ECX: L2 line size [7:0], associativity
+ * [15:12], size in 1K units [31:16]; EAX, EBX, EDX reserved). Upstream QEMU 6699e5dc86 / fe77a78149 (leaf 2) and
+ * 63dc9f52f6 (80000006H). RED before U2000 / U2001: leaf 2 reported a 2 MB 8-way L2 (7DH) and 80000006H a 512 KB L2
+ * beside the 4 MB 16-way L2 of leaf 4 (the Emulator\tools\cpuid_consistency.py view emu:max showed both).
+ */
+static void kc_cpuid(uc_engine *uc, uint32_t leaf, uint32_t sub, uint32_t r[4])
+{
+    static const int regs[4] = {UC_X86_REG_EAX, UC_X86_REG_EBX, UC_X86_REG_ECX, UC_X86_REG_EDX};
+    int i;
+
+    OK(uc_reg_write(uc, UC_X86_REG_EAX, &leaf));
+    OK(uc_reg_write(uc, UC_X86_REG_ECX, &sub));
+    OK(uc_emu_start(uc, code_start, code_start + 2, 0, 0));
+    for (i = 0; i < 4; i++) {
+        r[i] = 0;
+        OK(uc_reg_read(uc, regs[i], &r[i]));
+    }
+}
+
+/* the 80000006H / Table 21-96 associativity code of a way count (0 = no code for it) */
+static uint32_t kc_assoc_code(uint32_t ways)
+{
+    static const uint32_t w[] = {1, 2, 4, 8, 16, 32, 48, 64, 96, 128};
+    static const uint32_t c[] = {1, 2, 4, 6, 8, 0xA, 0xB, 0xC, 0xD, 0xE};
+    size_t i;
+
+    for (i = 0; i < sizeof(w) / sizeof(w[0]); i++) {
+        if (w[i] == ways) {
+            return c[i];
+        }
+    }
+    return 0;
+}
+
+static void test_x86_kc_cache_models(void)
+{
+    int model, intel = 0, checked2 = 0, checked6 = 0;
+
+    for (model = 0; model < UC_CPU_X86_ENDING; model++) {
+        uc_engine *uc;
+        uint32_t r0[4], r2[4], r4[4], rx[4], r6[4], sub, l2_kb = 0, l2_ways = 0, l2_line = 0;
+        int has4 = 0;
+
+        OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+        OK(uc_ctl_set_cpu_model(uc, model));
+        OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
+        OK(uc_mem_write(uc, code_start, "\x0f\xa2", 2));
+        kc_cpuid(uc, 0, 0, r0);
+        if (!(r0[1] == 0x756e6547 && r0[3] == 0x49656e69 && r0[2] == 0x6c65746e)) {   /* not GenuineIntel */
+            OK(uc_close(uc));
+            continue;
+        }
+        intel++;
+        if (r0[0] >= 4) {
+            for (sub = 0; sub < 8; sub++) {
+                kc_cpuid(uc, 4, sub, r4);
+                if (!(r4[0] & 31)) {
+                    break;
+                }
+                has4 = 1;
+                if (((r4[0] >> 5) & 7) == 2 && (r4[0] & 31) == 3) {
+                    l2_ways = (r4[1] >> 22) + 1;
+                    l2_line = (r4[1] & 0xfff) + 1;
+                    l2_kb = l2_ways * (((r4[1] >> 12) & 0x3ff) + 1) * l2_line * (r4[2] + 1) / 1024;
+                }
+            }
+        }
+        if (has4) {
+            kc_cpuid(uc, 2, 0, r2);
+            checked2++;
+            TEST_CHECK(r2[0] == 1 && r2[1] == 0 && r2[2] == 0 && r2[3] == 0xff);
+            TEST_MSG("model %d: CPUID 2 = %08x %08x %08x %08x, expected EAX 1, EBX 0, ECX 0, EDX FFH (leaf 4 present: descriptor FFH)",
+                     model, r2[0], r2[1], r2[2], r2[3]);
+        }
+        kc_cpuid(uc, 0x80000000, 0, rx);
+        if (rx[0] >= 0x80000006 && l2_kb) {
+            kc_cpuid(uc, 0x80000006, 0, r6);
+            checked6++;
+            TEST_CHECK(r6[0] == 0 && r6[1] == 0 && r6[3] == 0 && (r6[2] >> 16) == l2_kb && (r6[2] & 0xff) == l2_line &&
+                       ((r6[2] >> 12) & 0xf) == kc_assoc_code(l2_ways));
+            TEST_MSG("model %d: CPUID 80000006H = %08x %08x %08x %08x; leaf 4 L2 %u KB %u-way %u-byte lines (expected ECX %08x, "
+                     "EAX / EBX / EDX 0)", model, r6[0], r6[1], r6[2], r6[3], l2_kb, l2_ways, l2_line,
+                     (l2_kb << 16) | (kc_assoc_code(l2_ways) << 12) | l2_line);
+        }
+        OK(uc_close(uc));
+    }
+    TEST_CHECK(intel >= 20 && checked2 >= 15 && checked6 >= 15);
+    TEST_MSG("Intel models %d, leaf 2 checked on %d, 80000006H on %d (expected at least 20 / 15 / 15)", intel, checked2, checked6);
+}
+
+/* the MAX model as the K8 tool sees it: leaf 2 FFH and 80000006H = the leaf-4 L2; a CPUID profile still decides (rows as captured) */
+static void test_x86_kc_max_profile(void)
+{
+    uc_engine *uc;
+    uint32_t r[4];
+    static const uc_x86_cpuid p[] = {
+        {0, 0, 0x20, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {2, 0, 0x00feff01, 0, 0, 0x007d2c30},
+        {0x80000000, 0, 0x80000008, 0, 0, 0},
+        {0x80000006, 0, 0, 0, 0x02008040, 0},
+    };
+
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_MAX));
+    OK(uc_ctl_set_x86_cpuid(uc, p, sizeof(p) / sizeof(p[0])));
+    OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_write(uc, code_start, "\x0f\xa2", 2));
+    kc_cpuid(uc, 2, 0, r);
+    TEST_CHECK(r[0] == 0x00feff01 && r[3] == 0x007d2c30);
+    TEST_MSG("profile leaf 2 = %08x .. %08x: the profile row is returned as given (captured data is never changed)", r[0], r[3]);
+    kc_cpuid(uc, 0x80000006, 0, r);
+    TEST_CHECK(r[2] == 0x02008040);
+    TEST_MSG("profile 80000006H ECX = %08x, expected the row 02008040", r[2]);
+    OK(uc_close(uc));
+}
+/* ---- end U2000-U2002 (kc_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -49625,4 +49746,6 @@ TEST_LIST = {
     {"test_x86_hb_EPYC_ROME", test_x86_hb_EPYC_ROME},
     {"test_x86_hb_MAX", test_x86_hb_MAX},
     {"test_x86_hb_model_count", test_x86_hb_model_count},
+    {"test_x86_kc_cache_models", test_x86_kc_cache_models},
+    {"test_x86_kc_max_profile", test_x86_kc_max_profile},
     {NULL, NULL}};
