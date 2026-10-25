@@ -6,6 +6,7 @@
 // symbols. Used to NAME the fields a guest reads (emu-oep --counters) and to place the fields the environment writes.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 namespace emu::win::fields
@@ -396,6 +397,68 @@ namespace emu::win::fields
 		{ 0x118, 0x4, "DependentLoadFlags" },
 		{ 0x11C, 0x1, "SigningLevel" },
 	};
+	// _HEAP (size 2C0H, 58 top-level members)
+	inline constexpr uint32_t heap_size = 0x2C0;
+	inline constexpr field heap[] = {
+		{ 0x0, 0x70, "Segment/Entry" },
+		{ 0x10, 0x4, "SegmentSignature" },
+		{ 0x14, 0x4, "SegmentFlags" },
+		{ 0x18, 0x10, "SegmentListEntry" },
+		{ 0x28, 0x8, "Heap" },
+		{ 0x30, 0x8, "BaseAddress" },
+		{ 0x38, 0x4, "NumberOfPages" },
+		{ 0x40, 0x8, "FirstEntry" },
+		{ 0x48, 0x8, "LastValidEntry" },
+		{ 0x50, 0x4, "NumberOfUnCommittedPages" },
+		{ 0x54, 0x4, "NumberOfUnCommittedRanges" },
+		{ 0x58, 0x2, "SegmentAllocatorBackTraceIndex" },
+		{ 0x5A, 0x2, "Reserved" },
+		{ 0x60, 0x10, "UCRSegmentList" },
+		{ 0x70, 0x4, "Flags" },
+		{ 0x74, 0x4, "ForceFlags" },
+		{ 0x78, 0x4, "CompatibilityFlags" },
+		{ 0x7C, 0x4, "EncodeFlagMask" },
+		{ 0x80, 0x10, "Encoding" },
+		{ 0x90, 0x4, "Interceptor" },
+		{ 0x94, 0x4, "VirtualMemoryThreshold" },
+		{ 0x98, 0x4, "Signature" },
+		{ 0xA0, 0x8, "SegmentReserve" },
+		{ 0xA8, 0x8, "SegmentCommit" },
+		{ 0xB0, 0x8, "DeCommitFreeBlockThreshold" },
+		{ 0xB8, 0x8, "DeCommitTotalFreeThreshold" },
+		{ 0xC0, 0x8, "TotalFreeSize" },
+		{ 0xC8, 0x8, "MaximumAllocationSize" },
+		{ 0xD0, 0x2, "ProcessHeapsListIndex" },
+		{ 0xD2, 0x2, "HeaderValidateLength" },
+		{ 0xD8, 0x8, "HeaderValidateCopy" },
+		{ 0xE0, 0x2, "NextAvailableTagIndex" },
+		{ 0xE2, 0x2, "MaximumTagIndex" },
+		{ 0xE8, 0x8, "TagEntries" },
+		{ 0xF0, 0x10, "UCRList" },
+		{ 0x100, 0x8, "AlignRound" },
+		{ 0x108, 0x8, "AlignMask" },
+		{ 0x110, 0x10, "VirtualAllocdBlocks" },
+		{ 0x120, 0x10, "SegmentList" },
+		{ 0x130, 0x2, "AllocatorBackTraceIndex" },
+		{ 0x134, 0x4, "NonDedicatedListLength" },
+		{ 0x138, 0x8, "BlocksIndex" },
+		{ 0x140, 0x8, "UCRIndex" },
+		{ 0x148, 0x8, "PseudoTagEntries" },
+		{ 0x150, 0x10, "FreeLists" },
+		{ 0x160, 0x8, "LockVariable" },
+		{ 0x168, 0x8, "CommitRoutine" },
+		{ 0x170, 0x8, "StackTraceInitVar" },
+		{ 0x178, 0x20, "CommitLimitData" },
+		{ 0x198, 0x8, "FrontEndHeap" },
+		{ 0x1A0, 0x2, "FrontHeapLockCount" },
+		{ 0x1A2, 0x1, "FrontEndHeapType" },
+		{ 0x1A3, 0x1, "RequestedFrontEndHeapType" },
+		{ 0x1A8, 0x8, "FrontEndHeapUsageData" },
+		{ 0x1B0, 0x2, "FrontEndHeapMaximumIndex" },
+		{ 0x1B2, 0x81, "FrontEndHeapStatusBitmap" },
+		{ 0x238, 0x78, "Counters" },
+		{ 0x2B0, 0x10, "TuningParameters" },
+	};
 
 	// the member holding OFFSET (nullptr when OFFSET is past the table or in padding between members)
 	template <size_t N>
@@ -404,5 +467,29 @@ namespace emu::win::fields
 		for ( size_t i = N; i-- > 0; )
 			if ( t[ i ].offset <= offset ) return offset - t[ i ].offset < t[ i ].size ? &t[ i ] : nullptr;
 		return nullptr;
+	}
+
+	// the offset of the member NAME (exact name, or one of the "/"-joined union names); ~0u when absent - use in static_assert
+	constexpr bool same_name( const char* a, const char* b, size_t n )
+	{
+		for ( size_t i = 0; i < n; i++ )
+			if ( a[ i ] != b[ i ] ) return false;
+		return true;
+	}
+	template <size_t N>
+	constexpr uint32_t offset_of( const field ( &t )[ N ], const char* name )
+	{
+		size_t n = 0;
+		while ( name[ n ] ) n++;
+		for ( size_t i = 0; i < N; i++ )
+			for ( const char* p = t[ i ].name; *p; )
+			{
+				size_t m = 0;
+				while ( p[ m ] && p[ m ] != '/' ) m++;
+				if ( m == n && same_name( p, name, n ) ) return t[ i ].offset;
+				p += m;
+				if ( *p == '/' ) p++;
+			}
+		return ~0u;
 	}
 }

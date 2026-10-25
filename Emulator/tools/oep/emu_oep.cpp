@@ -23,6 +23,7 @@
 #include <emu/win_env.hpp>
 
 #include <cstdio>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -107,6 +108,14 @@ int main( int argc, char** argv )
 	po.image_base = o.image_base;
 	if ( o.max_insns_given ) po.max_insns = o.max_insns;
 	po.image_name = "image";
+	{
+		// U2025: the image's base name for the loader data / process parameters (printable ASCII only, else a placeholder)
+		const std::string fn = std::filesystem::path( o.input_path ).filename().string();
+		bool plain = !fn.empty() && fn.size() <= 64;
+		for ( char ch : fn )
+			if ( uint8_t( ch ) < 0x20 || uint8_t( ch ) > 0x7E || ch == '\\' || ch == '/' || ch == ':' ) plain = false;
+		po.image_file_name = plain ? fn : "image.exe";
+	}
 	po.counters = o.counters;      // U2020
 	po.trace_path = o.trace_file;
 	std::vector<std::string> plog;

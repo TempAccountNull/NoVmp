@@ -123,7 +123,26 @@ namespace emu::win
 		f.allocation_granularity = p.allocation_granularity;
 		f.active_processor_mask = p.active_processor_mask;
 		f.platform_source = p.source;
-		log.push_back( std::string( "environment: " ) + name_of( env ) + " (decision 3.0.8: its own DLL capture, local only, never committed)" );
+		f.manifest = m;
+		// U2024: the further captured files (system DLL images, apisetschema, NLS tables), each size-checked against the manifest
+		{
+			auto files = std::make_shared<std::map<std::string, std::vector<uint8_t>>>();
+			uint64_t total = 0;
+			for ( const auto& [ name, sz ] : m.files )
+			{
+				std::vector<uint8_t> b;
+				if ( !load_capture_file( f.capture_dir, m, name, b, error ) ) return false;
+				total += b.size();
+				if ( total > max_capture_total_bytes )
+				{
+					error = f.capture_dir + ": the further captured files exceed " + std::to_string( max_capture_total_bytes ) + " bytes";
+					return false;
+				}
+				( *files )[ name ] = std::move( b );
+			}
+			( *files )[ "ntdll.dll" ] = nt;   // the system image ntdll.dll (the syscall table's source, size = the manifest)
+			f.files = files;
+		}
 		log.push_back( "  capture: " + f.capture_dir + " (manifest format 1, captured " + m.captured + "; ntdll.dll " + std::to_string( bytes.size() ) +
 					   " bytes = the manifest size; the SHA-256 is checked by the harness)" );
 		log.push_back( "  syscall table from the capture's ntdll stubs (4C 8B D1 B8 imm32): " + std::to_string( f.syscalls.stubs ) + " services of " +
@@ -135,6 +154,11 @@ namespace emu::win
 					   hex( f.min_app_address ) + ", " + hex( f.max_app_address ) + "]" );
 		log.push_back( "  memory facts (" + f.platform_source + "): page " + hex( f.page_size ) + ", allocation granularity " + hex( f.allocation_granularity ) +
 					   ", active processor mask " + hex( f.active_processor_mask ) );
+		std::string names;
+		for ( const auto& [ n, b ] : *f.files ) names += ( names.empty() ? "" : ", " ) + n + " (" + std::to_string( b.size() ) + ")";
+		log.push_back( "  further captured files (U2024, read as data; sizes = the manifest): " + ( names.empty() ? std::string( "none" ) : names ) +
+					   ( m.nls_acp_file.empty() ? std::string() : "; NLS: ACP " + std::to_string( m.nls_acp ) + " " + m.nls_acp_file + ", OEMCP " + std::to_string( m.nls_oemcp ) + " " +
+																		  m.nls_oemcp_file + ", case table " + m.nls_case_file ) );
 		return true;
 	}
 
@@ -398,6 +422,38 @@ namespace emu::win
 			uc_emu_stop( uc );
 		}
 
+		// U2025 (plan 3.M5 part 2): under --HLE the system DLL images are DATA - an instruction fetched from one (a call through an
+		// export address the program found itself, e.g. by walking the loader lists and an export directory) stops loudly, naming
+		// the export (the --HLE APIs are reached through the import stubs; the DLL code runs only under --Sys)
+		void on_sysimage_hle( uc_engine* uc, uint64_t address, uint32_t, void* user )
+		{
+			auto& c = *static_cast<process::hook_ctx*>( user );
+			if ( c.stopped ) return;
+			for ( const auto& m : c.p->modules() )
+			{
+				if ( !m.is_dll || address < m.base || address - m.base >= m.size ) continue;
+				const uint32_t rva = uint32_t( address - m.base );
+				std::string at = m.name + "+" + hex( rva );
+				auto it = m.exports_by_rva.upper_bound( rva );
+				if ( it != m.exports_by_rva.begin() )
+				{
+					--it;
+					at = m.name + "!" + it->second + ( rva != it->first ? "+" + hex( rva - it->first ) : std::string() );
+				}
+				api_record a;
+				a.index = c.r->api_calls.size() + 1;
+				a.stub = address;
+				a.api = at;
+				a.args = { read_reg( uc, UC_X86_REG_RCX ), read_reg( uc, UC_X86_REG_RDX ), read_reg( uc, UC_X86_REG_R8 ), read_reg( uc, UC_X86_REG_R9 ) };
+				a.outcome = "not answered: execution entered the system DLL image (data under --HLE)";
+				c.r->api_calls.push_back( a );
+				c.stop( stop_kind::unimplemented_api, "execution reached " + at + " (" + hex( address ) + ") under --HLE: the system DLL images are mapped as data, their code runs "
+																	   "only under --Sys; no --HLE API is reached this way - stopped with a state dump" );
+				uc_emu_stop( uc );
+				return;
+			}
+		}
+
 		// plan 3.M5 (U2012): an --HLE API stub was reached (emu::hle)
 		void on_hle( uc_engine* uc, uint64_t address, uint32_t, void* user )
 		{
@@ -587,9 +643,6 @@ namespace emu::win
 		// PEB
 		const uint64_t pb = guest_peb_va;
 		if ( !w64( pb + layout::peb_being_debugged, 0, 1, "PEB BeingDebugged (2H)" ) || !w64( pb + layout::peb_image_base_address, base, 8, "PEB ImageBaseAddress (10H)" ) ||
-			 !w64( pb + layout::peb_ldr, 0, 8, "PEB Ldr (18H, not modelled in M5: --HLE keeps no loader lists; the --Sys loader start is the P35 open item)" ) ||
-			 !w64( pb + layout::peb_process_parameters, 0, 8, "PEB ProcessParameters (20H, not modelled in M5)" ) ||
-			 !w64( pb + layout::peb_process_heap, 0, 8, "PEB ProcessHeap (30H, not modelled in M5)" ) ||
 			 !w64( pb + layout::peb_os_major_version, f.os_major, 4, "PEB OSMajorVersion (118H)" ) ||
 			 !w64( pb + layout::peb_os_minor_version, f.os_minor, 4, "PEB OSMinorVersion (11CH)" ) ||
 			 !w64( pb + layout::peb_os_build_number, f.os_build, 2, "PEB OSBuildNumber (120H)" ) ||
@@ -641,6 +694,66 @@ namespace emu::win
 		kernel_ = std::make_unique<nt::kernel>( *e_, kf );
 		hle_ = std::make_unique<hle::module>();
 		start_va_ = map_.entry;
+
+		// plan 3.M5 part 2 (U2025-U2027): the process state a program finds at its entry - the system DLL images as data, the loader
+		// data (PEB Ldr), the process parameters, the process heap - and the PEB members that point at them or describe the process
+		// (offsets: the guest ntdll.pdb _PEB, emu/win_fields.hpp; values: ReactOS 0.4.16 ntoskrnl/mm/ARM3/procsup.c:584-619 MmCreatePeb
+		// for which member the kernel fills from what, licensed OSS reference only)
+		{
+			std::vector<module_image> sys;
+			std::vector<std::string> mlog;
+			if ( !map_system_images( *e_, f, sys, mlog, err ) ) return refuse( "system images: " + err );
+			for ( auto& l : mlog ) log_.push_back( l );
+			const process_identity id = make_identity( f, po.image_file_name );
+			module_image self;
+			self.name = po.image_file_name;
+			self.path = id.image_path;
+			self.base = map_.base;
+			self.size = map_.size;
+			self.entry = map_.entry;
+			self.original_base = img_.image_base;
+			self.img = img_;
+			if ( file.size() >= uint64_t( img_.e_lfanew ) + 12 ) std::memcpy( &self.timestamp, file.data() + img_.e_lfanew + 8, 4 );   // IMAGE_FILE_HEADER TimeDateStamp
+			modules_.clear();
+			modules_.push_back( self );
+			for ( auto& m : sys ) modules_.push_back( std::move( m ) );
+			for ( const auto& m : modules_ )
+				if ( m.is_dll ) env_lines_.push_back( "system image " + m.name + " at " + hex( m.base ) + ", SizeOfImage " + hex( m.size ) + ", entry " + hex( m.entry ) + " (as data)" );
+			std::vector<std::string> plines;
+			if ( !build_process_parameters( *e_, *kernel_, f, id, pstate_, plines, err ) || !build_process_heap( *e_, *kernel_, pstate_, plines, err ) ||
+				 !build_loader_data( *e_, *kernel_, modules_, pstate_, plines, err ) )
+				return refuse( err );
+			for ( auto& l : plines ) env_lines_.push_back( l );
+			constexpr uint64_t peb_size = fields::peb_size;   // 7C8H: ProcessHeaps = PEB + sizeof(PEB) (MmCreatePeb, procsup.c:618-619)
+			const uint64_t heaps = pb + peb_size, max_heaps = ( page_size - peb_size ) / 8;
+			// CriticalSectionTimeout: the NT value 720 hours (ReactOS mminit.c:388 comment), negative = relative, 100 ns units
+			const uint64_t cs_timeout = uint64_t( -int64_t( 720ull * 60 * 60 * 10000000ull ) );
+			const uint32_t session = 1;   // the interactive session (session 0 hosts services); chosen
+			if ( !w64( pb + 0x018, pstate_.ldr, 8, "PEB Ldr (18H) = the loader data" ) ||
+				 !w64( pb + 0x020, pstate_.parameters, 8, "PEB ProcessParameters (20H)" ) || !w64( pb + 0x030, pstate_.heap, 8, "PEB ProcessHeap (30H)" ) ||
+				 !w64( pb + 0x0B8, f.processors, 4, "PEB NumberOfProcessors (B8H)" ) ||
+				 !w64( pb + 0x0BC, 0, 4, "PEB NtGlobalFlag (BCH) = 0: no global flags, no debugger (MmCreatePeb copies the system's NtGlobalFlag)" ) ||
+				 !w64( pb + 0x0C0, cs_timeout, 8, "PEB CriticalSectionTimeout (C0H)" ) || !w64( pb + 0x0C8, 0x100000, 8, "PEB HeapSegmentReserve (C8H, mminit.c:367)" ) ||
+				 !w64( pb + 0x0D0, 0x2000, 8, "PEB HeapSegmentCommit (D0H, mminit.c:368)" ) ||
+				 !w64( pb + 0x0D8, 0x10000, 8, "PEB HeapDeCommitTotalFreeThreshold (D8H, mminit.c:369)" ) ||
+				 !w64( pb + 0x0E0, 0x1000, 8, "PEB HeapDeCommitFreeBlockThreshold (E0H, mminit.c:370)" ) ||
+				 !w64( pb + 0x0E8, 1, 4, "PEB NumberOfHeaps (E8H)" ) || !w64( pb + 0x0EC, max_heaps, 4, "PEB MaximumNumberOfHeaps (ECH)" ) ||
+				 !w64( pb + 0x0F0, heaps, 8, "PEB ProcessHeaps (F0H) = PEB + 7C8H" ) || !w64( heaps, pstate_.heap, 8, "PEB ProcessHeaps[0] = the process heap" ) ||
+				 !w64( pb + 0x128, img_.subsystem, 4, "PEB ImageSubsystem (128H)" ) || !w64( pb + 0x12C, img_.subsystem_major, 4, "PEB ImageSubsystemMajorVersion (12CH)" ) ||
+				 !w64( pb + 0x130, img_.subsystem_minor, 4, "PEB ImageSubsystemMinorVersion (130H)" ) ||
+				 !w64( pb + 0x138, f.active_processor_mask, 8, "PEB ActiveProcessAffinityMask (138H)" ) || !w64( pb + 0x2C0, session, 4, "PEB SessionId (2C0H, chosen)" ) )
+				return false;
+			static_assert( fields::offset_of( fields::peb, "NumberOfProcessors" ) == 0xB8 && fields::offset_of( fields::peb, "NtGlobalFlag" ) == 0xBC &&
+							   fields::offset_of( fields::peb, "CriticalSectionTimeout" ) == 0xC0 && fields::offset_of( fields::peb, "HeapSegmentReserve" ) == 0xC8 &&
+							   fields::offset_of( fields::peb, "HeapSegmentCommit" ) == 0xD0 && fields::offset_of( fields::peb, "HeapDeCommitTotalFreeThreshold" ) == 0xD8 &&
+							   fields::offset_of( fields::peb, "HeapDeCommitFreeBlockThreshold" ) == 0xE0 && fields::offset_of( fields::peb, "NumberOfHeaps" ) == 0xE8 &&
+							   fields::offset_of( fields::peb, "MaximumNumberOfHeaps" ) == 0xEC && fields::offset_of( fields::peb, "ProcessHeaps" ) == 0xF0 &&
+							   fields::offset_of( fields::peb, "ImageSubsystem" ) == 0x128 && fields::offset_of( fields::peb, "ImageSubsystemMajorVersion" ) == 0x12C &&
+							   fields::offset_of( fields::peb, "ImageSubsystemMinorVersion" ) == 0x130 && fields::offset_of( fields::peb, "ActiveProcessAffinityMask" ) == 0x138 &&
+							   fields::offset_of( fields::peb, "SessionId" ) == 0x2C0 && fields::offset_of( fields::peb, "Ldr" ) == 0x18 &&
+							   fields::offset_of( fields::peb, "ProcessParameters" ) == 0x20 && fields::offset_of( fields::peb, "ProcessHeap" ) == 0x30,
+						   "the PEB members written above (guest ntdll.pdb _PEB)" );
+		}
 		if ( !imports.empty() )   // --HLE (U2009): the imports bound to the API stubs
 		{
 			std::vector<std::string> blog;
@@ -721,13 +834,26 @@ namespace emu::win
 			log_.push_back( "FAILED: " + error );
 			return false;
 		}
+		if ( po_.boundary == env_boundary::hle )   // U2025: the system DLL images are data under --HLE
+			for ( const auto& m : modules_ )
+				if ( m.is_dll && uc_hook_add( uc, &h, UC_HOOK_CODE, (void*)on_sysimage_hle, hc_.get(), m.base, m.base + m.size - 1 ) != UC_ERR_OK )
+				{
+					error = "uc_hook_add (system image) failed";
+					log_.push_back( "FAILED: " + error );
+					return false;
+				}
 		// U2020: instrumentation - counters (CPUID / RDTSC / RDTSCP / RDPID, environment reads, the tail) and the trace file
 		r.probes.enabled = po_.counters;
 		hc_->counting = po_.counters;
 		hc_->tail_next = 0;
 		if ( po_.counters )
 		{
-			const std::pair<uint64_t, uint64_t> ranges[] = { { guest_peb_va, page_size }, { guest_teb_va, guest_teb_size }, { guest_kuser_va, page_size } };
+			std::vector<std::pair<uint64_t, uint64_t>> ranges = { { guest_peb_va, page_size }, { guest_teb_va, guest_teb_size }, { guest_kuser_va, page_size } };
+			if ( pstate_.ldr ) ranges.push_back( { pstate_.ldr, fields::peb_ldr_data_size } );   // U2025-U2027
+			for ( auto en : pstate_.entries ) ranges.push_back( { en, fields::ldr_data_table_entry_size } );
+			if ( pstate_.parameters ) ranges.push_back( { pstate_.parameters, fields::process_parameters_size } );
+			if ( pstate_.environment ) ranges.push_back( { pstate_.environment, pstate_.environment_size } );
+			if ( pstate_.heap ) ranges.push_back( { pstate_.heap, fields::heap_size } );
 			for ( auto [ lo, n ] : ranges )
 				if ( uc_hook_add( uc, &h, UC_HOOK_MEM_READ, (void*)on_env_read, hc_.get(), lo, lo + n - 1 ) != UC_ERR_OK )
 				{
@@ -813,8 +939,25 @@ namespace emu::win
 			field = f ? std::string( f->name ) + ( off != f->offset ? "+" + hex( off - f->offset ) : std::string() ) : "(+" + hex( off ) + ", no member)";
 			return true;
 		};
-		return pick( "PEB", guest_peb_va, fields::peb, fields::peb_size ) || pick( "PEB", guest_peb_va, fields::peb, page_size ) ||
-			   pick( "TEB", guest_teb_va, fields::teb, guest_teb_size ) || pick( "KUSER", guest_kuser_va, fields::kuser, page_size );
+		if ( pick( "PEB", guest_peb_va, fields::peb, fields::peb_size ) || pick( "PEB", guest_peb_va, fields::peb, page_size ) ||
+			 pick( "TEB", guest_teb_va, fields::teb, guest_teb_size ) || pick( "KUSER", guest_kuser_va, fields::kuser, page_size ) )
+			return true;
+		// U2025-U2027: the process state (loader data, entries, parameters, environment block, heap header)
+		if ( pstate_.ldr && pick( "PEB_LDR_DATA", pstate_.ldr, fields::peb_ldr_data, fields::peb_ldr_data_size ) ) return true;
+		for ( size_t i = 0; i < pstate_.entries.size() && i < modules_.size(); i++ )
+			if ( pick( "LDR_ENTRY", pstate_.entries[ i ], fields::ldr_data_table_entry, fields::ldr_data_table_entry_size ) )
+			{
+				region = "LDR_ENTRY(" + modules_[ i ].name + ")";
+				return true;
+			}
+		if ( pstate_.parameters && pick( "PARAMS", pstate_.parameters, fields::process_parameters, fields::process_parameters_size ) ) return true;
+		if ( pstate_.environment && address >= pstate_.environment && address - pstate_.environment < pstate_.environment_size )
+		{
+			region = "ENVIRONMENT";
+			field = "+" + hex( ( address - pstate_.environment ) & ~0x3Full );   // per 64-byte line of the block
+			return true;
+		}
+		return pstate_.heap && pick( "HEAP", pstate_.heap, fields::heap, fields::heap_size );
 	}
 
 	std::vector<std::string> process::probe_summary( const run_result& r ) const

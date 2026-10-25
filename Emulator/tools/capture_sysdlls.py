@@ -12,7 +12,11 @@ folder "capture" (as bare_host_cpuid.py). Nothing here goes into Git; no value o
 (versions, sizes, hashes of a system file, a path, the environment evidence line).
 
 The emulator never reads the running machine's System32: it reads this capture only (emu::win::locate_capture /
-load_manifest / parse_syscall_table). DLLs beyond ntdll come with milestone M5 (--dll NAME, repeatable).
+load_manifest / parse_syscall_table). U2024 (plan 3.M5 part 2): further System32 files of the same environment with --dll NAME
+(repeatable; e.g. kernel32.dll, KernelBase.dll, apisetschema.dll) and --nls (the ANSI / OEM code-page files the registry
+names and l_intl.nls, the NLS tables the kernel maps into a process); each is copied as bytes and listed in the manifest as
+"file_<lower-case name> <size> <sha256>" (+ "nls_acp / nls_oemcp <code page> <file>", "nls_case <file>"). An existing capture
+with the same ntdll.dll is extended (the files already captured are kept and re-checked); --check compares every file.
 
 The environment (U1990, user decision 2026-10-25): decided ONLY by the project's evidence-based environment detection of
 U1893 - emu-alltest's "tag environment:" line (at_cases.hpp tag_environment(): the native CPUID equal to a captured profile
@@ -24,7 +28,7 @@ emu-alltest failure = refused, nothing written. Not the processor count (the ver
 firmware view or another machine with 8 / 20 logical processors would have been labelled wrongly).
 
 usage:
-  python -I capture_sysdlls.py [--env vmware_guest|bare_host] [--root DIR] [--alltest EXE] [--dll NAME ...] [--replace]
+  python -I capture_sysdlls.py [--env vmware_guest|bare_host] [--root DIR] [--alltest EXE] [--dll NAME ...] [--nls] [--replace]
           --env (optional) must equal the detected environment; the label written is always the detected one
   python -I capture_sysdlls.py [--env ...] --check        the capture of the detected environment equals the live files (exit 0 / 1)
   python -I capture_sysdlls.py --detect                   print the detected environment and the evidence (exit 0 / 1 refused)
@@ -173,44 +177,105 @@ def arg(argv, name, default=''):
     return argv[i + 1]
 
 
+def nls_files():
+    """U2024 (plan 3.M5 part 2): the three NLS tables the kernel maps into every process (PEB AnsiCodePageData /
+    OemCodePageData / UnicodeCaseTableData): the ANSI and OEM code-page files the registry names (Control\\Nls\\CodePage: the
+    values ACP / OEMCP give the code page, the value of that number the file name) and the case table l_intl.nls - the
+    file set of the boot loader as ReactOS 0.4.16 boot\\freeldr\\freeldr\\ntldr\\wlregistry.c:283-393 reads it (licensed OSS,
+    reference only). Returns [(role, code page or '', file name)]."""
+    key = r'SYSTEM\CurrentControlSet\Control\Nls\CodePage'
+    out = []
+    for role, val in (('acp', 'ACP'), ('oemcp', 'OEMCP')):
+        cp = str(reg(key, val)).strip()
+        if not cp.isdigit() or len(cp) > 5:
+            fail('Nls\\CodePage %s is not a code-page number' % val)
+        name = str(reg(key, cp)).strip()
+        if not name or '\\' in name or '/' in name or not name.isascii() or len(name) > 64:
+            fail('Nls\\CodePage %s names no plain file' % cp)
+        out.append((role, cp, name))
+    out.append(('case', '', 'l_intl.nls'))
+    return out
+
+
+def plain_name(n):
+    return bool(n) and n.isascii() and len(n) <= 64 and not any(c in n for c in '\\/:*?"<>|') and n not in ('.', '..')
+
+
 def capture(argv, detector):
     asked = arg(argv, '--env')
     if asked and asked not in ENVS:
         fail('--env must be one of %s' % ' / '.join(ENVS))
-    dlls = ['ntdll.dll'] + [argv[i + 1] for i, a in enumerate(argv) if a == '--dll' and i + 1 < len(argv)]
-    if dlls[1:]:
-        fail('--dll: DLLs beyond ntdll.dll are milestone M5')
+    extra = [argv[i + 1] for i, a in enumerate(argv) if a == '--dll' and i + 1 < len(argv)]
+    for n in extra:   # U2024 (plan 3.M5 part 2): DLLs beyond ntdll.dll, by plain file name (System32)
+        if not plain_name(n) or n.lower() == 'ntdll.dll':
+            fail('--dll %s: a plain System32 file name other than ntdll.dll' % n)
     env, evidence = environment(asked, detector)   # before anything is read or written
     say('environment %s (emu-alltest: tag environment: %s)' % (env, evidence))
     dst = os.path.join(capture_root(arg(argv, '--root')), 'sysdlls', env)
     major, minor, build, ptype, root = facts()
     data = open(live_path('ntdll.dll'), 'rb').read()
     man_path = os.path.join(dst, 'manifest.txt')
+    old_kv = {}
+    if os.path.isfile(man_path):
+        for line in open(man_path, encoding='ascii'):
+            line = line.rstrip('\r\n')
+            if line and not line.startswith('#') and ' ' in line:
+                k, v = line.split(' ', 1)
+                old_kv[k] = v
     if '--check' in argv:
         if not os.path.isfile(man_path):
             fail('no capture at %s' % dst)
         have = open(os.path.join(dst, 'ntdll.dll'), 'rb').read()
         same = sha(have) == sha(data)
         say('capture %s: ntdll.dll %s the live file (%d / %d bytes)' % (dst, 'EQUALS' if same else 'DIFFERS FROM', len(have), len(data)))
+        for k, v in sorted(old_kv.items()):   # U2024: every further captured file
+            if k.startswith('file_'):
+                name = k[5:]
+                live = open(live_path(name), 'rb').read()
+                cap = open(os.path.join(dst, name), 'rb').read()
+                ok = sha(live) == sha(cap) == v.split(' ')[1]
+                say('capture %s: %s %s the live file' % (dst, name, 'EQUALS' if ok else 'DIFFERS FROM'))
+                same = same and ok
         return 0 if same else 1
+    files = {}   # U2024: lower-case name -> bytes (the files beyond ntdll.dll: --dll, --nls, and those already captured)
+    nls = []
+    if '--nls' in argv:
+        nls = nls_files()
+    wanted = [n.lower() for n in extra] + [n.lower() for _, _, n in nls]
     if os.path.isfile(man_path) and '--replace' not in argv:
         old = open(os.path.join(dst, 'ntdll.dll'), 'rb').read() if os.path.isfile(os.path.join(dst, 'ntdll.dll')) else b''
-        if sha(old) == sha(data):
-            say('capture %s already holds this ntdll.dll (%d bytes): nothing to do' % (dst, len(data)))
+        if sha(old) != sha(data):
+            fail('a different capture exists at %s (pass --replace after reviewing why the environment changed)' % dst)
+        for k, v in old_kv.items():
+            if k.startswith('file_'):
+                files[k[5:]] = None   # kept (checked below if asked again)
+        if all(n in files for n in wanted):
+            for n in wanted:
+                if sha(open(live_path(n), 'rb').read()) != old_kv['file_' + n].split(' ')[1]:
+                    fail('%s differs from the captured copy (pass --replace after reviewing why)' % n)
+            say('capture %s already holds this ntdll.dll (%d bytes)%s: nothing to do' % (dst, len(data), ' and the files asked for' if wanted else ''))
             return 0
-        fail('a different capture exists at %s (pass --replace after reviewing why the environment changed)' % dst)
     os.makedirs(dst, exist_ok=True)
     with open(os.path.join(dst, 'ntdll.dll'), 'wb') as f:
         f.write(data)
     if sha(open(os.path.join(dst, 'ntdll.dll'), 'rb').read()) != sha(data):
         fail('the copy does not hash like the source')
+    for n in wanted:
+        b = open(live_path(n), 'rb').read()
+        if not b or len(b) > 64 << 20:
+            fail('%s: size %d outside 1..64 MiB' % (n, len(b)))
+        with open(os.path.join(dst, n), 'wb') as f:
+            f.write(b)
+        if sha(open(os.path.join(dst, n), 'rb').read()) != sha(b):
+            fail('the copy of %s does not hash like the source' % n)
+        files[n] = b
     lines = [
         '# system-DLL capture of one emulated environment (Emulator/tools/capture_sysdlls.py, plan 3.M4, decision 3.0.8):',
         '# LOCAL ONLY, never committed; read by the Emulator lib (emu::win::load_manifest) and the harness (win_env_t1.py)',
         '# environment evidence (U1990; emu-alltest "tag environment:", U1893): ' + evidence,
         'format 1',
         'environment ' + env,
-        'captured ' + datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
+        'captured ' + (old_kv.get('captured') if old_kv.get('captured') and '--replace' not in argv else datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')),
         'os_major %d' % major,
         'os_minor %d' % minor,
         'os_build %d' % build,
@@ -219,9 +284,26 @@ def capture(argv, detector):
         'ntdll_size %d' % len(data),
         'ntdll_sha256 ' + sha(data),
     ]
+    # U2024 (plan 3.M5 part 2): the further files ("file_<name> <size> <sha256>", lower-case names) and the NLS roles
+    if files:
+        lines.insert(0, '# U2024: file_<name> <size> <sha256> = a further System32 file of the same environment (--dll / --nls); nls_* = '
+                        'the NLS tables the kernel maps (code page, file)')
+        lines.append('files_captured ' + datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S'))
+    for n in sorted(files):
+        b = files[n] if files[n] is not None else open(os.path.join(dst, n), 'rb').read()
+        if files[n] is None and 'file_' + n in old_kv and old_kv['file_' + n].split(' ')[1] != sha(b):
+            fail('the captured %s no longer hashes like its manifest line' % n)
+        lines.append('file_%s %d %s' % (n, len(b), sha(b)))
+    for role, cp, n in nls:
+        lines.append('nls_%s %s%s' % (role, (cp + ' ') if cp else '', n.lower()))
+    for k in ('nls_acp', 'nls_oemcp', 'nls_case'):
+        if not nls and k in old_kv:
+            lines.append('%s %s' % (k, old_kv[k]))
     with open(man_path, 'w', encoding='ascii', newline='\n') as f:
         f.write('\n'.join(lines) + '\n')
     say('captured %s: ntdll.dll %d bytes, manifest %s (OS version %d.%d build %d, product type %d)' % (dst, len(data), man_path, major, minor, build, ptype))
+    for n in sorted(files):
+        say('  + %s' % n)
     return 0
 
 

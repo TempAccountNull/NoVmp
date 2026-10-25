@@ -93,6 +93,7 @@
     <ClCompile Include="src\snippet.cpp" />
     <ClCompile Include="src\sysdll.cpp" />
     <ClCompile Include="src\win_env.cpp" />
+    <ClCompile Include="src\win_process.cpp" />
     <ClInclude Include="include\emu\assemble.hpp" />
     <ClInclude Include="include\emu\deps.hpp" />
     <ClInclude Include="include\emu\engine.hpp" />
@@ -110,6 +111,7 @@
     <ClInclude Include="include\emu\sysdll.hpp" />
     <ClInclude Include="include\emu\win_env.hpp" />
     <ClInclude Include="include\emu\win_fields.hpp" />
+    <ClInclude Include="include\emu\win_process.hpp" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\msvc\unicorn.vcxproj"><Project>{5F160114-1B96-585D-9629-47B21D8F1CC0}</Project></ProjectReference>

@@ -47,7 +47,18 @@ namespace emu::win
 		std::string system_root;          // e.g. C:\Windows (the KUSER NtSystemRoot string)
 		uint64_t ntdll_size = 0;
 		std::string ntdll_sha256;         // checked by the harness (win_env_t1.py); the lib checks the size
+		// U2024 (plan 3.M5 part 2): the further files of the capture (capture_sysdlls.py --dll / --nls): "file_<name> <size>
+		// <sha256>" (lower-case name -> size, SHA-256 text) and the NLS roles "nls_acp / nls_oemcp <code page> <file>",
+		// "nls_case <file>" (empty / 0 when the capture has none)
+		std::map<std::string, std::pair<uint64_t, std::string>> files;
+		uint32_t nls_acp = 0, nls_oemcp = 0;
+		std::string nls_acp_file, nls_oemcp_file, nls_case_file;
 	};
+	inline constexpr uint64_t max_capture_file_bytes = 64ull << 20;   // one further captured file
+	inline constexpr uint64_t max_capture_total_bytes = 256ull << 20;  // all of them
+
+	// U2024: the captured file NAME (lower case) of the manifest, read as data; its size must equal the manifest's
+	bool load_capture_file( const std::string& dir, const capture_manifest& m, const std::string& name, std::vector<uint8_t>& out, std::string& error );
 
 	// the capture folder of ENV: EXPLICIT when given, else the first ancestor folder of DATA_DIR that holds
 	// capture\sysdlls\<env>\manifest.txt

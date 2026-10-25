@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <tuple>
 
 namespace emu::win
 {
@@ -165,6 +166,72 @@ namespace emu::win
 		m.os_minor = uint32_t( b );
 		m.os_build = uint32_t( c );
 		m.product_type = uint32_t( pt );
+		// U2024: the further files and the NLS roles (optional lines; a capture made before M5 part 2 has none)
+		auto plain = []( const std::string& n ) {
+			if ( n.empty() || n.size() > 64 ) return false;
+			for ( char ch : n )
+				if ( !( ( ch >= 'a' && ch <= 'z' ) || ( ch >= '0' && ch <= '9' ) || ch == '_' || ch == '.' || ch == '-' ) ) return false;
+			return n != "." && n != "..";
+		};
+		for ( const auto& [ k, v ] : kv )
+		{
+			if ( k.rfind( "file_", 0 ) != 0 ) continue;
+			const std::string name = k.substr( 5 );
+			const size_t sp = v.find( ' ' );
+			uint64_t size = 0;
+			if ( !plain( name ) || sp == std::string::npos || !dec_u64( v.substr( 0, sp ), size ) || !size || size > max_capture_file_bytes || v.size() - sp - 1 != 64 )
+			{
+				error = path + ": malformed line \"" + k + "\" (want file_<lower-case name> <size 1.." + std::to_string( max_capture_file_bytes ) + "> <sha256>)";
+				return false;
+			}
+			m.files[ name ] = { size, v.substr( sp + 1 ) };
+		}
+		for ( auto [ key, cp, file ] : { std::tuple<const char*, uint32_t*, std::string*>{ "nls_acp", &m.nls_acp, &m.nls_acp_file }, { "nls_oemcp", &m.nls_oemcp, &m.nls_oemcp_file },
+										 { "nls_case", nullptr, &m.nls_case_file } } )
+		{
+			const auto it = kv.find( key );
+			if ( it == kv.end() ) continue;
+			std::string v = it->second;
+			if ( cp )
+			{
+				const size_t sp = v.find( ' ' );
+				uint64_t n = 0;
+				if ( sp == std::string::npos || !dec_u64( v.substr( 0, sp ), n ) || n > 0xFFFF )
+				{
+					error = path + ": malformed line \"" + key + "\" (want <code page> <file>)";
+					return false;
+				}
+				*cp = uint32_t( n );
+				v = v.substr( sp + 1 );
+			}
+			if ( !m.files.count( v ) )
+			{
+				error = path + ": \"" + key + "\" names " + v + ", which has no file_ line";
+				return false;
+			}
+			*file = v;
+		}
+		return true;
+	}
+
+	bool load_capture_file( const std::string& dir, const capture_manifest& m, const std::string& name, std::vector<uint8_t>& out, std::string& error )
+	{
+		out.clear();
+		const auto it = m.files.find( name );
+		if ( it == m.files.end() )
+		{
+			error = "the capture " + dir + " has no file " + name + " (capture_sysdlls.py --dll / --nls, U2024)";
+			return false;
+		}
+		const std::string p = ( std::filesystem::path( dir ) / name ).string();
+		std::string bytes;
+		if ( !read_input_file( p, max_capture_file_bytes, bytes, error ) ) return false;
+		if ( bytes.size() != it->second.first )
+		{
+			error = p + " is " + std::to_string( bytes.size() ) + " bytes, the capture manifest says " + std::to_string( it->second.first ) + " - recapture";
+			return false;
+		}
+		out.assign( bytes.begin(), bytes.end() );
 		return true;
 	}
 

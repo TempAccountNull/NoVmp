@@ -1858,7 +1858,8 @@ namespace
 		r = w5_call( *p, "NtFreeVirtualMemory", { cp, S, S + 8, N::mem::release } );
 		CHECK( w5_ok( r ) && !p->eng().accessible( base, 1, UC_PROT_READ ), "release of the first allocation" );
 		for ( auto& l : p->kern().describe() ) std::cout << "  " << l << "\n";
-		CHECK( p->kern().allocations().size() == 1, "one allocation left (the MEM_TOP_DOWN one)" );
+		// U2025-U2027: + the environment's three (process parameters, process heap, loader data)
+		CHECK( p->kern().allocations().size() == 1 + 3, "one allocation left (the MEM_TOP_DOWN one) beside the environment's three" );
 		CHECK( p->eng().check_regions( err ), "engine region table = Unicorn's: " + err );
 	}
 
@@ -2302,6 +2303,117 @@ namespace
 		}
 	}
 
+	// U2025-U2027 (plan 3.M5 part 2): the process state - system DLL images as data, PEB Ldr lists, process parameters, the process
+	// heap - with synthetic system DLLs (built here: exports + a relocation block so they map at the fixed slots)
+	std::vector<uint8_t> pb_dll( const std::vector<std::pair<std::string, std::vector<uint8_t>>>& funcs )
+	{
+		auto f = w4_ntdll_with( funcs );
+		emu::pe::image im;
+		std::string err;
+		if ( !emu::pe::parse( f, im, err ) ) return {};
+		// rebuild with a .reloc section (one ABSOLUTE entry: no fixup) so the image may be mapped away from its ImageBase
+		w4_pe p;
+		p.image_base = 0x180000000ull;
+		p.file_characteristics = 0x2022;
+		std::vector<uint8_t> text( f.begin() + im.sections[ 0 ].raw_offset, f.begin() + im.sections[ 0 ].raw_offset + im.sections[ 0 ].raw_size );
+		std::vector<uint8_t> ed( f.begin() + im.sections[ 1 ].raw_offset, f.begin() + im.sections[ 1 ].raw_offset + im.sections[ 1 ].raw_size );
+		const std::vector<uint8_t> reloc = { 0x00, 0x10, 0x00, 0x00, 0x0C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };   // page 1000H, size CH, one ABSOLUTE
+		p.sections = { { ".text", 0x1000, text, w4_scn_text }, { ".rdata", 0x2000, ed, w4_scn_rdata }, { ".reloc", 0x3000, reloc, w4_scn_reloc } };
+		p.dirs[ 0 ] = { im.dirs[ 0 ].rva, im.dirs[ 0 ].size };
+		p.dirs[ 5 ] = { 0x3000, 0xC };
+		p.entry_rva = 0;
+		return w4_build( p );
+	}
+
+	void t_win_env_process_state()
+	{
+		// the image walks PEB->Ldr->InLoadOrderModuleList: entry 1 = the image, entry 2 = ntdll.dll (DllBase = the ntdll slot);
+		// then it calls the export RtlNothing of the synthetic ntdll through its address (found in the export directory by the test)
+		const char* code =
+			"mov rax, qword ptr gs:[0x60]; mov rax, qword ptr [rax+0x18]; mov rbx, qword ptr [rax+0x10]; mov rcx, qword ptr [rbx+0x30];"
+			"mov rdx, 0x140000000; cmp rcx, rdx; jne bad; mov rbx, qword ptr [rbx]; mov rcx, qword ptr [rbx+0x30]; mov rdx, 0x7FFB00000000; cmp rcx, rdx; jne bad;"
+			"mov rax, 0x7FFB00001020; sub rsp, 0x28; call rax; add rsp, 0x28; mov edx, 0x2A; jmp done; bad: mov edx, 0x99; done: mov eax, 0x2C; mov r10, -1; syscall; ud2";
+		std::string err;
+		const auto file = w5_build( { code }, err );
+		CHECK( !file.empty(), "image: " + err );
+		auto facts = w5_facts();
+		auto files = std::make_shared<std::map<std::string, std::vector<uint8_t>>>();
+		( *files )[ "ntdll.dll" ] = pb_dll( { { "NtClose", w4_stub( 0x0F ) }, { "RtlNothing", { 0xC3 } } } );   // RtlNothing at RVA 1020H
+		( *files )[ "kernel32.dll" ] = pb_dll( { { "Sleep", { 0xC3 } } } );
+		facts.files = files;
+		facts.system_root = "C:\\Windows";
+		facts.processors = 8;
+		for ( auto b : { emu::env_boundary::sys, emu::env_boundary::hle } )
+		{
+			const std::string m = b == emu::env_boundary::sys ? "--Sys: " : "--HLE: ";
+			emu::engine_config ec;
+			ec.profile = emu::cpu_profile_choice::guest;
+			emu::win::process_options po;
+			po.boundary = b;
+			po.max_insns = 100000;
+			po.image_name = "pb";
+			po.image_file_name = "probe_image.exe";
+			std::vector<std::string> log;
+			std::string e2;
+			auto p = emu::win::process::create( ec, facts, po, file, log, e2 );
+			CHECK( p != nullptr, m + "process: " + e2 );
+			if ( !p ) continue;
+			const auto& mods = p->modules();
+			CHECK( mods.size() == 3 && mods[ 0 ].name == "probe_image.exe" && mods[ 1 ].name == "ntdll.dll" && mods[ 1 ].base == 0x7FFB00000000ull && mods[ 2 ].name == "kernel32.dll" &&
+					   mods[ 2 ].base == 0x7FFB10000000ull,
+				   m + "modules: the image, ntdll.dll and kernel32.dll at their slots (kernelbase.dll not in the synthetic capture)" );
+			const auto& st = p->state();
+			const uint64_t peb = p->peb();
+			CHECK( st.ldr && st.parameters && st.heap && w4_read( *p, peb + 0x18, 8 ) == st.ldr && w4_read( *p, peb + 0x20, 8 ) == st.parameters && w4_read( *p, peb + 0x30, 8 ) == st.heap,
+				   m + "PEB Ldr / ProcessParameters / ProcessHeap" );
+			CHECK( w4_read( *p, peb + 0xBC, 4 ) == 0 && w4_read( *p, peb + 2, 1 ) == 0 && w4_read( *p, st.heap + 0x70, 4 ) == 2 && w4_read( *p, st.heap + 0x74, 4 ) == 0,
+				   m + "non-debugged values: NtGlobalFlag 0, BeingDebugged 0, heap Flags HEAP_GROWABLE, ForceFlags 0" );
+			CHECK( w4_read( *p, peb + 0xE8, 4 ) == 1 && w4_read( *p, w4_read( *p, peb + 0xF0, 8 ), 8 ) == st.heap && w4_read( *p, peb + 0xB8, 4 ) == 8, m + "ProcessHeaps[0], NumberOfProcessors" );
+			// the three lists: walk forward and back
+			auto walk = [ & ]( uint64_t head, uint32_t link_off, bool back ) {
+				std::vector<uint64_t> bases;
+				uint64_t x = w4_read( *p, head + ( back ? 8 : 0 ), 8 );
+				for ( int i = 0; i < 8 && x != head; i++ )
+				{
+					bases.push_back( w4_read( *p, x - link_off + 0x30, 8 ) );
+					x = w4_read( *p, x + ( back ? 8 : 0 ), 8 );
+				}
+				return bases;
+			};
+			const std::vector<uint64_t> lo = { w5_base, 0x7FFB00000000ull, 0x7FFB10000000ull }, io = { 0x7FFB00000000ull, 0x7FFB10000000ull };
+			CHECK( walk( st.ldr + 0x10, 0, false ) == lo && walk( st.ldr + 0x20, 0x10, false ) == lo && walk( st.ldr + 0x30, 0x20, false ) == io,
+				   m + "InLoadOrder / InMemoryOrder = image, ntdll, kernel32; InInitializationOrder = ntdll, kernel32" );
+			auto rlo = lo;
+			std::reverse( rlo.begin(), rlo.end() );
+			CHECK( walk( st.ldr + 0x10, 0, true ) == rlo, m + "Blink walk = the reverse order" );
+			// names and parameters (UNICODE_STRING Length / Buffer)
+			auto ustr = [ & ]( uint64_t us ) {
+				const uint64_t len = w4_read( *p, us, 2 ), buf = w4_read( *p, us + 8, 8 );
+				std::string s;
+				for ( uint64_t i = 0; i < len / 2 && i < 512; i++ ) s += char( w4_read( *p, buf + 2 * i, 2 ) );
+				return s;
+			};
+			CHECK( ustr( st.entries[ 1 ] + 0x58 ) == "ntdll.dll" && ustr( st.entries[ 1 ] + 0x48 ) == "C:\\Windows\\System32\\ntdll.dll" &&
+					   ustr( st.entries[ 0 ] + 0x48 ) == "C:\\Users\\user\\Desktop\\probe_image.exe",
+				   m + "BaseDllName / FullDllName (placeholder image directory)" );
+			CHECK( ustr( st.parameters + 0x60 ) == "C:\\Users\\user\\Desktop\\probe_image.exe" && ustr( st.parameters + 0x70 ) == "\"C:\\Users\\user\\Desktop\\probe_image.exe\"" &&
+					   w4_read( *p, st.parameters + 8, 4 ) == 1 && w4_read( *p, st.parameters + 0x80, 8 ) == st.environment,
+				   m + "process parameters: ImagePathName, CommandLine, normalized, Environment" );
+			std::string envs;
+			for ( uint64_t i = 0; i < st.environment_size / 2; i++ ) envs += char( w4_read( *p, st.environment + 2 * i, 2 ) ? w4_read( *p, st.environment + 2 * i, 2 ) : '|' );
+			CHECK( envs.find( "|USERNAME=user|" ) != std::string::npos && envs.find( "NUMBER_OF_PROCESSORS=8|" ) != std::string::npos && envs.size() > 4 &&
+					   envs.substr( envs.size() - 2 ) == "||",
+				   m + "environment block: placeholders, double NUL at the end" );
+			emu::win::run_result r;
+			CHECK( p->run( r, e2 ), m + "run: " + e2 );
+			if ( b == emu::env_boundary::sys )
+				CHECK( r.stop == emu::win::stop_kind::terminated && r.exit_status == 0x2A, m + "the list walk found the image and ntdll; the export ran in emulation; exit 2AH: " + r.detail );
+			else
+				CHECK( r.stop == emu::win::stop_kind::unimplemented_api && r.detail.find( "ntdll.dll!RtlNothing" ) != std::string::npos,
+					   m + "the call into the system image stops loudly, naming the export: " + r.detail );
+		}
+	}
+
 	struct test_case { const char* name; void ( *fn )(); };
 	const test_case cases[] = {
 		{ "options_oep_defaults", t_options_oep_defaults },
@@ -2353,6 +2465,7 @@ namespace
 		{ "pe_imports_fuzz", t_pe_imports_fuzz },
 		{ "options_oep_probe", t_options_oep_probe },
 		{ "win_env_probe_counters", t_win_env_probe_counters },
+		{ "win_env_process_state", t_win_env_process_state },
 	};
 }
 

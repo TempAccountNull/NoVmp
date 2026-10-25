@@ -55,6 +55,7 @@
 #include <emu/pe_image.hpp>
 #include <emu/reg.hpp>
 #include <emu/sysdll.hpp>
+#include <emu/win_process.hpp>
 
 #include <array>
 #include <cstdint>
@@ -116,6 +117,10 @@ namespace emu::win
 		uint64_t active_processor_mask = 0;
 		syscall_table syscalls;
 		std::string capture_dir, platform_source;   // where they came from (for the log)
+		// U2024 (plan 3.M5 part 2): the capture's manifest and its further files (lower-case name -> bytes), read as data once;
+		// the system DLL images and NLS tables of the environment (empty for a capture made before M5 part 2 / synthetic facts)
+		capture_manifest manifest;
+		std::shared_ptr<const std::map<std::string, std::vector<uint8_t>>> files;
 	};
 	// the capture manifest + ntdll syscall table of ENV, and the platform profile facts
 	bool load_environment_facts( environment env, const std::string& capture_dir_explicit, const std::string& data_dir, environment_facts& f,
@@ -128,6 +133,7 @@ namespace emu::win
 		uint64_t image_base = 0;
 		uint64_t max_insns = 100000000;   // every run is bounded (no host time)
 		std::string image_name = "image";
+		std::string image_file_name = "image.exe";   // U2025: the image's base name in the loader data / process parameters
 		// U2020 (plan 3.M5 part 2): instrumentation, off by default (it observes, never changes, what the guest sees)
 		bool counters = false;                         // probe counters + the last trace_tail instructions, summary at the stop
 		uint32_t trace_tail = 32;
@@ -278,5 +284,11 @@ namespace emu::win
 		std::unique_ptr<hle::module> hle_;
 		pe::tls_directory tls_;
 		uint64_t start_va_ = 0;
+		std::vector<module_image> modules_;      // U2025: the process image + the system DLL images, load order
+		process_state pstate_;                   // U2025-U2027: loader data, process parameters, heap
+
+	public:
+		const std::vector<module_image>& modules() const { return modules_; }
+		const process_state& state() const { return pstate_; }
 	};
 }
