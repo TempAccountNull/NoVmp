@@ -738,6 +738,15 @@ Add-Suite 'no_host_passthrough' 'emulator safety tools win_env' 'py' ( Join-Path
 # self-test: mocked / forced (--tag-env) wrong environments and unknown (--tag-profiles none) refuse without writing, the live
 # detection is positive (the VMware guest here).
 Add-Suite 'capture_sysdlls_selftest' 'emulator win_env tools' 'py' ( Join-Path $Root 'Emulator\tools\capture_sysdlls.py' ) @( '--selftest', '--alltest', ( Join-Path $T 'emu-alltest.exe' ) )
+# U2003-U2005 (agent p3m5, plan 1.K.8 = P12, decision 3.0.10; notes\eread\P35_phase3_m5.md): CPUID self-consistency per profile,
+# each against its own environment. Emulator\tools\cpuid_consistency.py applies the SDM rules (x2APIC ID vs 01H EBX[31:24],
+# 0BH / 1FH structure, leaf 4 enumeration and sharing, leaf 2 descriptors vs leaves 4 / 18H, 1AH, brand string, 0DH, 80000006H vs
+# leaf 4, out-of-range leaves, TSC_AUX) to the three committed profiles, to every LP of the bare-host and stock VMware-guest raw
+# captures (+ the OS topology: packages, cores, caches, core types; local captures under the capture root, never committed)
+# and to the EMULATED CPU of --host / --guest / --max (emu-snippet). Captured inconsistencies are recorded in
+# Emulator\data\cpuid_consistency_expected.tsv and never edited; every other result must be as listed there.
+Add-Suite 'cpuid_consistency' 'cpuid tools emulator' 'py' ( Join-Path $Root 'Emulator\tools\cpuid_consistency.py' ) @( '--build', $T )
+Add-Suite 'cpuid_consistency_selftest' 'cpuid tools' 'py' ( Join-Path $Root 'Emulator\tools\cpuid_consistency.py' ) @( '--selftest' )
 
 # ---------------------------------------------------------------------------------------- selection
 $Groups = [ordered]@{}
