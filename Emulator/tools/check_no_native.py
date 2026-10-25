@@ -31,7 +31,9 @@ syscall, an I/O request or a memory access to the real host kernel. emu-alltest 
                  OpenFile / _open / _wopen / _sopen*, std::(i|o)fstream, std::filesystem create / remove / rename / copy are
                  findings everywhere except in the ONE audited reader Emulator/src/input_file.cpp (emu::read_input_file /
                  read_input_lines: read-only, bounded), where exactly std::ifstream is allowed and every other match is a
-                 finding (a write, a create, another open) - the lib and its tools only ever READ their inputs
+                 finding (a write, a create, another open) - the lib and its tools only ever READ their inputs; U2020 (plan 3.M5
+                 part 2): plus the ONE audited writer Emulator/src/output_file.cpp (emu::output_file: create / append text,
+                 bounded - emu-oep --trace FILE), where exactly std::ofstream is allowed and every other match is a finding
   S2 NoVmp native path - the NoVmp project's own sources (NoVmp/NoVmp.vcxproj ClCompile / ClInclude) through the rule groups
      exec, fnptr, loader, kernel (not process: main.cpp's interactive system( "pause" ) runs no guest code); plus "compiled_native_executor": emulator\\emulator.cpp / emulator\\rwx_allocator.cpp
      as ClCompile items of NoVmp.vcxproj. Known findings are listed in Emulator/data/no_native_allowlist.tsv (count per file
@@ -97,6 +99,8 @@ RAW_RULES = [
 EMU_GROUPS = ('exec', 'fnptr', 'loader', 'process', 'kernel', 'hosttime', 'hostcpu', 'fileio')
 AUDITED_READER = 'Emulator/src/input_file.cpp'   # U1979: the one place a file is opened (read-only std::ifstream)
 READER_ALLOWED = re.compile(r'^std::ifstream$')
+AUDITED_WRITER = 'Emulator/src/output_file.cpp'   # U2020: the one place a file is created (write-only std::ofstream: emu-oep --trace)
+WRITER_ALLOWED = re.compile(r'^std::ofstream$')
 NOVMP_GROUPS = ('exec', 'fnptr', 'loader', 'kernel')   # not 'process': NoVmp's CLI system( "pause" ) is no guest code
 
 EMU_PROJECTS = [
@@ -152,8 +156,9 @@ def strip_code(text):
     return ''.join(out)
 
 
-def scan_text(text, groups, reader=False):
-    """[(rule, line, snippet)] for the rule groups given; reader = the audited file reader (only std::ifstream exempt)."""
+def scan_text(text, groups, reader=False, writer=False):
+    """[(rule, line, snippet)] for the rule groups given; reader = the audited file reader (only std::ifstream exempt);
+    writer = the audited file writer (U2020: only std::ofstream exempt)."""
     hits = []
     code = strip_code(text)
     for rid, grp, rx in RULES:
@@ -161,6 +166,8 @@ def scan_text(text, groups, reader=False):
             continue
         for m in re.finditer(rx, code):
             if reader and rid == 'opens_file' and READER_ALLOWED.match(m.group(0).strip()):
+                continue
+            if writer and rid == 'opens_file' and WRITER_ALLOWED.match(m.group(0).strip()):
                 continue
             line = code.count('\n', 0, m.start()) + 1
             hits.append((rid, line, text.split('\n')[line - 1].strip()[:110]))
@@ -316,6 +323,14 @@ def run_controls():
     for bad in ('std::ofstream out( p );', 'std::fstream io( p );', 'FILE* f = fopen( p, "rb" );', 'std::filesystem::remove( p );'):
         if 'opens_file' not in [h[0] for h in scan_text(bad, EMU_GROUPS, reader=True)]:
             fails.append('file access in the audited reader not refused: ' + bad)
+    # U2020: the audited writer may hold std::ofstream only; a read / another open there still fires, and elsewhere std::ofstream fires
+    if scan_text('std::ofstream out;', EMU_GROUPS, writer=True):
+        fails.append('the audited writer\'s std::ofstream was not exempt')
+    if 'opens_file' not in [h[0] for h in scan_text('std::ofstream out;', EMU_GROUPS)]:
+        fails.append('std::ofstream outside the audited writer not refused')
+    for bad in ('std::ifstream in( p );', 'std::fstream io( p );', 'FILE* f = fopen( p, "wb" );', 'std::filesystem::remove( p );'):
+        if 'opens_file' not in [h[0] for h in scan_text(bad, EMU_GROUPS, writer=True)]:
+            fails.append('file access in the audited writer not refused: ' + bad)
     _root, items = project_items(None, BAD_PROJECT)
     if not any('novmp' in i.lower() for i in items.get('ClCompile', [])) or 'MASM' not in items:
         fails.append('synthetic bad project items not seen')
@@ -457,7 +472,7 @@ def check_emulator_sources(root, files, report):
         if not os.path.isfile(ap):
             fails.append('S1 listed file missing: %s' % relp(root, ap)); continue
         text = open(ap, encoding='utf-8', errors='replace').read()
-        for rid, line, snip in scan_text(text, EMU_GROUPS, reader=relp(root, ap) == AUDITED_READER):
+        for rid, line, snip in scan_text(text, EMU_GROUPS, reader=relp(root, ap) == AUDITED_READER, writer=relp(root, ap) == AUDITED_WRITER):
             found.setdefault((relp(root, ap), rid), []).append((line, snip))
     report.append('S1 scanned %d emulator files (%s), rule groups %s' % (len(files), ', '.join(relp(root, f) for f in files), ' '.join(EMU_GROUPS)))
     return fails, found

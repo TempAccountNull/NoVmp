@@ -146,6 +146,9 @@ namespace emu
 				   "  --sysdlls DIR          the environment's DLL capture folder (default: <capture root>\\sysdlls\\<environment>)\n"
 				   "  --syscall-number NAME  print NAME's service number from the environment's ntdll capture and stop\n"
 				   "  --dry-run              print the configuration and stop (nothing opened)\n"
+				   "  --counters             probe counters: CPUID leaves (with the answers), RDTSC / RDTSCP / RDPID, reads of PEB / TEB / KUSER\n"
+				   "                         members, system calls, API calls, exceptions, the last 32 instructions - summary at the stop\n"
+				   "  --trace FILE           one line per instruction (index, RIP, region +offset, bytes, disassembly) into FILE (at most 1 GiB)\n"
 				   "  exit      0 the guest terminated (NtTerminateProcess), 1 another stop (fault, bound, return from the entry), 2 usage,\n"
 				   "            3 set-up error, 4 an unknown / unimplemented system service or --HLE API (loud stop with a state dump)\n" + common;
 		return "usage: emu-snippet (--hex BYTES | --asm TEXT | --state FILE.json | --batch FILE.jsonl) [state] [stops] [checks] [output] [options]\n"
@@ -308,6 +311,12 @@ namespace emu
 				o.avx10 = int( n );
 			}
 			else if ( tool == tool_kind::oep && a == "--dry-run" ) o.dry_run = true;
+			else if ( tool == tool_kind::oep && a == "--counters" ) o.counters = true;   // U2020
+			else if ( tool == tool_kind::oep && a == "--trace" )
+			{
+				if ( !o.trace_file.empty() ) return fail( raw + " given twice" );
+				if ( !value( o.trace_file ) || o.trace_file.empty() ) return fail( "missing value for " + raw + " (the trace file)" );
+			}
 			else if ( tool == tool_kind::oep && ( a == "--image-base" || a == "--sysdlls" || a == "--syscall-number" ) )
 			{
 				// U1984 (plan 3.M4)
@@ -383,6 +392,8 @@ namespace emu
 			else d.push_back( "input: " + o.input_path + ( o.dry_run ? " (recorded, not opened)" : " (read as data, never loaded or run on the host)" ) );
 			d.push_back( "image-base: " + ( o.image_base_given ? hex64( o.image_base ) : std::string( "the image's ImageBase" ) ) );
 			d.push_back( "sysdlls: " + ( o.sysdlls_dir.empty() ? std::string( "(default: the capture root)" ) : o.sysdlls_dir ) );
+			d.push_back( std::string( "counters: " ) + ( o.counters ? "on (probe counters + the last instructions, summary at the stop)" : "off" ) );
+			d.push_back( "trace: " + ( o.trace_file.empty() ? std::string( "off" ) : o.trace_file + ( o.dry_run ? " (recorded, not created)" : " (one line per instruction)" ) ) );
 		}
 		else
 		{

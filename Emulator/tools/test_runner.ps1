@@ -738,6 +738,11 @@ Add-Suite 'no_host_passthrough' 'emulator safety tools win_env' 'py' ( Join-Path
 # ntdll capture: T4 exits 2DH in --Sys and --HLE with identical observable results; T2 (2BH) and T3 (2EH) run under --HLE and are
 # refused loudly under --Sys (the real LdrInitializeThunk start is the open item of P35); the native references of decision 3.0.7.
 Add-Suite 'win_env_m5' 'emulator win_env' 'py' ( Join-Path $Root 'Emulator\tools\win_env_m5.py' ) @( $Root, $T )
+# U2023 (agent p3m5b, plan 3.M5 part 2, notes\eread\P36_phase3_m5b.md): emu-oep --counters / --trace on the test PE tp_probe (a fixed
+# probe sequence: CPUID 0 / 1 / 7.0 / 40000000H, RDTSC x2, RDTSCP, TEB / PEB / KUSER member reads, one direct SYSCALL): every counter
+# exact in --Sys and --HLE, the trace one line per instruction, the observable lines unchanged by the instrumentation, the native
+# reference 2FH (decision 3.0.7).
+Add-Suite 'win_env_probe' 'emulator win_env' 'py' ( Join-Path $Root 'Emulator\tools\win_env_probe.py' ) @( $Root, $T, '--scratch', ( Join-Path $Root 'build\win_env_probe' ) )
 # U1990-U1991 (agent p3m4, user decision 2026-10-25, notes\eread\P34_phase3_m4.md): capture_sysdlls.py labels a capture only on
 # the positive evidence of U1893's environment detection (emu-alltest "tag environment:", run with an empty case file); the
 # self-test: mocked / forced (--tag-env) wrong environments and unknown (--tag-profiles none) refuse without writing, the live

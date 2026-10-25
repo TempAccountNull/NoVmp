@@ -86,6 +86,7 @@
     <ClCompile Include="src\json.cpp" />
     <ClCompile Include="src\nt_kernel.cpp" />
     <ClCompile Include="src\options.cpp" />
+    <ClCompile Include="src\output_file.cpp" />
     <ClCompile Include="src\pe_image.cpp" />
     <ClCompile Include="src\profile.cpp" />
     <ClCompile Include="src\reg.cpp" />
@@ -101,12 +102,14 @@
     <ClInclude Include="include\emu\json.hpp" />
     <ClInclude Include="include\emu\nt_kernel.hpp" />
     <ClInclude Include="include\emu\options.hpp" />
+    <ClInclude Include="include\emu\output_file.hpp" />
     <ClInclude Include="include\emu\pe_image.hpp" />
     <ClInclude Include="include\emu\profile.hpp" />
     <ClInclude Include="include\emu\reg.hpp" />
     <ClInclude Include="include\emu\snippet.hpp" />
     <ClInclude Include="include\emu\sysdll.hpp" />
     <ClInclude Include="include\emu\win_env.hpp" />
+    <ClInclude Include="include\emu\win_fields.hpp" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\msvc\unicorn.vcxproj"><Project>{5F160114-1B96-585D-9629-47B21D8F1CC0}</Project></ProjectReference>

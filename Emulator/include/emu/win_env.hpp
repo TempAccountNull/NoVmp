@@ -58,6 +58,7 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -127,6 +128,11 @@ namespace emu::win
 		uint64_t image_base = 0;
 		uint64_t max_insns = 100000000;   // every run is bounded (no host time)
 		std::string image_name = "image";
+		// U2020 (plan 3.M5 part 2): instrumentation, off by default (it observes, never changes, what the guest sees)
+		bool counters = false;                         // probe counters + the last trace_tail instructions, summary at the stop
+		uint32_t trace_tail = 32;
+		std::string trace_path;                        // "" = no per-instruction trace file; else one line per instruction
+		uint64_t trace_max_bytes = 1ull << 30;         // the trace file stops growing here (disk rule), marked truncated
 	};
 
 	enum class stop_kind { none, terminated, unknown_syscall, unimplemented_syscall, unimplemented_api, fault, count, returned, error };
@@ -154,6 +160,45 @@ namespace emu::win
 		std::array<uint64_t, 4> args{};   // RCX, RDX, R8, R9
 	};
 
+	// U2020 (plan 3.M5 part 2, demand item 1 of oep_progress.md run 1): the probe counters of one run (process_options::counters).
+	// Observation only: the hooks read what the guest executed / read; nothing the guest observes changes (no value is altered,
+	// no timing exists - the bound is the instruction count). Instructions are recognised from their bytes after the legacy /
+	// REX prefixes (253667-093 Vol2B: CPUID 0F A2, RDTSC 0F 31, RDTSCP 0F 01 F9; RDPID F3 0F C7 /7 with ModRM.mod = 11B); the
+	// CPUID answer is the register state before the next instruction (EAX / EBX / ECX / EDX, 253667-093 Vol2A CPUID "Operation").
+	// Reads of the environment's structures (PEB, TEB, KUSER_SHARED_DATA, the process parameters and loader data the environment
+	// builds) are counted per member, named by the public-symbol field tables (emu/win_fields.hpp).
+	struct cpuid_probe
+	{
+		uint32_t leaf = 0, subleaf = 0;
+		uint64_t count = 0, first_at = 0;
+		bool answered = false;
+		uint32_t eax = 0, ebx = 0, ecx = 0, edx = 0;   // the first answer
+	};
+	struct read_probe
+	{
+		std::string region, field;
+		uint64_t count = 0, first_at = 0;
+	};
+	struct trace_tail_entry
+	{
+		uint64_t index = 0, rip = 0;
+		uint32_t size = 0;
+		uint8_t bytes[ 16 ] = {};
+	};
+	struct probe_counters
+	{
+		bool enabled = false;
+		std::map<std::pair<uint32_t, uint32_t>, cpuid_probe> cpuid;   // (leaf, sub-leaf as ECX)
+		uint64_t cpuid_total = 0, rdtsc = 0, rdtscp = 0, rdpid = 0;
+		std::map<std::string, read_probe> reads;                     // "PEB.BeingDebugged" ...
+		uint64_t reads_total = 0;
+		std::map<std::string, uint64_t> syscalls, apis;              // by name
+		std::map<int, uint64_t> exceptions;                          // by vector
+		std::vector<trace_tail_entry> tail;                          // the last instructions (ring, oldest first after the run)
+		uint64_t trace_lines = 0, trace_bytes = 0;
+		bool trace_truncated = false;
+	};
+
 	struct run_result
 	{
 		stop_kind stop = stop_kind::none;
@@ -170,6 +215,7 @@ namespace emu::win
 		uint64_t user_rip = 0, user_rflags = 0, user_rsp = 0;   // at a syscall stop: the SYSCALL instruction, R11, RSP
 		reg::dump final;
 		bool have_final = false;
+		probe_counters probes;                 // U2020: filled when process_options::counters
 	};
 
 	class process
@@ -204,6 +250,14 @@ namespace emu::win
 		std::vector<std::string> state_dump( const run_result& r ) const;
 		// the environment fields written (name = value), part of observable()
 		const std::vector<std::string>& environment_lines() const { return env_lines_; }
+		// U2020: the probe-counter summary of a run with process_options::counters ("probe: ..." lines; empty otherwise)
+		std::vector<std::string> probe_summary( const run_result& r ) const;
+		// U2020: ADDRESS as "<region> +off" (the engine region holding it), for traces and summaries
+		std::string where( uint64_t address ) const;
+		// U2020: the environment structure and member ADDRESS lies in (PEB / TEB / KUSER / ...); false outside them
+		bool name_field( uint64_t address, std::string& region, std::string& field ) const;
+		size_t tail_capacity() const { return po_.counters ? po_.trace_tail : 0; }
+		uint64_t trace_limit() const { return po_.trace_max_bytes; }
 
 		struct hook_ctx;   // the hooks' state (win_env.cpp)
 

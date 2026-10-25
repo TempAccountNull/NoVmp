@@ -90,6 +90,10 @@ namespace emu
 		std::string sysdlls_dir;               // --sysdlls DIR: the environment's DLL capture folder (decision 3.0.8; default: found
 		                                       // under the capture root, see emu/sysdll.hpp)
 		std::string syscall_query;             // --syscall-number NAME: print NAME's service number from the environment's ntdll
+		// U2020 (plan 3.M5 part 2): instrumentation of an emu-oep run, off by default
+		bool counters = false;                 // --counters: probe counters (CPUID, RDTSC / RDTSCP / RDPID, PEB / TEB / KUSER reads,
+		                                       // system calls, API calls, exceptions) + the last instructions, summary at the stop
+		std::string trace_file;                // --trace FILE: one line per instruction into FILE (created; at most 1 GiB)
 
 		bool help = false;
 	};

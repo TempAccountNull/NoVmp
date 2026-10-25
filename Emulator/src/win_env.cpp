@@ -2,7 +2,10 @@
 // memory from the facts (captures / profiles); no host query, no host system call, no host KUSER page (AGENT_RULES "Host
 // safety"; checked by the suites no_native_check and no_host_passthrough).
 #include <emu/win_env.hpp>
+#include <emu/assemble.hpp>
 #include <emu/input_file.hpp>
+#include <emu/output_file.hpp>
+#include <emu/win_fields.hpp>
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -142,6 +145,13 @@ namespace emu::win
 		run_result* r = nullptr;
 		uint64_t last_insn = 0;
 		bool stopped = false;
+		// U2020: instrumentation (process_options::counters / trace_path)
+		bool counting = false;
+		bool cpuid_pending = false;
+		std::pair<uint32_t, uint32_t> cpuid_key{};
+		size_t tail_next = 0;
+		std::unique_ptr<output_file> trace;   // the audited writer (no_native_check)
+		std::unique_ptr<disassembler> dis;
 
 		void stop( stop_kind k, const std::string& detail )
 		{
@@ -154,6 +164,96 @@ namespace emu::win
 
 	namespace
 	{
+		// U2020: the CPUID answer = the registers before the next instruction (253667-093 Vol2A CPUID "Operation")
+		void finish_cpuid( uc_engine* uc, process::hook_ctx& c )
+		{
+			if ( !c.cpuid_pending ) return;
+			c.cpuid_pending = false;
+			auto& p = c.r->probes.cpuid[ c.cpuid_key ];
+			if ( p.answered ) return;
+			p.answered = true;
+			p.eax = uint32_t( read_reg( uc, UC_X86_REG_RAX ) );
+			p.ebx = uint32_t( read_reg( uc, UC_X86_REG_RBX ) );
+			p.ecx = uint32_t( read_reg( uc, UC_X86_REG_RCX ) );
+			p.edx = uint32_t( read_reg( uc, UC_X86_REG_RDX ) );
+		}
+
+		// U2020: count CPUID / RDTSC / RDTSCP / RDPID from the instruction bytes (after legacy and REX prefixes), keep the tail,
+		// write the trace line
+		void instrument( uc_engine* uc, uint64_t address, uint32_t size, process::hook_ctx& c )
+		{
+			finish_cpuid( uc, c );
+			uint8_t b[ 16 ] = {};
+			const uint32_t n = size > 15 ? 15 : size;
+			if ( !n || uc_mem_read( uc, address, b, n ) != UC_ERR_OK ) return;
+			auto& pr = c.r->probes;
+			if ( c.counting )
+			{
+				uint32_t i = 0;
+				bool rep = false;
+				for ( ; i < n; i++ )
+				{
+					const uint8_t x = b[ i ];
+					if ( x == 0xF3 ) rep = true;
+					if ( x == 0x66 || x == 0x67 || x == 0xF2 || x == 0xF3 || x == 0xF0 || x == 0x2E || x == 0x36 || x == 0x3E || x == 0x26 || x == 0x64 || x == 0x65 ) continue;
+					break;
+				}
+				if ( i < n && ( b[ i ] & 0xF0 ) == 0x40 ) i++;   // REX
+				if ( i + 1 < n && b[ i ] == 0x0F )
+				{
+					const uint8_t op = b[ i + 1 ];
+					if ( op == 0xA2 )
+					{
+						pr.cpuid_total++;
+						c.cpuid_key = { uint32_t( read_reg( uc, UC_X86_REG_RAX ) ), uint32_t( read_reg( uc, UC_X86_REG_RCX ) ) };
+						auto& p = pr.cpuid[ c.cpuid_key ];
+						if ( !p.count ) p.first_at = address;
+						p.leaf = c.cpuid_key.first;
+						p.subleaf = c.cpuid_key.second;
+						p.count++;
+						c.cpuid_pending = true;
+					}
+					else if ( op == 0x31 )
+						pr.rdtsc++;
+					else if ( op == 0x01 && i + 2 < n && b[ i + 2 ] == 0xF9 )
+						pr.rdtscp++;
+					else if ( op == 0xC7 && rep && i + 2 < n && ( b[ i + 2 ] & 0xF8 ) == 0xF8 )
+						pr.rdpid++;   // F3 0F C7 /7, ModRM.mod = 11B
+				}
+				if ( c.p->tail_capacity() )
+				{
+					auto& t = pr.tail;
+					trace_tail_entry e;
+					e.index = c.r->insns;
+					e.rip = address;
+					e.size = n;
+					std::memcpy( e.bytes, b, n );
+					if ( t.size() < c.p->tail_capacity() ) t.push_back( e );
+					else t[ c.tail_next ] = e;
+					c.tail_next = ( c.tail_next + 1 ) % c.p->tail_capacity();
+				}
+			}
+			if ( c.trace && !pr.trace_truncated )
+			{
+				std::string l = std::to_string( c.r->insns ) + " " + hex( address ) + " " + c.p->where( address ) + " ";
+				for ( uint32_t k = 0; k < n; k++ )
+				{
+					char h[ 4 ];
+					std::snprintf( h, sizeof( h ), "%02x", b[ k ] );
+					l += h;
+				}
+				if ( c.dis && c.dis->ok() ) l += "  " + c.dis->decode( b, n, address ).text;
+				l += "\n";
+				if ( c.trace->write( l ) )
+				{
+					pr.trace_bytes += l.size();
+					pr.trace_lines++;
+				}
+				else
+					pr.trace_truncated = true;
+			}
+		}
+
 		void on_code( uc_engine* uc, uint64_t address, uint32_t size, void* user )
 		{
 			auto& c = *static_cast<process::hook_ctx*>( user );
@@ -164,6 +264,26 @@ namespace emu::win
 				uint8_t b[ 2 ] = {};
 				if ( uc_mem_read( uc, address, b, 2 ) == UC_ERR_OK && b[ 0 ] == 0x0F && b[ 1 ] == 0x05 ) c.r->syscall_insns++;
 			}
+			if ( c.counting || c.trace ) instrument( uc, address, size, c );
+		}
+
+		// U2020: a guest read of PEB / TEB / KUSER_SHARED_DATA (and the other structures the environment builds), named per member
+		void on_env_read( uc_engine*, uc_mem_type, uint64_t address, int size, int64_t, void* user )
+		{
+			auto& c = *static_cast<process::hook_ctx*>( user );
+			std::string region, field;
+			if ( !c.p->name_field( address, region, field ) ) return;
+			auto& pr = c.r->probes;
+			pr.reads_total++;
+			auto& rp = pr.reads[ region + "." + field ];
+			if ( !rp.count )
+			{
+				rp.region = region;
+				rp.field = field;
+				rp.first_at = c.last_insn;
+			}
+			rp.count++;
+			(void)size;
 		}
 
 		void on_intr( uc_engine* uc, uint32_t intno, void* user )
@@ -601,6 +721,38 @@ namespace emu::win
 			log_.push_back( "FAILED: " + error );
 			return false;
 		}
+		// U2020: instrumentation - counters (CPUID / RDTSC / RDTSCP / RDPID, environment reads, the tail) and the trace file
+		r.probes.enabled = po_.counters;
+		hc_->counting = po_.counters;
+		hc_->tail_next = 0;
+		if ( po_.counters )
+		{
+			const std::pair<uint64_t, uint64_t> ranges[] = { { guest_peb_va, page_size }, { guest_teb_va, guest_teb_size }, { guest_kuser_va, page_size } };
+			for ( auto [ lo, n ] : ranges )
+				if ( uc_hook_add( uc, &h, UC_HOOK_MEM_READ, (void*)on_env_read, hc_.get(), lo, lo + n - 1 ) != UC_ERR_OK )
+				{
+					error = "uc_hook_add (environment reads) failed";
+					log_.push_back( "FAILED: " + error );
+					return false;
+				}
+			log_.push_back( "probe counters on: CPUID / RDTSC / RDTSCP / RDPID, reads of PEB / TEB / KUSER_SHARED_DATA per member (public-symbol field "
+							"tables), system calls, API calls, exceptions; the last " + std::to_string( po_.trace_tail ) + " instructions" );
+		}
+		if ( !po_.trace_path.empty() )
+		{
+			hc_->trace = std::make_unique<output_file>();
+			std::string terr;
+			if ( !hc_->trace->create( po_.trace_path, po_.trace_max_bytes, terr ) )
+			{
+				hc_->trace.reset();
+				error = "the trace file: " + terr;
+				log_.push_back( "FAILED: " + error );
+				return false;
+			}
+			hc_->dis = std::make_unique<disassembler>();
+			log_.push_back( "trace: one line per instruction (index, RIP, region +offset, bytes, Capstone text) -> " + po_.trace_path + " (at most " +
+							std::to_string( po_.trace_max_bytes ) + " bytes)" );
+		}
 		log_.push_back( "run: SYSRETQ to " + ( start_va_ == map_.entry ? "the entry " + hex( map_.entry ) : "the TLS start trampoline " + hex( start_va_ ) + " (then the entry " + hex( map_.entry ) + ")" ) +
 						" at CPL 3, at most " + std::to_string( po_.max_insns ) + " instructions" );
 		// 4. the run: until the return sentinel, a stop of the hooks, or the instruction bound (no host time)
@@ -623,7 +775,92 @@ namespace emu::win
 				hc_->stop( stop_kind::error, std::string( "emulation ended without a stop reason: " ) + uc_strerror( ue ) + ", rip " + hex( rip ) );
 		}
 		log_.push_back( std::string( "stop: " ) + name_of( r.stop ) + " - " + r.detail );
+		// U2020: the counters that come from the run's records; the tail ring oldest first
+		if ( po_.counters )
+		{
+			finish_cpuid( uc, *hc_ );
+			for ( auto& s : r.syscalls ) r.probes.syscalls[ s.name.empty() ? "(unknown " + hex( s.number ) + ")" : s.name ]++;
+			for ( auto& a : r.api_calls ) r.probes.apis[ a.api ]++;
+			if ( r.fault_vector >= 0 ) r.probes.exceptions[ r.fault_vector ]++;
+			auto& t = r.probes.tail;
+			if ( t.size() == tail_capacity() && hc_->tail_next ) std::rotate( t.begin(), t.begin() + std::ptrdiff_t( hc_->tail_next ), t.end() );
+		}
+		if ( hc_->trace )
+		{
+			hc_->trace->close();
+			hc_->trace.reset();
+			log_.push_back( "trace: " + std::to_string( r.probes.trace_lines ) + " lines, " + std::to_string( r.probes.trace_bytes ) + " bytes" +
+							( r.probes.trace_truncated ? " (TRUNCATED at the size limit)" : "" ) + " -> " + po_.trace_path );
+		}
 		return true;
+	}
+
+	// ------------------------------------------------------------------------------------------------ U2020: instrumentation output
+	std::string process::where( uint64_t address ) const
+	{
+		for ( const auto& rg : e_->regions() )
+			if ( address >= rg.base && address - rg.base < rg.size ) return "[" + rg.name + "]+" + hex( address - rg.base );
+		return "[unmapped]";
+	}
+
+	bool process::name_field( uint64_t address, std::string& region, std::string& field ) const
+	{
+		auto pick = [ & ]( const char* rname, uint64_t base, const auto& table, uint64_t size ) {
+			if ( address < base || address - base >= size ) return false;
+			region = rname;
+			const uint64_t off = address - base;
+			const fields::field* f = fields::find( table, off );
+			field = f ? std::string( f->name ) + ( off != f->offset ? "+" + hex( off - f->offset ) : std::string() ) : "(+" + hex( off ) + ", no member)";
+			return true;
+		};
+		return pick( "PEB", guest_peb_va, fields::peb, fields::peb_size ) || pick( "PEB", guest_peb_va, fields::peb, page_size ) ||
+			   pick( "TEB", guest_teb_va, fields::teb, guest_teb_size ) || pick( "KUSER", guest_kuser_va, fields::kuser, page_size );
+	}
+
+	std::vector<std::string> process::probe_summary( const run_result& r ) const
+	{
+		std::vector<std::string> o;
+		const auto& p = r.probes;
+		if ( !p.enabled ) return o;
+		auto h32 = [ & ]( uint32_t v ) {
+			char b[ 16 ];
+			std::snprintf( b, sizeof( b ), "%08X", v );
+			return std::string( b );
+		};
+		o.push_back( "probe: instructions " + std::to_string( r.insns ) + "; CPUID " + std::to_string( p.cpuid_total ) + " (" + std::to_string( p.cpuid.size() ) +
+					 " leaf / sub-leaf pairs), RDTSC " + std::to_string( p.rdtsc ) + ", RDTSCP " + std::to_string( p.rdtscp ) + ", RDPID " + std::to_string( p.rdpid ) );
+		for ( const auto& [ k, c ] : p.cpuid )
+			o.push_back( "probe: cpuid leaf " + h32( c.leaf ) + "H sub-leaf (ECX) " + h32( c.subleaf ) + "H x" + std::to_string( c.count ) + ", first at " + where( c.first_at ) +
+						 ( c.answered ? ", answered EAX " + h32( c.eax ) + " EBX " + h32( c.ebx ) + " ECX " + h32( c.ecx ) + " EDX " + h32( c.edx )
+									  : std::string( ", no answer recorded (the run stopped at the CPUID)" ) ) );
+		o.push_back( "probe: environment reads " + std::to_string( p.reads_total ) + " (" + std::to_string( p.reads.size() ) + " members)" );
+		for ( const auto& [ k, c ] : p.reads ) o.push_back( "probe: read " + k + " x" + std::to_string( c.count ) + ", first at " + where( c.first_at ) );
+		uint64_t ns = 0, na = 0, ne = 0;
+		for ( auto& [ k, v ] : p.syscalls ) ns += v;
+		for ( auto& [ k, v ] : p.apis ) na += v;
+		for ( auto& [ k, v ] : p.exceptions ) ne += v;
+		o.push_back( "probe: system calls " + std::to_string( ns ) + " (" + std::to_string( p.syscalls.size() ) + " services)" );
+		for ( auto& [ k, v ] : p.syscalls ) o.push_back( "probe: syscall " + k + " x" + std::to_string( v ) );
+		o.push_back( "probe: API calls " + std::to_string( na ) + " (" + std::to_string( p.apis.size() ) + " APIs)" );
+		for ( auto& [ k, v ] : p.apis ) o.push_back( "probe: api " + k + " x" + std::to_string( v ) );
+		o.push_back( "probe: exceptions " + std::to_string( ne ) + " (each one stops the run until exception dispatch, milestone M7)" );
+		for ( auto& [ k, v ] : p.exceptions ) o.push_back( "probe: exception vector " + std::to_string( k ) + " x" + std::to_string( v ) );
+		o.push_back( "probe: the last " + std::to_string( p.tail.size() ) + " instructions (oldest first):" );
+		disassembler d;
+		for ( const auto& t : p.tail )
+		{
+			std::string bytes;
+			for ( uint32_t k = 0; k < t.size; k++ )
+			{
+				char b[ 4 ];
+				std::snprintf( b, sizeof( b ), "%02x", t.bytes[ k ] );
+				bytes += b;
+			}
+			o.push_back( "probe: tail #" + std::to_string( t.index ) + " " + hex( t.rip ) + " " + where( t.rip ) + " " + bytes + "  " + ( d.ok() ? d.decode( t.bytes, t.size, t.rip ).text : "" ) );
+		}
+		if ( !po_.trace_path.empty() )
+			o.push_back( "probe: trace file " + po_.trace_path + ": " + std::to_string( p.trace_lines ) + " lines" + ( p.trace_truncated ? " (truncated)" : "" ) );
+		return o;
 	}
 
 	std::vector<std::string> process::observable( const run_result& r ) const

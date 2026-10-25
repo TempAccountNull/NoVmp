@@ -2231,6 +2231,77 @@ namespace
 		CHECK( lists + refused == 3000 && refused > 100, "every mutation ended in a list or a refusal" );
 	}
 
+	// ------------------------------------------------------------------------------------------------ M5 part 2: instrumentation (U2020-U2023)
+	// emu-oep --counters / --trace (helper prefix pb_): the options, and emu::win's probe counters on an in-memory image with a fixed
+	// probe sequence - every counter exact in both modes, the observable lines equal to a run without counters.
+	void t_options_oep_probe()
+	{
+		auto a = parse( emu::tool_kind::oep, { "--counters", "--trace", "t.txt", "a.exe" } );
+		CHECK( a.ok && a.options.counters && a.options.trace_file == "t.txt", "--counters / --trace FILE: " + a.error );
+		auto b = parse( emu::tool_kind::oep, { "a.exe" } );
+		CHECK( b.ok && !b.options.counters && b.options.trace_file.empty(), "instrumentation off by default" );
+		CHECK( !parse( emu::tool_kind::oep, { "--trace", "a.txt", "--trace", "b.txt", "a.exe" } ).ok, "--trace twice refused" );
+		CHECK( !parse( emu::tool_kind::oep, { "a.exe", "--trace" } ).ok, "--trace without a file refused" );
+		CHECK( !parse( emu::tool_kind::snippet, { "--hex", "90", "--counters" } ).ok, "--counters is an emu-oep option" );
+		auto d = emu::describe( a.options );
+		CHECK( has_line( d, "counters: on" ) && has_line( d, "trace: t.txt (one line per instruction)" ), "describe names the instrumentation" );
+		CHECK( emu::usage( emu::tool_kind::oep ).find( "--counters" ) != std::string::npos && emu::usage( emu::tool_kind::oep ).find( "--trace FILE" ) != std::string::npos,
+			   "usage names --counters and --trace FILE" );
+	}
+
+	w5_run pb_go( const std::vector<uint8_t>& file, emu::env_boundary b, bool counters )
+	{
+		w5_run w;
+		emu::engine_config ec;
+		ec.profile = emu::cpu_profile_choice::guest;
+		emu::win::process_options po;
+		po.boundary = b;
+		po.max_insns = 200000;
+		po.image_name = "pb";
+		po.counters = counters;
+		std::vector<std::string> log;
+		w.p = emu::win::process::create( ec, w5_facts(), po, file, log, w.error );
+		if ( w.p ) w.ok = w.p->run( w.r, w.error );
+		return w;
+	}
+
+	void t_win_env_probe_counters()
+	{
+		const char* code =
+			"push rbx; xor eax, eax; xor ecx, ecx; cpuid; mov eax, 1; xor ecx, ecx; cpuid; mov eax, 1; xor ecx, ecx; cpuid; mov eax, 0x0d; mov ecx, 1; cpuid;"
+			"rdtsc; rdtscp; pop rbx; mov rax, qword ptr gs:[0x60]; movzx ecx, byte ptr [rax+2]; mov ecx, dword ptr [rax+0xbc]; mov rcx, 0x7ffe0260;"
+			"mov ecx, dword ptr [rcx]; mov eax, 0x2C; mov r10, -1; mov edx, 0x2A; syscall; ud2";
+		std::string err;
+		const auto file = w5_build( { code }, err );
+		CHECK( !file.empty(), "image: " + err );
+		for ( auto b : { emu::env_boundary::sys, emu::env_boundary::hle } )
+		{
+			const std::string m = b == emu::env_boundary::sys ? "--Sys: " : "--HLE: ";
+			auto off = pb_go( file, b, false );
+			auto on = pb_go( file, b, true );
+			CHECK( off.ok && on.ok && on.r.stop == emu::win::stop_kind::terminated && on.r.exit_status == 0x2A, m + "terminated 2AH: " + on.error + off.error );
+			if ( !on.ok || !off.ok ) continue;
+			const auto& pr = on.r.probes;
+			CHECK( pr.enabled && !off.r.probes.enabled && off.p->probe_summary( off.r ).empty(), m + "counters only when asked" );
+			CHECK( pr.cpuid_total == 4 && pr.cpuid.size() == 3 && pr.rdtsc == 1 && pr.rdtscp == 1 && pr.rdpid == 0, m + "CPUID 4 (3 pairs), RDTSC 1, RDTSCP 1" );
+			const auto c0 = pr.cpuid.find( { 0u, 0u } ), c1 = pr.cpuid.find( { 1u, 0u } ), cd = pr.cpuid.find( { 0xDu, 1u } );
+			CHECK( c0 != pr.cpuid.end() && c0->second.count == 1 && c0->second.answered && c0->second.eax >= 0xD, m + "leaf 0 x1, answered with the maximum leaf" );
+			CHECK( c1 != pr.cpuid.end() && c1->second.count == 2 && cd != pr.cpuid.end() && cd->second.count == 1, m + "leaf 1 x2, leaf 0DH.1 x1" );
+			const std::map<std::string, uint64_t> want = { { "TEB.ProcessEnvironmentBlock", 1 }, { "PEB.BeingDebugged", 1 }, { "PEB.NtGlobalFlag", 1 }, { "KUSER.NtBuildNumber", 1 } };
+			std::map<std::string, uint64_t> got;
+			for ( auto& [ k, v ] : pr.reads ) got[ k ] = v.count;
+			CHECK( got == want && pr.reads_total == 4, m + "environment reads by member (4)" );
+			CHECK( pr.syscalls.size() == 1 && pr.syscalls.begin()->first == "NtTerminateProcess" && pr.syscalls.begin()->second == 1 && pr.apis.empty() && pr.exceptions.empty(),
+				   m + "1 system call, no API call, no exception" );
+			CHECK( !pr.tail.empty() && pr.tail.back().size == 2 && pr.tail.back().bytes[ 0 ] == 0x0F && pr.tail.back().bytes[ 1 ] == 0x05 && pr.tail.back().index == on.r.insns,
+				   m + "the tail ends with the SYSCALL, the last counted instruction" );
+			CHECK( on.p->observable( on.r ) == off.p->observable( off.r ), m + "observable lines unchanged by the counters" );
+			const auto s = on.p->probe_summary( on.r );
+			for ( auto& l : s ) std::cout << "  " << l << "\n";
+			CHECK( has_line( s, "probe: read PEB.NtGlobalFlag x1, first at [pb section .text" ), m + "the summary names the member and the region of the reading instruction" );
+		}
+	}
+
 	struct test_case { const char* name; void ( *fn )(); };
 	const test_case cases[] = {
 		{ "options_oep_defaults", t_options_oep_defaults },
@@ -2280,6 +2351,8 @@ namespace
 		{ "win_env_hle_tls", t_win_env_hle_tls },
 		{ "win_env_syscall_fuzz", t_win_env_syscall_fuzz },
 		{ "pe_imports_fuzz", t_pe_imports_fuzz },
+		{ "options_oep_probe", t_options_oep_probe },
+		{ "win_env_probe_counters", t_win_env_probe_counters },
 	};
 }
 
