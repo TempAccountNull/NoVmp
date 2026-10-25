@@ -49,6 +49,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "emu-selftest", "Emulator\te
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Emulator", "Emulator", "{89B0C8BB-108B-4AFD-9870-2CC790731E77}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "t1_exit", "Emulator\tests\pe\t1_exit\t1_exit.vcxproj", "{3C1E7A52-8D04-4F6B-9A2E-5B71C0D4E8F3}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -131,6 +133,10 @@ Global
 		{518B42E5-6938-41C6-A78B-2230C45267C3}.Debug|x64.Build.0 = Debug|x64
 		{518B42E5-6938-41C6-A78B-2230C45267C3}.Release|x64.ActiveCfg = Release|x64
 		{518B42E5-6938-41C6-A78B-2230C45267C3}.Release|x64.Build.0 = Release|x64
+		{3C1E7A52-8D04-4F6B-9A2E-5B71C0D4E8F3}.Debug|x64.ActiveCfg = Debug|x64
+		{3C1E7A52-8D04-4F6B-9A2E-5B71C0D4E8F3}.Debug|x64.Build.0 = Debug|x64
+		{3C1E7A52-8D04-4F6B-9A2E-5B71C0D4E8F3}.Release|x64.ActiveCfg = Release|x64
+		{3C1E7A52-8D04-4F6B-9A2E-5B71C0D4E8F3}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -153,6 +159,7 @@ Global
 		{1B56D3DE-9C79-42A2-8249-226B8E403922} = {89B0C8BB-108B-4AFD-9870-2CC790731E77}
 		{6AF10F52-6B17-4588-B2A5-459C5BED9369} = {89B0C8BB-108B-4AFD-9870-2CC790731E77}
 		{518B42E5-6938-41C6-A78B-2230C45267C3} = {89B0C8BB-108B-4AFD-9870-2CC790731E77}
+		{3C1E7A52-8D04-4F6B-9A2E-5B71C0D4E8F3} = {6D6705D5-B7A9-4922-A499-776CB8835031}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {43AEF470-2FF3-5242-923F-C62C32A8EAE1}
