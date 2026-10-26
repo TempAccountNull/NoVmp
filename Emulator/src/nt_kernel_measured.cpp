@@ -152,6 +152,12 @@ namespace emu::nt
 			r = svc_query_system_information_ex( c );
 			return true;
 		}
+		if ( c.name == "NtInitializeNlsFiles" )
+		{
+			r = svc_initialize_nls_files( c );
+			return true;
+		}
+		if ( c.name == "NtCreateFile" ) return svc_create_file_measured( c, r );
 		return false;
 	}
 
@@ -502,8 +508,8 @@ namespace emu::nt
 								 "\", attributes " + hex( oa.attributes ) + " )";
 		// the CSR server's shared section of the session - MEASURED (tm_nt csr.open): "\Sessions\<the PEB SessionId>\Windows\SharedSection",
 		// access 4 (SECTION_MAP_READ), OBJ_CASE_INSENSITIVE, no root = STATUS_SUCCESS + a handle (non-zero, multiple of 4); its view
-		// (tm_nt csr.map: 100000H bytes, MEM_MAPPED, PAGE_READONLY) holds the CSR server's shared heap - its CONTENTS are not modelled: the
-		// map of this section stops (svc_map_view_of_section; P39 frontier)
+		// (tm_nt csr.map: 100000H bytes, MEM_MAPPED, PAGE_READONLY) holds the CSR server's shared heap - P39 stopped at its map; P40 (U2065):
+		// the view as a connected client sees it (map_csr_shared_view, measured tm_nt csrc.*)
 		if ( !oa.root && access == 4 && ( oa.attributes & 0x40 ) )
 		{
 			uint32_t sid = 0;
@@ -565,14 +571,9 @@ namespace emu::nt
 		const auto it = handles_.find( c.args[ 0 ] );
 		const std::string what = "NtMapViewOfSection( " + a + " ) section " + ( it != handles_.end() ? it->second.name : std::string( "?" ) );
 		if ( it != handles_.end() && it->second.kind == "section (csr shared)" )
-			// P39 FRONTIER (the stop the user asked for: "a service that cannot be measured safely"): the view's shape is measured (tm_nt
-			// csr.map: 100000H bytes, MEM_MAPPED, PAGE_READONLY), but its CONTENTS are the CSR server's (csrss.exe) shared heap - kernelbase
-			// reads its BASE_STATIC_SERVER_DATA there after CsrClientConnectToServer. No allowed source gives that layout (phnt has no CSR /
-			// BaseSrv structure), so the data cannot be captured with per-field placeholders (it holds session / machine data), and the
-			// connection that follows (CsrClientConnectToServer over ALPC to the session's ApiPort) would mean our test PE sending
-			// hand-built messages to csrss, a critical system process - not measurable safely. A loud stop, never zero contents.
-			return stop_( what + " - the CSR server's shared section (\\Sessions\\<id>\\Windows\\SharedSection): its contents (csrss' shared heap, BASE_STATIC_SERVER_DATA) "
-								 "have no allowed layout source and cannot be captured or measured safely (P39 frontier)" );
+			// P39 stopped here (no layout source, csrss not measurable); P40 (U2065, USER DECISION 2026-10-26): the view as a CONNECTED
+			// client sees it, measured from inside our own test PE (tm_nt csrc.*) - map_csr_shared_view below
+			return map_csr_shared_view( c, what );
 		if ( it == handles_.end() || it->second.kind != "section (image)" ) return stop_( what + " - not a KnownDlls image section of this process: not measured" );
 		const uint64_t pbase = c.args[ 2 ], psize = c.args[ 6 ];
 		if ( c.args[ 1 ] != current_process || c.args[ 3 ] || c.args[ 4 ] || c.args[ 5 ] || uint32_t( c.args[ 7 ] ) != 1 || uint32_t( c.args[ 8 ] ) != 0x800000 ||
@@ -811,30 +812,231 @@ namespace emu::nt
 		return r;
 	}
 
-	// NtConnectPort( *PortHandle, PortName, SecurityQos, ClientView, ServerView, MaxMessageLength, ConnectionInformation,
-	// ConnectionInformationLength ) - phnt ntlpcapi.h:263-272. P39 FRONTIER: kernelbase's CsrClientConnectToServer connects to the CSR
-	// server's API port of the session (csrss.exe) with the client view of the page-file section it just created (10000H) and a CSR
-	// connection-information block. Answering needs the CSR server's side - its reply (the connection information: the server's shared
-	// section base, the BASE_STATIC_SERVER_DATA pointer ...) and the shared section's contents: no allowed source gives the CSR / BaseSrv
-	// message or data layouts (phnt has none), and measuring it would mean our own test PE sending hand-built connection messages to
-	// csrss, a critical system process (its failure stops the machine) - not measurable safely. A loud stop with the decoded call.
+	// ------------------------------------------------------------------------------------------------ P40: a CONNECTED CSR client
+	// USER DECISION 2026-10-26 (plan 3.M5): the CSR frontier of P39 is passed by MEASURING WHAT A CONNECTED PROCESS SEES - our own test PE
+	// tm_nt (case csrc) reads only its own memory after its own loader connected it to the session's CSR server (its PEB, the read-only
+	// view of the shared section, its ntdll's data, its handle table), never a message to csrss. This is the MODEL OF A CONNECTED CSR
+	// CLIENT, not a CSR server: the emulated process receives exactly what such a client sees and what its ntdll / kernelbase read
+	// (the emulated trace of the real ntdll / kernelbase, P40 runs e1-e4); nothing else of csrss' shared heap is modelled (zero) and
+	// nothing is forwarded to the host. Layout names: ReactOS 0.4.16 (reference only) sdk/include/reactos/subsys/csr/csrmsg.h:47-58
+	// CSR_API_CONNECTINFO and sdk/include/reactos/subsys/win/base.h:119-143 BASE_STATIC_SERVER_DATA (NT 5.2: WindowsDirectory,
+	// WindowsSystemDirectory, NamedObjectDirectory as the first three UNICODE_STRINGs - the measured Windows 10 x64 shape keeps those
+	// three at +0 / +10H / +20H; the rest differs and is not used).
+	namespace
+	{
+		// placeholders of the measured shapes (tm_nt csrc.*; the real values are machine / boot state and never printed)
+		constexpr uint64_t csr_server_base = 0x00007DF500000000ull;     // the server's view base: 64K-aligned, not the client's base (csrc.peb)
+		constexpr uint64_t csr_client_remote = 0x00007DF600000000ull;   // the client port view's ViewRemoteBase: delta non-zero (csrc.ntdll)
+		constexpr uint64_t csr_server_pid = 0x248;                      // the server process id: non-zero, a multiple of 4 (csrc.ntdll)
+		// measured offsets / sizes of the shared section's view (csr.map, csrc.peb, csrc.array, csrc.bssd, csrc.str*, csrc.map5)
+		constexpr uint64_t csr_view_size = 0x100000, csr_view_committed = 0x5000;
+		constexpr uint64_t csr_array = 0x750, csr_bssd = 0x790, csr_bssd_self = 0x9E8;
+		constexpr uint64_t csr_str_at[ 3 ] = { 0xA10, 0xA30, 0xA60 }, csr_str_room[ 3 ] = { 0x20, 0x30, 0x40 };
+		constexpr uint64_t csr_port_view_size = 0x10000;
+	}
+
+	// NtConnectPort( *PortHandle, PortName, SecurityQos, ClientView (PORT_VIEW), ServerView (REMOTE_PORT_VIEW), MaxMessageLength,
+	// ConnectionInformation, ConnectionInformationLength ) - phnt ntlpcapi.h:263-272 (PORT_VIEW :115-123, REMOTE_PORT_VIEW :125-130).
+	// The caller (P40 trace e1 / e2, system call 98): ntdll's CsrClientConnectToServer for kernelbase - port "\Sessions\<the PEB
+	// SessionId>\Windows\ApiPort", SECURITY_QUALITY_OF_SERVICE {ImpersonationLevel 2, ContextTrackingMode 1, EffectiveOnly 1} (Length is
+	// not initialized by the caller), ClientView {30H, the page-file section of 10000H it just created, 0, 10000H, 0, 0}, ServerView {18H,
+	// 0, 0}, ConnectionInformation 30H bytes with +20H = 1 (ReactOS csrmsg.h:83-88 CSR_CLIENT_CONNECT ServerId BASESRV = 1). What ntdll
+	// READS of the answer (trace e2 #1190597-#1190653): +24H (ULONG, compared signed against 0: an NTSTATUS, handed back to kernelbase as
+	// the connection's status), +0 (-> PEB CsrServerReadOnlySharedMemoryBase 380H: the server's view base), +8 (-> PEB
+	// ReadOnlyStaticServerData 98H = +8 - +0 + the client's base: a server pointer), +10H (-> ntdll+16CC30H = CsrGetProcessId(): the server
+	// process id), ClientView ViewRemoteBase - ViewBase (-> ntdll+16CC40H), the port handle (-> ntdll+16CC48H). MEASURED as a connected
+	// client sees them (tm_nt csrc.peb / csrc.ntdll): the server base 64K-aligned and not the client's; the server pid non-zero, a multiple
+	// of 4, = CsrGetProcessId(); the remote delta non-zero; the port handle a handle of type "ALPC Port". The model answers with
+	// placeholders of those shapes and +24H = STATUS_SUCCESS (0: the only status a connected process can have seen - ntdll fails the
+	// connection on a negative one; inferred, not observable from inside). The client view: a zero-filled MEM_MAPPED read-write view of
+	// the page-file section (measured: tm_nt sec.*), 64K-aligned. Not written (no connected process can observe them, ntdll never reads
+	// them): MaxMessageLength, ServerView, the other ConnectionInformation bytes. Other ports / shapes and a second connection: stop.
 	reply kernel::svc_connect_port( const call& c )
 	{
+		if ( !c.stack_args ) return stop_( "NtConnectPort: the stack arguments are not readable" );
 		std::string port, why;
-		guest_ustring( c.args[ 1 ], port, why );
-		uint32_t ilen = 0;
-		if ( c.stack_args && c.args[ 7 ] && user_buffer( c.args[ 7 ], 4, UC_PROT_READ ) )
-		{
-			std::string err;
-			e_.read( c.args[ 7 ], &ilen, 4, err );
-		}
-		const auto cv = c.args[ 3 ];
+		if ( !guest_ustring( c.args[ 1 ], port, why ) ) return done_( status::access_violation, "NtConnectPort: PortName: " + why );
+		uint32_t sid = 0, ilen = 0;
+		std::string err;
+		e_.read( f_.peb + 0x2C0, &sid, 4, err );   // PEB SessionId (2C0H, ntdll.pdb _PEB)
+		const uint64_t ph = c.args[ 0 ], qos = c.args[ 2 ], cv = c.args[ 3 ], sv = c.args[ 4 ], pmml = c.args[ 5 ], ci = c.args[ 6 ], pcil = c.args[ 7 ];
+		if ( pcil && user_buffer( pcil, 4, UC_PROT_READ ) ) e_.read( pcil, &ilen, 4, err );
 		uint64_t section = 0;
-		if ( cv && user_buffer( cv, 0x30, UC_PROT_READ ) ) get64( cv + 8, section );   // PORT_VIEW {Length, SectionHandle, SectionOffset, ViewSize, ViewBase, ViewRemoteBase}
+		if ( cv && user_buffer( cv, 0x30, UC_PROT_READ ) ) get64( cv + 8, section );
 		const auto it = handles_.find( section );
-		return stop_( "NtConnectPort( port \"" + port + "\", ClientView section " + hex( section ) + ( it != handles_.end() ? " (" + it->second.kind + ", " + hex( it->second.value ) + " bytes)" : std::string() ) +
-					  ", ConnectionInformation " + hex( c.stack_args ? c.args[ 6 ] : 0 ) + " (" + hex( ilen ) + " bytes) ) - the CSR server connection (csrss.exe): its reply and shared data have no "
-					  "allowed layout source and cannot be measured safely (P39 frontier)" );
+		const std::string what = "NtConnectPort( port \"" + port + "\", ClientView section " + hex( section ) +
+								 ( it != handles_.end() ? " (" + it->second.kind + ", " + hex( it->second.value ) + " bytes)" : std::string() ) + ", ConnectionInformation " + hex( ci ) + " (" +
+								 hex( ilen ) + " bytes) )";
+		if ( lower( port ) != "\\sessions\\" + std::to_string( sid ) + "\\windows\\apiport" ) return stop_( what + " - not the session's CSR API port: not measured" );
+		if ( csr_port_ ) return stop_( what + " - a second connection of the process to the CSR API port: not measured" );
+		if ( !cv || !sv || !ci || !pcil ) return stop_( what + " - without a ClientView / ServerView / ConnectionInformation: not measured" );
+		if ( !user_buffer( ph, 8, UC_PROT_WRITE ) || !user_buffer( qos, 12, UC_PROT_READ ) || !user_buffer( cv, 0x30, UC_PROT_READ | UC_PROT_WRITE ) ||
+			 !user_buffer( sv, 0x18, UC_PROT_READ ) || ( pmml && !user_buffer( pmml, 4, UC_PROT_WRITE ) ) || !user_buffer( ci, 0x30, UC_PROT_READ | UC_PROT_WRITE ) ||
+			 !user_buffer( pcil, 4, UC_PROT_READ ) )
+			return done_( status::access_violation, what + ": an argument is not accessible user memory (probe)" );
+		uint8_t q[ 12 ] = {}, v[ 0x30 ] = {}, s[ 0x18 ] = {}, inf[ 0x30 ] = {};
+		e_.read( qos, q, 12, err );
+		e_.read( cv, v, 0x30, err );
+		e_.read( sv, s, 0x18, err );
+		e_.read( ci, inf, 0x30, err );
+		uint32_t vlen = 0, voff = 0, slen = 0, server_id = 0;
+		uint64_t vsize = 0, vbase = 0, vremote = 0, ssize = 0, sbase = 0;
+		std::memcpy( &vlen, v, 4 );
+		std::memcpy( &voff, v + 0x10, 4 );
+		std::memcpy( &vsize, v + 0x18, 8 );
+		std::memcpy( &vbase, v + 0x20, 8 );
+		std::memcpy( &vremote, v + 0x28, 8 );
+		std::memcpy( &slen, s, 4 );
+		std::memcpy( &ssize, s + 8, 8 );
+		std::memcpy( &sbase, s + 0x10, 8 );
+		std::memcpy( &server_id, inf + 0x20, 4 );
+		if ( q[ 4 ] != 2 || q[ 8 ] != 1 || q[ 9 ] != 1 || vlen != 0x30 || it == handles_.end() || it->second.kind != "section (pagefile)" || it->second.value != csr_port_view_size ||
+			 voff || vsize != csr_port_view_size || vbase || vremote || slen != 0x18 || ssize || sbase || ilen != 0x30 || server_id != 1 )
+			return stop_( what + " - another shape (SecurityQos / ClientView / ServerView / ConnectionInformation): not measured (P40 trace e1: QoS {2, 1, 1}, ClientView {30H, a page-file "
+								 "section of 10000H, 0, 10000H, 0, 0}, ServerView {18H, 0, 0}, 30H bytes with ServerId 1 at +20H)" );
+		uint64_t cview = 0;
+		if ( !find_free( csr_port_view_size, true, cview ) ) return stop_( what + " - no free range for the client view" );
+		if ( !e_.map( cview, csr_port_view_size, UC_PROT_READ | UC_PROT_WRITE, "CSR API port client view (page-file section, zero-filled)", err ) ) return stop_( what + " - " + err );
+		struct view vw;
+		vw.base = cview;
+		vw.size = csr_port_view_size;
+		vw.type = mem2::mapped;
+		vw.allocation_protect = page::readwrite;
+		vw.pages.assign( size_t( csr_port_view_size / f_.page_size ), page::readwrite );
+		vw.name = "CSR API port client view";
+		views_[ cview ] = vw;
+		object o;
+		o.kind = "port (alpc)";
+		o.name = port;
+		const uint64_t h = open_handle( o );
+		csr_port_ = h;
+		reply rr = done_( status::success, what + ": the model of a CONNECTED CSR client (P40, measured shapes tm_nt csrc.*) - port handle " + hex( h ) + " (ALPC Port), client view " + hex( cview ) +
+											   " (10000H, MEM_MAPPED read-write, zero), ViewRemoteBase " + hex( csr_client_remote ) + "; ConnectionInformation +0 server view base " +
+											   hex( csr_server_base ) + ", +8 the server-data array " + hex( csr_server_base + csr_array ) + ", +10H server process id " + hex( csr_server_pid ) +
+											   ", +24H STATUS_SUCCESS (placeholders of the measured shapes; MaxMessageLength / ServerView not written: not observable)" );
+		const uint64_t sa = csr_server_base + csr_array;
+		const uint32_t ok = 0;
+		if ( !put( ph, &h, 8, rr ) || !put( cv + 0x20, &cview, 8, rr ) || !put( cv + 0x28, &csr_client_remote, 8, rr ) || !put( ci, &csr_server_base, 8, rr ) || !put( ci + 8, &sa, 8, rr ) ||
+			 !put( ci + 0x10, &csr_server_pid, 8, rr ) || !put( ci + 0x24, &ok, 4, rr ) )
+			return stop_( "writing the result failed after the probe" );
+		return rr;
+	}
+
+	// NtMapViewOfSection of the session's CSR shared section (\Sessions\<id>\Windows\SharedSection, opened by svc_open_section). The caller
+	// (P40 trace e1, system call 100): NtCurrentProcess(), *BaseAddress 0, ZeroBits 0, CommitSize 0, SectionOffset NULL, *ViewSize 0,
+	// ViewUnmap (2), AllocationType 500000H (the low 32 bits; P39 tm_nt csr.map used 0), PAGE_READONLY. MEASURED (tm_nt csr.map,
+	// csrc.peb, csrc.map5): STATUS_SUCCESS, a 64K-aligned base (top-down: a second view lies below the first), *ViewSize 100000H,
+	// MEMORY_BASIC_INFORMATION at the base {AllocationBase = base, AllocationProtect PAGE_READONLY, MEM_COMMIT, PAGE_READONLY, MEM_MAPPED,
+	// RegionSize 5000H} - the rest of the view reserved. The CONTENTS a connected client's loader reads (trace e3 / e4, kernelbase
+	// +48904H .. +48A74H: array[1], BASE_STATIC_SERVER_DATA +0 / +10H / +38H / +9E8H; the strings it converts) at the measured offsets:
+	// the server-data array at +750H ([1] = the server's +790H, [0], [2..6] NULL - csrc.array), BASE_STATIC_SERVER_DATA at +790H with
+	// +9E8H = its own server address (csrc.bssd: kernelbase converts the string buffers by + array[1] - [+9E8H] - server base + client
+	// base), +30H .. +3FH zero (csrc.words; kernelbase reads the USHORT at +38H), and three UNICODE_STRINGs {Length, Length + 2, server
+	// pointer} at +0 / +10H / +20H whose NUL-terminated characters lie at +A10H / +A30H / +A60H (csrc.str*, csrc.case): the Windows
+	// directory (= the environment's SystemRoot), the system directory (SystemRoot + "\system32", lower case as measured), the named-object
+	// directory ("\Sessions\<the PEB SessionId>\BaseNamedObjects"). Placeholders: the environment's SystemRoot and session number (from
+	// the capture / the PEB), never the measuring machine's. Every other byte of the view is zero (csrss' shared heap is not modelled; no
+	// path of the loader reads it). Other arguments: stop.
+	reply kernel::map_csr_shared_view( const call& c, const std::string& what )
+	{
+		const uint64_t pbase = c.args[ 2 ], psize = c.args[ 6 ];
+		const uint32_t type = uint32_t( c.args[ 8 ] );
+		if ( c.args[ 1 ] != current_process || c.args[ 3 ] || c.args[ 4 ] || c.args[ 5 ] || uint32_t( c.args[ 7 ] ) != 2 || ( type != 0 && type != 0x500000 ) ||
+			 uint32_t( c.args[ 9 ] ) != page::readonly )
+			return stop_( what + " - other arguments: not measured (tm_nt csr.map / csrc.map5: NtCurrentProcess(), 0, 0, NULL, ViewUnmap, AllocationType 0 / 500000H, PAGE_READONLY)" );
+		if ( !user_buffer( pbase, 8, UC_PROT_READ | UC_PROT_WRITE ) || !user_buffer( psize, 8, UC_PROT_READ | UC_PROT_WRITE ) )
+			return done_( status::access_violation, what + ": BaseAddress / ViewSize not writable" );
+		uint64_t want_base = 0, want_size = 0;
+		get64( pbase, want_base );
+		get64( psize, want_size );
+		if ( want_base || want_size ) return stop_( what + " - *BaseAddress / *ViewSize not 0: not measured" );
+		uint32_t sid = 0;
+		std::string err;
+		e_.read( f_.peb + 0x2C0, &sid, 4, err );
+		const std::string strs[ 3 ] = { f_.system_root, f_.system_root + "\\system32", "\\Sessions\\" + std::to_string( sid ) + "\\BaseNamedObjects" };
+		for ( int k = 0; k < 3; k++ )
+			if ( f_.system_root.empty() || ( strs[ k ].size() + 1 ) * 2 > csr_str_room[ k ] )
+				return stop_( what + " - the environment's SystemRoot \"" + f_.system_root + "\" / session " + std::to_string( sid ) + " does not fit the measured string slots (+A10H / +A30H / +A60H)" );
+		uint64_t base = 0;
+		if ( !find_free( csr_view_size, true, base ) ) return stop_( what + " - no free range for the view" );
+		std::vector<uint8_t> b( size_t( csr_view_committed ), 0 );
+		auto put64 = [ & ]( uint64_t off, uint64_t val ) { std::memcpy( b.data() + off, &val, 8 ); };
+		put64( csr_array + 8, csr_server_base + csr_bssd );                     // array[1] = BASE_STATIC_SERVER_DATA (a server pointer)
+		put64( csr_bssd + csr_bssd_self, csr_server_base + csr_bssd );          // its +9E8H = its own server address
+		for ( int k = 0; k < 3; k++ )
+		{
+			const uint16_t len = uint16_t( strs[ k ].size() * 2 ), max = uint16_t( len + 2 );
+			std::memcpy( b.data() + csr_bssd + 0x10 * k, &len, 2 );
+			std::memcpy( b.data() + csr_bssd + 0x10 * k + 2, &max, 2 );
+			put64( csr_bssd + 0x10 * k + 8, csr_server_base + csr_str_at[ k ] );
+			for ( size_t i = 0; i < strs[ k ].size(); i++ ) b[ size_t( csr_str_at[ k ] + 2 * i ) ] = uint8_t( strs[ k ][ i ] );   // UTF-16LE, ASCII characters, NUL after
+		}
+		if ( !e_.map( base, csr_view_committed, UC_PROT_READ | UC_PROT_WRITE, "CSR shared section view (the connected-client model)", err ) || !e_.write( base, b.data(), b.size(), err ) ||
+			 !e_.protect( base, csr_view_committed, UC_PROT_READ, err ) )
+			return stop_( what + " - mapping the view failed: " + err );
+		struct view vw;
+		vw.base = base;
+		vw.size = csr_view_size;
+		vw.type = mem2::mapped;
+		vw.allocation_protect = page::readonly;
+		vw.pages.assign( size_t( csr_view_size / f_.page_size ), 0 );   // reserved ...
+		for ( uint64_t i = 0; i < csr_view_committed / f_.page_size; i++ ) vw.pages[ size_t( i ) ] = page::readonly;   // ... but the first 5000H
+		vw.name = "CSR shared section";
+		views_[ base ] = vw;
+		reply rr = done_( status::success, what + ": the CSR shared section as a connected client sees it (P40 model; measured: tm_nt csr.map / csrc.*) at " + hex( base ) +
+											   ", ViewSize 100000H (5000H committed PAGE_READONLY, the rest reserved): server-data array at +750H, BASE_STATIC_SERVER_DATA at +790H - \"" +
+											   strs[ 0 ] + "\", \"" + strs[ 1 ] + "\", \"" + strs[ 2 ] + "\" (the environment's), server pointers relative to " + hex( csr_server_base ) );
+		const uint64_t vs = csr_view_size;
+		if ( !put( pbase, &base, 8, rr ) || !put( psize, &vs, 8, rr ) ) return stop_( "writing the result failed after the probe" );
+		return rr;
+	}
+
+	// NtInitializeNlsFiles( *BaseAddress, *DefaultLocaleId, *DefaultCasingTableSize (optional) ) - phnt ntexapi.h:9886-9891. kernelbase's call
+	// (P40 trace e4, system call 103): &BaseAddress, &DefaultLocaleId, DefaultCasingTableSize NULL. MEASURED (tm_nt nls.0 / nls.1):
+	// STATUS_SUCCESS, a 64K-aligned read-only view {MEM_COMMIT, PAGE_READONLY, MEM_MAPPED, RegionSize = the size of <SystemRoot>\System32\
+	// locale.nls rounded up to pages} whose bytes are the file's (every call a new view); DefaultLocaleId = the system default LCID
+	// (= GetSystemDefaultLCID(); the value is not printed). The emulated view: the capture's locale.nls (capture_sysdlls.py --dll
+	// locale.nls; local, never committed) mapped by map_data_view (top-down, read-only, MEM_MAPPED); DefaultLocaleId: the placeholder
+	// 0409H (en-US, [MS-LCID]) - the locale whose ANSI / OEM code pages are the environment's captured 1252 / 437. Not measured (stop): a
+	// DefaultCasingTableSize pointer; no locale.nls in the capture.
+	reply kernel::svc_initialize_nls_files( const call& c )
+	{
+		const uint64_t pbase = c.args[ 0 ], plcid = c.args[ 1 ], pcase = c.args[ 2 ];
+		const std::string what = "NtInitializeNlsFiles( " + hex( pbase ) + ", " + hex( plcid ) + ", " + hex( pcase ) + " )";
+		if ( pcase ) return stop_( what + " - a DefaultCasingTableSize pointer: not measured (tm_nt nls: NULL)" );
+		if ( !f_.files || !f_.files->count( "locale.nls" ) ) return stop_( what + " - the environment's capture holds no locale.nls (capture_sysdlls.py --dll locale.nls)" );
+		if ( !user_buffer( pbase, 8, UC_PROT_WRITE ) || !user_buffer( plcid, 4, UC_PROT_WRITE ) ) return done_( status::access_violation, what + ": BaseAddress / DefaultLocaleId not writable" );
+		uint64_t view = 0;
+		std::string why;
+		if ( !map_data_view( f_.files->at( "locale.nls" ), "locale.nls (NtInitializeNlsFiles)", view, why ) ) return stop_( what + " - " + why );
+		reply rr = done_( status::success, what + ": the capture's locale.nls mapped read-only at " + hex( view ) + " (" + hex( f_.files->at( "locale.nls" ).size() ) +
+												 " bytes), DefaultLocaleId 409H (placeholder: en-US, the captured code pages 1252 / 437; measured: tm_nt nls)" );
+		const uint32_t lcid = 0x409;
+		if ( !put( pbase, &view, 8, rr ) || !put( plcid, &lcid, 4, rr ) ) return stop_( "writing the result failed after the probe" );
+		return rr;
+	}
+
+	// NtCreateFile( *FileHandle, DesiredAccess, ObjectAttributes, IoStatusBlock, AllocationSize, FileAttributes, ShareAccess,
+	// CreateDisposition, CreateOptions, EaBuffer, EaLength ) - phnt ntioapi.h (the WDK's ZwCreateFile). P40 FRONTIER (the stop the user
+	// asked for: "a service that cannot be measured safely"): after the CSR connection and the NLS files, kernelbase's start of a
+	// CONSOLE-subsystem process whose RTL_USER_PROCESS_PARAMETERS carry no console (ConsoleHandle 0 - the environment's parameters; a process
+	// started from a GUI parent without a console) allocates a NEW console: NtCreateFile( "\Device\ConDrv\Server", 12019FH, ... ) creates a
+	// console-server object on the console driver, and kernelbase then starts a console host process (conhost.exe) for it. Answering means
+	// modelling the console driver and starting / being a console host - not a service our own test PE can measure from inside itself
+	// without creating a console server and a further process. A loud stop with the decoded call. Every other NtCreateFile: not handled
+	// here (the generic loud stop of a known, unimplemented service).
+	bool kernel::svc_create_file_measured( const call& c, reply& r )
+	{
+		if ( !c.stack_args ) return false;
+		object_attributes oa;
+		std::string why;
+		if ( !guest_object_attributes( c.args[ 2 ], oa, why ) || lower( oa.name ) != "\\device\\condrv\\server" ) return false;
+		std::string a;
+		for ( int i = 0; i < 11; i++ ) a += ( i ? ", " : "" ) + hex( c.args[ size_t( i ) ] );
+		r = stop_( "NtCreateFile( " + a + " ) \"" + oa.name + "\" attributes " + hex( oa.attributes ) +
+				   " - kernelbase allocates a NEW console for this console-subsystem process (its process parameters carry no console): a console-server object on the console "
+				   "driver, then a console host process - not measurable safely from inside our own test PE (P40 frontier)" );
+		return true;
 	}
 
 	// the common part of the measured object-creating services: ObjectAttributes NULL and a measured access mask only (else a loud

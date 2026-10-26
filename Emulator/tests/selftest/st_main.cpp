@@ -3013,10 +3013,111 @@ namespace
 		w5_put( *p, S + 0xC8, 0 );
 		w5_put( *p, S + 0xD0, 0 );
 		r = w5_call( *p, "NtMapViewOfSection", { cs, cp, S + 0xC8, 0, 0, 0, S + 0xD0, 2, 0, 2 } );
-		CHECK( w5_stop( r ) && r.text.find( "P39 frontier" ) != std::string::npos, "csr.map: the shared section's contents - the P39 frontier: a loud stop" );
+		CHECK( w5_ok( r ) && rd( S + 0xD0, 8 ) == 0x100000, "csr.map: the shared section's view (P39: a loud stop; P40 U2065: the connected-client model): " + r.text );
 		ms_ustr( *p, S + 0xE0, S + 0xF00, "\\Sessions\\1\\Windows\\ApiPort" );
 		r = w5_call( *p, "NtConnectPort", { S + 0xD8, S + 0xE0, 0, 0, 0, 0, 0, 0 } );
-		CHECK( w5_stop( r ) && r.text.find( "P39 frontier" ) != std::string::npos, "NtConnectPort to the CSR API port - the P39 frontier: a loud stop: " + r.text );
+		CHECK( w5_stop( r ) && r.text.find( "not measured" ) != std::string::npos, "NtConnectPort without views / connection information: not measured, a loud stop: " + r.text );
+	}
+
+	// nt_measured_csr (P40, U2064-U2067): the model of a CONNECTED CSR client - NtConnectPort to the session's API port with the loader's
+	// shape (P40 trace e1), the shared section's view as such a client sees it (tm_nt csrc.*), NtInitializeNlsFiles (tm_nt nls; no
+	// locale.nls in this process' facts: a loud stop), the console-driver frontier (NtCreateFile \Device\ConDrv\Server: a loud stop)
+	void t_nt_measured_csr()
+	{
+		std::string err;
+		auto p = w5_create( w5_build( { w5_trivial }, err ), emu::env_boundary::sys, err );
+		CHECK( p != nullptr, "process: " + err );
+		if ( !p ) return;
+		namespace N = emu::nt;
+		const uint64_t S = w5_scratch, cp = N::current_process;
+		auto rd = [ & ]( uint64_t va, int n ) { return w4_read( *p, va, n ); };
+		auto oa = [ & ]( uint64_t at, uint64_t root, const std::string& name ) {
+			ms_ustr( *p, at + 0x30, at + 0x40, name );
+			w5_put( *p, at, 0x30 );
+			w5_put( *p, at + 8, root );
+			w5_put( *p, at + 0x10, at + 0x30 );
+			w5_put( *p, at + 0x18, 0x40 );
+			w5_put( *p, at + 0x20, 0 );
+			w5_put( *p, at + 0x28, 0 );
+		};
+		const uint64_t O = S + 0x1000, Q = S + 0x200, CV = S + 0x220, SV = S + 0x260, CI = S + 0x280, PN = S + 0x300;
+		// the loader's order (P40 trace e1): the shared section opened, the page-file section created, the port connected
+		oa( O, 0, "\\Sessions\\1\\Windows\\SharedSection" );
+		CHECK( w5_ok( w5_call( *p, "NtOpenSection", { S, 4, O } ) ), "csr.open" );
+		const uint64_t cs = rd( S, 8 );
+		w5_put( *p, S + 0x10, 0x10000 );
+		CHECK( w5_ok( w5_call( *p, "NtCreateSection", { S + 8, 0xF001F, 0, S + 0x10, 4, 0x8000000, 0 } ) ), "the page-file section of 10000H" );
+		const uint64_t ps = rd( S + 8, 8 );
+		auto setup = [ & ]( uint64_t section ) {
+			w5_put( *p, Q, 0x0000000200000000ull );           // SECURITY_QUALITY_OF_SERVICE: Length (not set by the caller), ImpersonationLevel 2
+			w5_put( *p, Q + 8, 0x0101 );                        // ContextTrackingMode 1, EffectiveOnly 1
+			const uint64_t cvv[ 6 ] = { 0x30, section, 0, 0x10000, 0, 0 };
+			for ( int k = 0; k < 6; k++ ) w5_put( *p, CV + 8 * k, cvv[ k ] );
+			for ( int k = 0; k < 3; k++ ) w5_put( *p, SV + 8 * k, k ? 0 : 0x18 );
+			for ( int k = 0; k < 6; k++ ) w5_put( *p, CI + 8 * k, k == 4 ? 1 : 0xCCCCCCCCCCCCCCCCull );   // +20H ServerId 1 (+24H set below)
+			w5_put( *p, CI + 0x20, ( uint64_t( 0xCCCCCCCC ) << 32 ) | 1 );
+			w5_put( *p, S + 0x40, 0x30 );                     // ConnectionInformationLength
+			w5_put( *p, S + 0x48, 0xCCCCCCCCCCCCCCCCull );    // MaxMessageLength (not written)
+			w5_put( *p, S + 0x50, 0xCCCCCCCCCCCCCCCCull );    // PortHandle
+		};
+		ms_ustr( *p, PN, PN + 0x20, "\\Sessions\\2\\Windows\\ApiPort" );
+		setup( ps );
+		CHECK( w5_stop( w5_call( *p, "NtConnectPort", { S + 0x50, PN, Q, CV, SV, S + 0x48, CI, S + 0x40 } ) ), "another session's API port: stop" );
+		ms_ustr( *p, PN, PN + 0x20, "\\Sessions\\1\\Windows\\ApiPort" );
+		setup( cs );
+		CHECK( w5_stop( w5_call( *p, "NtConnectPort", { S + 0x50, PN, Q, CV, SV, S + 0x48, CI, S + 0x40 } ) ), "a client view of another section: stop" );
+		setup( ps );
+		w5_put( *p, CI + 0x20, ( uint64_t( 0xCCCCCCCC ) << 32 ) | 2 );
+		CHECK( w5_stop( w5_call( *p, "NtConnectPort", { S + 0x50, PN, Q, CV, SV, S + 0x48, CI, S + 0x40 } ) ), "another ServerId: stop" );
+		setup( ps );
+		auto r = w5_call( *p, "NtConnectPort", { S + 0x50, PN, Q, CV, SV, S + 0x48, CI, S + 0x40 } );
+		const uint64_t port = rd( S + 0x50, 8 ), view = rd( CV + 0x20, 8 ), remote = rd( CV + 0x28, 8 ), srv = rd( CI, 8 ), arr = rd( CI + 8, 8 ), pid = rd( CI + 0x10, 8 );
+		CHECK( w5_ok( r ) && port && port % 4 == 0, "connected: an ALPC port handle (csrc.ntdll): " + r.text );
+		CHECK( view && view % 0x10000 == 0 && rd( view, 8 ) == 0 && rd( view + 0xFFF8, 8 ) == 0 && remote && remote != view, "the client view: 64K-aligned, zero-filled 10000H, ViewRemoteBase non-zero, not the view" );
+		CHECK( srv && srv % 0x10000 == 0 && arr == srv + 0x750 && pid && pid % 4 == 0 && rd( CI + 0x24, 4 ) == 0 && rd( CI + 0x20, 4 ) == 1,
+			   "ConnectionInformation: +0 the server's view base (64K-aligned), +8 = +0 + 750H, +10H a pid shape, +24H STATUS_SUCCESS, +20H unchanged" );
+		CHECK( rd( CI + 0x18, 8 ) == 0xCCCCCCCCCCCCCCCCull && rd( CI + 0x28, 8 ) == 0xCCCCCCCCCCCCCCCCull && rd( S + 0x48, 8 ) == 0xCCCCCCCCCCCCCCCCull,
+			   "not written: the other ConnectionInformation bytes, MaxMessageLength" );
+		CHECK( w5_stop( w5_call( *p, "NtConnectPort", { S + 0x50, PN, Q, CV, SV, S + 0x48, CI, S + 0x40 } ) ), "a second connection: stop" );
+		// the shared section's view (tm_nt csrc.*): the loader's call (AllocationType 500000H)
+		w5_put( *p, S + 0x58, 0 );
+		w5_put( *p, S + 0x60, 0 );
+		CHECK( w5_stop( w5_call( *p, "NtMapViewOfSection", { cs, cp, S + 0x58, 0, 0, 0, S + 0x60, 2, 0x500000, 4 } ) ), "csr.map PAGE_READWRITE: stop" );
+		r = w5_call( *p, "NtMapViewOfSection", { cs, cp, S + 0x58, 0, 0, 0, S + 0x60, 2, 0x500000, 2 } );
+		const uint64_t b = rd( S + 0x58, 8 );
+		CHECK( w5_ok( r ) && b && b % 0x10000 == 0 && rd( S + 0x60, 8 ) == 0x100000, "csrc.map5: a 64K-aligned view, ViewSize 100000H: " + r.text );
+		const uint64_t a1 = rd( b + 0x750 + 8, 8 ), bssd = a1 - srv + b;
+		CHECK( rd( b + 0x750, 8 ) == 0 && a1 == srv + 0x790 && rd( bssd + 0x9E8, 8 ) == a1 && rd( bssd + 0x30, 8 ) == 0 && rd( bssd + 0x38, 8 ) == 0,
+			   "csrc.array / csrc.bssd / csrc.words: [0] NULL, [1] = the server's +790H, +9E8H = itself, +30H..+3FH zero" );
+		auto str = [ & ]( uint64_t us ) {
+			std::string s;
+			const uint64_t len = rd( us, 2 ), buf = rd( us + 8, 8 ) + ( a1 - rd( bssd + 0x9E8, 8 ) ) - srv + b;   // kernelbase's conversion (P40 trace e3)
+			for ( uint64_t i = 0; i < len / 2 && i < 128; i++ ) s += char( rd( buf + 2 * i, 2 ) );
+			return s + ( rd( us + 2, 2 ) == len + 2 && rd( buf + len, 2 ) == 0 ? "" : "<no NUL / MaximumLength>" );
+		};
+		CHECK( str( bssd ) == "C:\\Windows" && str( bssd + 0x10 ) == "C:\\Windows\\system32" && str( bssd + 0x20 ) == "\\Sessions\\1\\BaseNamedObjects",
+			   "csrc.str*: the environment's Windows / system / named-object directories (got \"" + str( bssd ) + "\", \"" + str( bssd + 0x10 ) + "\", \"" + str( bssd + 0x20 ) + "\")" );
+		CHECK( rd( bssd + 8, 8 ) == srv + 0xA10 && rd( bssd + 0x18, 8 ) == srv + 0xA30 && rd( bssd + 0x28, 8 ) == srv + 0xA60, "csrc.str*: the buffers at the server's +A10H / +A30H / +A60H" );
+		r = w5_call( *p, "NtQueryVirtualMemory", { cp, b, 0, S + 0x400, 0x30, S + 0x3F8 } );
+		CHECK( w5_ok( r ) && rd( S + 0x408, 8 ) == b && rd( S + 0x410, 4 ) == 2 && rd( S + 0x418, 8 ) == 0x5000 && rd( S + 0x420, 4 ) == 0x1000 && rd( S + 0x424, 4 ) == 2 &&
+				   rd( S + 0x428, 4 ) == 0x40000, "csrc.peb MBI: AllocationBase = base, PAGE_READONLY, RegionSize 5000H, MEM_COMMIT, PAGE_READONLY, MEM_MAPPED: " + r.text );
+		r = w5_call( *p, "NtQueryVirtualMemory", { cp, b + 0x5000, 0, S + 0x400, 0x30, S + 0x3F8 } );
+		CHECK( w5_ok( r ) && rd( S + 0x420, 4 ) == 0x2000, "the rest of the view: MEM_RESERVE: " + r.text );
+		w5_put( *p, S + 0x58, 0 );
+		w5_put( *p, S + 0x60, 0 );
+		r = w5_call( *p, "NtMapViewOfSection", { cs, cp, S + 0x58, 0, 0, 0, S + 0x60, 2, 0x500000, 2 } );
+		CHECK( w5_ok( r ) && rd( S + 0x58, 8 ) < b, "csrc.map5: a second view, below the first (top-down)" );
+		// NtInitializeNlsFiles (tm_nt nls): this process' facts hold no capture files - a loud stop naming locale.nls; a casing pointer: stop
+		r = w5_call( *p, "NtInitializeNlsFiles", { S + 0x68, S + 0x70, 0 } );
+		CHECK( w5_stop( r ) && r.text.find( "locale.nls" ) != std::string::npos, "nls: no locale.nls in the facts: a loud stop: " + r.text );
+		CHECK( w5_stop( w5_call( *p, "NtInitializeNlsFiles", { S + 0x68, S + 0x70, S + 0x78 } ) ), "nls: a DefaultCasingTableSize pointer: stop" );
+		// the P40 frontier: NtCreateFile "\Device\ConDrv\Server" (a new console); any other NtCreateFile: the generic stop
+		oa( O, 0, "\\Device\\ConDrv\\Server" );
+		r = w5_call( *p, "NtCreateFile", { S + 0x80, 0x12019F, O, S + 0x88, 0, 0, 7, 2, 0, 0, 0 } );
+		CHECK( w5_stop( r ) && r.text.find( "P40 frontier" ) != std::string::npos, "the console driver's server object: the P40 frontier, a loud stop: " + r.text );
+		oa( O, 0, "\\??\\C:\\Windows\\win.ini" );
+		r = w5_call( *p, "NtCreateFile", { S + 0x80, 0x120089, O, S + 0x88, 0, 0, 7, 1, 0, 0, 0 } );
+		CHECK( w5_stop( r ) && r.text.find( "not implemented in milestone M5" ) != std::string::npos, "another NtCreateFile: the generic loud stop" );
 	}
 
 	struct test_case { const char* name; void ( *fn )(); };
@@ -3077,6 +3178,7 @@ namespace
 		{ "nt_measured_services", t_nt_measured_services },
 		{ "nt_measured_pool", t_nt_measured_pool },
 		{ "nt_measured_loader", t_nt_measured_loader },
+		{ "nt_measured_csr", t_nt_measured_csr },
 	};
 }
 

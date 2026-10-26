@@ -14,7 +14,7 @@ Checked:
      is needed)
   3. tm_nt.exe is our own test PE: it is built into build\\x64\\<cfg>\\tests\\test_pe\\ and never run by the emulator
 The emulator side (the answers implemented from these lines) is checked by emu-selftest nt_measured_services / nt_measured_pool /
-nt_measured_loader and by suite win_env_sys_loader. Exit 0 = PASS, 1 = FAIL, 2 = usage.
+nt_measured_loader / nt_measured_csr (P40) and by suite win_env_sys_loader. Exit 0 = PASS, 1 = FAIL, 2 = usage.
 usage: python -I nt_measured.py REPO_ROOT TESTS_DIR
 """
 import hashlib
@@ -26,7 +26,7 @@ import sys
 
 sys.dont_write_bytecode = True
 HERE = os.path.dirname(os.path.abspath(__file__))
-CASES = ['sat', 'qsi', 'hvp', 'qip', 'wcp', 'qsix', 'iocp', 'wkf', 'tmr2', 'awcp', 'swf', 'etw', 'kd', 'of', 'tls', 'ahc', 'vmi', 'csr', 'sec']
+CASES = ['sat', 'qsi', 'hvp', 'qip', 'wcp', 'qsix', 'iocp', 'wkf', 'tmr2', 'awcp', 'swf', 'etw', 'kd', 'of', 'tls', 'ahc', 'vmi', 'csr', 'sec', 'csrc', 'nls']   # P40 (U2064): + csrc (what a connected CSR client sees), nls
 # hex constants (9 .. 16 digits) that may appear: system constants and the pre-set fill pattern - never an address of the run
 ALLOWED_HEX = {'FFFF800000000000', 'FFFFFFFFFF676980', 'FFFFFFFFDC3CBA00', 'FFFFFFFFFF676980H', 'CCCCCCCCCCCCCCCC'}
 

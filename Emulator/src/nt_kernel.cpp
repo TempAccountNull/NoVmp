@@ -117,6 +117,7 @@ namespace emu::nt
 		if ( !round_up( std::max( f_.min_app_address, limit_low ), g, lo ) || span == 0 || user_max < lo || span - 1 > user_max - lo ) return false;
 		auto regions = e_.regions();   // everything mapped (environment, views, committed private pages) ...
 		for ( const auto& [ ab, a ] : allocs_ ) regions.push_back( { a.base, a.size, 0, "private reservation" } );   // ... + the reservations (U2035)
+		for ( const auto& [ vb, v ] : views_ ) regions.push_back( { v.base, v.size, 0, "section view" } );   // ... + whole views, reserved parts too (P40, U2065)
 		auto overlaps = [ & ]( uint64_t b ) {
 			const uint64_t l = b + ( span - 1 );
 			for ( const auto& r : regions )
@@ -588,6 +589,8 @@ namespace emu::nt
 			}
 			for ( const auto& [ ab, a ] : allocs_ )   // U2035: the (unmapped) reservations end a free run too
 				if ( a.base > pg ) next = std::min( next, a.base );
+			for ( const auto& [ vb, v ] : views_ )    // P40 (U2065): so do views with reserved (unmapped) pages
+				if ( v.base > pg ) next = std::min( next, v.base );
 			m.base = pg;
 			m.region = next - pg;
 			m.state = mem::free_;

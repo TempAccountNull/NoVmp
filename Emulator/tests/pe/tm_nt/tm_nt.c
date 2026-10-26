@@ -1062,12 +1062,216 @@ static void case_qsix( void )
 	}
 }
 
+/* ------------------------------------------------------------------------------------------------ what a CONNECTED CSR client sees (P40)
+ * USER DECISION 2026-10-26 (plan 3.M5): measure what a process that its own loader connected to the session's CSR server SEES - this
+ * program reads ONLY its own memory (its PEB, the read-only view of the CSR shared section its kernelbase mapped, its own ntdll's data,
+ * its own handle table) after its own start-up; it NEVER sends a message to csrss, never opens csrss' process, never calls
+ * NtConnectPort / NtRequestWaitReplyPort. Where the members are: the PEB (phnt ntpebteb.h:537 ReadOnlySharedMemoryBase 88H, :542
+ * SharedData 90H, :547 ReadOnlyStaticServerData 98H, :882 CsrServerReadOnlySharedMemoryBase 380H); how ntdll / kernelbase use them -
+ * the emulated trace of the real ntdll / kernelbase (P40 runs e2 / e3): ntdll CsrClientConnectToServer stores ConnectionInformation +0
+ * in PEB 380H (the server's view base), maps the section anywhere (base 0, ViewUnmap, AllocationType 500000H, PAGE_READONLY) into PEB 88H,
+ * sets PEB 98H = (+8) - (+0) + the client base, keeps ViewSize at ntdll+16CC38H, (+10H) at ntdll+16CC30H, the client view's
+ * ViewRemoteBase - ViewBase at ntdll+16CC40H, the port handle at ntdll+16CC48H; kernelbase takes array[1] (BASESRV, ReactOS
+ * csrmsg.h / base.h) - server pointers, converted by - PEB 380H + PEB 88H; the strings at +0 / +10H by + (array[1] - [BSSD+9E8H]).
+ * The ntdll offsets hold only for the ntdll build of the capture (nt_measured.py runs the native reference only then).
+ * Placeholders: every address as an offset from the shared view's base (the server's or the client's) or a relation; the server
+ * process id and the port handle as shapes; the strings compared (equal / not) with this process' own GetWindowsDirectoryW(),
+ * GetSystemDirectoryW() and "\Sessions\<the PEB SessionId>\BaseNamedObjects" - never printed. */
+__declspec( dllimport ) HANDLE NTAPI CsrGetProcessId( void );   /* ntdll export; ReactOS subsystems/csr/csrlib/connect.c:505-510 */
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtQueryObject( HANDLE Handle, ULONG ObjectInformationClass, PVOID ObjectInformation, ULONG ObjectInformationLength,
+														 PULONG ReturnLength );   /* phnt ntobapi.h:233 */
+
+static void tm_rel( char* out, size_t cap, ULONG_PTR v, ULONG_PTR base, ULONG_PTR size )
+{
+	if ( !v ) snprintf( out, cap, "NULL" );
+	else if ( v >= base && v - base < size ) snprintf( out, cap, "<base+%IXH>", v - base );
+	else snprintf( out, cap, "<outside>" );
+}
+
+static int tm_ustr_eq( const TM_USTR* u, const WCHAR* client_buf, const wchar_t* want )
+{
+	size_t n = wcslen( want );
+	return u->Length == n * 2 && client_buf && !_wcsnicmp( client_buf, want, n );
+}
+
+static void case_csrc( void )
+{
+	unsigned char* peb = (unsigned char*)(ULONG_PTR)__readgsqword( 0x60 );
+	const ULONG_PTR base = *(ULONG_PTR*)( peb + 0x88 ), shared = *(ULONG_PTR*)( peb + 0x90 ), ssd = *(ULONG_PTR*)( peb + 0x98 ), srv = *(ULONG_PTR*)( peb + 0x380 );
+	const ULONG sid = *(ULONG*)( peb + 0x2C0 );
+	MEMORY_BASIC_INFORMATION mbi;
+	SIZE_T rl = 0, vsize = 0;
+	char a[ 64 ], b[ 64 ];
+	unsigned char* nt = (unsigned char*)GetModuleHandleW( L"ntdll.dll" );
+	int k;
+	memset( &mbi, 0, sizeof( mbi ) );
+	NtQueryVirtualMemory( (HANDLE)(LONG_PTR)-1, (PVOID)base, 0, &mbi, sizeof( mbi ), &rl );
+	vsize = mbi.RegionSize;
+	tm_rel( a, sizeof( a ), ssd, base, vsize );
+	printf( "tm_nt csrc.peb: PEB ReadOnlySharedMemoryBase (88H) %s, 64K-aligned %s, MBI AllocationBase = it %s, AllocationProtect %lXH, State %lXH, Protect %lXH, Type %lXH, RegionSize %zXH; "
+			"SharedData (90H) %s; ReadOnlyStaticServerData (98H) %s; CsrServerReadOnlySharedMemoryBase (380H) %s, 64K-aligned %s, = ReadOnlySharedMemoryBase %s\n",
+			base ? "<va>" : "NULL", ( base & 0xFFFF ) ? "no" : "yes", mbi.AllocationBase == (PVOID)base ? "yes" : "no", (unsigned long)mbi.AllocationProtect, (unsigned long)mbi.State,
+			(unsigned long)mbi.Protect, (unsigned long)mbi.Type, mbi.RegionSize, shared ? "<ptr>" : "NULL", a, srv ? "<va>" : "NULL", ( srv & 0xFFFF ) ? "no" : "yes",
+			srv == base ? "yes" : "no" );
+	if ( !base || !ssd || !srv ) return;
+	/* the server-data pointer array: server addresses (relative to the server's view base) */
+	printf( "tm_nt csrc.array: ReadOnlyStaticServerData[0..7] (server pointers):" );
+	for ( k = 0; k < 8; k++ )
+	{
+		tm_rel( a, sizeof( a ), ( (ULONG_PTR*)ssd )[ k ], srv, vsize );
+		printf( " [%d] %s", k, a );
+	}
+	printf( "\n" );
+	{
+		const ULONG_PTR a1 = ( (ULONG_PTR*)ssd )[ 1 ];
+		const unsigned char* bssd = (const unsigned char*)( a1 - srv + base );
+		const ULONG_PTR f9e8 = *(const ULONG_PTR*)( bssd + 0x9E8 );
+		const ULONG_PTR adj = a1 - f9e8 - srv + base;   /* kernelbase's string conversion (P40 trace e3) */
+		static const char* const names[ 3 ] = { "+0", "+10H", "+20H" };
+		WCHAR wd[ MAX_PATH ], sd[ MAX_PATH ], bno[ 128 ];
+		GetWindowsDirectoryW( wd, MAX_PATH );
+		GetSystemDirectoryW( sd, MAX_PATH );
+		_snwprintf( bno, 127, L"\\Sessions\\%lu\\BaseNamedObjects", (unsigned long)sid );
+		tm_rel( a, sizeof( a ), a1, srv, vsize );
+		tm_rel( b, sizeof( b ), f9e8, srv, vsize );
+		printf( "tm_nt csrc.bssd: array[1] (BASE_STATIC_SERVER_DATA) %s; its +9E8H %s, = array[1] %s; within the view %s\n", a, b, f9e8 == a1 ? "yes" : "no",
+				( a1 - srv + 0x1000 <= vsize ) ? "yes" : "no" );
+		for ( k = 0; k < 3; k++ )
+		{
+			const TM_USTR* u = (const TM_USTR*)( bssd + 0x10 * k );
+			const WCHAR* cb = u->Buffer ? (const WCHAR*)( (ULONG_PTR)u->Buffer + adj ) : NULL;
+			const ULONG_PTR cbv = (ULONG_PTR)cb;
+			const int in = cb && cbv >= base && cbv - base < vsize;
+			tm_rel( a, sizeof( a ), (ULONG_PTR)u->Buffer, f9e8, 0x1000000 );
+			printf( "tm_nt csrc.str%s: UNICODE_STRING at BSSD%s: Length %XH, MaximumLength %XH, Buffer = BSSD+9E8H-relative %s, converted inside the view %s; = GetWindowsDirectoryW() %s, "
+					"= GetSystemDirectoryW() %s, = \"\\Sessions\\<the PEB SessionId>\\BaseNamedObjects\" %s\n",
+					names[ k ], names[ k ], u->Length, u->MaximumLength, a, in ? "yes" : "no", in && tm_ustr_eq( u, cb, wd ) ? "yes" : "no", in && tm_ustr_eq( u, cb, sd ) ? "yes" : "no",
+					in && tm_ustr_eq( u, cb, bno ) ? "yes" : "no" );
+		}
+		{
+			/* the letter case of the parts after the Windows directory (the drive / directory name itself is the environment's
+			 * SystemRoot, compared above): "\system32" / "\System32", "\Sessions\" / "\BaseNamedObjects" exactly (case-sensitive) */
+			const TM_USTR* u0 = (const TM_USTR*)bssd;
+			const TM_USTR* u1 = (const TM_USTR*)( bssd + 0x10 );
+			const TM_USTR* u2 = (const TM_USTR*)( bssd + 0x20 );
+			const WCHAR* c1 = (const WCHAR*)( (ULONG_PTR)u1->Buffer + adj );
+			const WCHAR* c2 = (const WCHAR*)( (ULONG_PTR)u2->Buffer + adj );
+			const int tail = u1->Length == u0->Length + 18;
+			printf( "tm_nt csrc.case: BSSD+10H = BSSD+0 + 9 characters %s, tail \"\\system32\" (case-sensitive) %s, \"\\System32\" %s; BSSD+20H case-sensitive = \"\\Sessions\\<the PEB SessionId>\\BaseNamedObjects\" %s; "
+					"the strings NUL-terminated (MaximumLength = Length + 2, a 0 character after) %s\n",
+					tail ? "yes" : "no", tail && !wcsncmp( c1 + u0->Length / 2, L"\\system32", 9 ) ? "yes" : "no", tail && !wcsncmp( c1 + u0->Length / 2, L"\\System32", 9 ) ? "yes" : "no",
+					u2->Length == wcslen( bno ) * 2 && !wcsncmp( c2, bno, wcslen( bno ) ) ? "yes" : "no",
+					u0->MaximumLength == u0->Length + 2 && u1->MaximumLength == u1->Length + 2 && u2->MaximumLength == u2->Length + 2 &&
+							!( (const WCHAR*)( (ULONG_PTR)u0->Buffer + adj ) )[ u0->Length / 2 ] && !c1[ u1->Length / 2 ] && !c2[ u2->Length / 2 ]
+						? "yes"
+						: "no" );
+		}
+		printf( "tm_nt csrc.words: BSSD +30H..+3EH (USHORT):" );
+		for ( k = 0; k < 8; k++ ) printf( " %04X", *(const USHORT*)( bssd + 0x30 + 2 * k ) );
+		printf( "\n" );
+	}
+	/* ntdll's own data (the connection's results, P40 trace e2 #1190648-#1190653) - the capture's ntdll build only */
+	{
+		const ULONG_PTR pid = *(ULONG_PTR*)( nt + 0x16CC30 ), vs = *(ULONG_PTR*)( nt + 0x16CC38 ), delta = *(ULONG_PTR*)( nt + 0x16CC40 );
+		const HANDLE port = *(HANDLE*)( nt + 0x16CC48 );
+		unsigned char ti[ 0x400 ];
+		ULONG trl = 0;
+		TM_NTSTATUS st;
+		char tn[ 64 ] = "";
+		memset( ti, 0, sizeof( ti ) );
+		st = NtQueryObject( port, 2, ti, sizeof( ti ), &trl );   /* ObjectTypeInformation: OBJECT_TYPE_INFORMATION starts with TypeName (UNICODE_STRING) */
+		if ( st >= 0 )
+		{
+			const TM_USTR* u = (const TM_USTR*)ti;
+			for ( k = 0; k < u->Length / 2 && k < 60; k++ ) tn[ k ] = ( u->Buffer[ k ] >= 0x20 && u->Buffer[ k ] < 0x7F ) ? (char)u->Buffer[ k ] : '?';
+			tn[ k ] = 0;
+		}
+		printf( "tm_nt csrc.ntdll: ntdll+16CC30H %s, = CsrGetProcessId() %s, multiple of 4 %s; ntdll+16CC38H %zXH (= the view's RegionSize %s); ntdll+16CC40H (client view remote delta) %s; "
+				"ntdll+16CC48H (port handle) %s, NtQueryObject(ObjectTypeInformation) -> status %08lXH, type \"%s\"\n",
+				pid ? "<non-zero>" : "0", pid == (ULONG_PTR)CsrGetProcessId() ? "yes" : "no", ( pid & 3 ) ? "no" : "yes", (size_t)vs, vs == vsize ? "yes" : "no", delta ? "<non-zero>" : "0",
+				tm_hshape( port ), (unsigned long)st, tn );
+	}
+	/* the loader's map call itself on a second view of the section (P40 trace e1, system call 100): base 0, ViewUnmap 2, AllocationType
+	 * 500000H, PAGE_READONLY; the second view's contents are not read */
+	{
+		static wchar_t name[ 128 ];
+		TM_USTR n;
+		TM_OA oa;
+		HANDLE s = NULL;
+		PVOID vb = NULL;
+		SIZE_T sz = 0;
+		TM_NTSTATUS st;
+		_snwprintf( name, 127, L"\\Sessions\\%lu\\Windows\\SharedSection", (unsigned long)sid );
+		tm_ustr( &n, name );
+		tm_oa( &oa, NULL, &n );
+		st = NtOpenSection( &s, 4, &oa );
+		if ( st >= 0 )
+		{
+			st = NtMapViewOfSection( s, (HANDLE)(LONG_PTR)-1, &vb, 0, 0, NULL, &sz, 2, 0x500000, 2 );
+			memset( &mbi, 0, sizeof( mbi ) );
+			if ( st >= 0 ) NtQueryVirtualMemory( (HANDLE)(LONG_PTR)-1, vb, 0, &mbi, sizeof( mbi ), &rl );
+			printf( "tm_nt csrc.map5: NtMapViewOfSection(the section, -1, &base (0), 0, 0, NULL, &size (0), ViewUnmap 2, 500000H, PAGE_READONLY) -> status %08lXH, ViewSize %zXH, "
+					"64K-aligned %s, above the first view %s, MBI AllocationProtect %lXH State %lXH Protect %lXH Type %lXH RegionSize %zXH",
+					(unsigned long)st, sz, ( (ULONG_PTR)vb & 0xFFFF ) ? "no" : "yes", (ULONG_PTR)vb > base ? "yes" : "no", (unsigned long)mbi.AllocationProtect, (unsigned long)mbi.State,
+					(unsigned long)mbi.Protect, (unsigned long)mbi.Type, mbi.RegionSize );
+			if ( st >= 0 ) printf( "; unmap -> %08lXH", (unsigned long)NtUnmapViewOfSection( (HANDLE)(LONG_PTR)-1, vb ) );
+			printf( "\n" );
+			NtClose( s );
+		}
+		else
+			printf( "tm_nt csrc.map5: NtOpenSection -> status %08lXH\n", (unsigned long)st );
+	}
+}
+
+/* ------------------------------------------------------------------------------------------------ NtInitializeNlsFiles (P40)
+ * phnt ntexapi.h:9886-9891 NtInitializeNlsFiles( *BaseAddress, *DefaultLocaleId, *DefaultCasingTableSize (optional) ). kernelbase's call
+ * (P40 trace e4, system call 103): &BaseAddress on the stack, DefaultLocaleId into its own data, DefaultCasingTableSize NULL. Measured
+ * here with the same shape (twice): status, the view (alignment, MEMORY_BASIC_INFORMATION, size against the file
+ * <SystemRoot>\System32\locale.nls, the bytes equal to the file's), the locale id as a relation only (= GetSystemDefaultLCID() /
+ * GetUserDefaultLCID(): yes / no; the value is not printed). */
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtInitializeNlsFiles( PVOID* BaseAddress, PLCID DefaultLocaleId, PLARGE_INTEGER DefaultCasingTableSize );
+static void case_nls( void )
+{
+	int q;
+	WCHAR path[ MAX_PATH ];
+	HANDLE f;
+	DWORD fsz = 0, got = 0;
+	static unsigned char file[ 0x200000 ];
+	GetSystemDirectoryW( path, MAX_PATH );
+	wcscat_s( path, MAX_PATH, L"\\locale.nls" );
+	f = CreateFileW( path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL );
+	if ( f != INVALID_HANDLE_VALUE )
+	{
+		fsz = GetFileSize( f, NULL );
+		if ( fsz > sizeof( file ) || !ReadFile( f, file, fsz, &got, NULL ) ) got = 0;
+		CloseHandle( f );
+	}
+	for ( q = 0; q < 2; q++ )
+	{
+		PVOID b = (PVOID)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull;
+		LCID lc = 0xCCCCCCCC;
+		MEMORY_BASIC_INFORMATION mbi;
+		SIZE_T rl = 0;
+		TM_NTSTATUS st = NtInitializeNlsFiles( &b, &lc, NULL );
+		memset( &mbi, 0, sizeof( mbi ) );
+		if ( st >= 0 ) NtQueryVirtualMemory( (HANDLE)(LONG_PTR)-1, b, 0, &mbi, sizeof( mbi ), &rl );
+		printf( "tm_nt nls.%d: NtInitializeNlsFiles(&base, &lcid, NULL) -> status %08lXH, base 64K-aligned %s, MBI AllocationBase = base %s, AllocationProtect %lXH, State %lXH, Protect %lXH, "
+				"Type %lXH, RegionSize %zXH; locale.nls %lXH bytes (read %s), the view's first %lXH bytes = the file %s; lcid = GetSystemDefaultLCID() %s, = GetUserDefaultLCID() %s",
+				q, (unsigned long)st, ( (ULONG_PTR)b & 0xFFFF ) ? "no" : "yes", mbi.AllocationBase == b ? "yes" : "no", (unsigned long)mbi.AllocationProtect, (unsigned long)mbi.State,
+				(unsigned long)mbi.Protect, (unsigned long)mbi.Type, mbi.RegionSize, (unsigned long)fsz, got == fsz && fsz ? "yes" : "no", (unsigned long)fsz,
+				st >= 0 && got == fsz && fsz && mbi.RegionSize >= fsz && !memcmp( b, file, fsz ) ? "yes" : "no", lc == GetSystemDefaultLCID() ? "yes" : "no",
+				lc == GetUserDefaultLCID() ? "yes" : "no" );
+		if ( st >= 0 ) printf( "; unmap -> %08lXH", (unsigned long)NtUnmapViewOfSection( (HANDLE)(LONG_PTR)-1, b ) );
+		printf( "\n" );
+	}
+}
+
 struct tm_case
 {
 	const char* name;
 	void ( *fn )( void );
 };
-static const struct tm_case g_cases[] = { { "sat", case_sat }, { "qsi", case_qsi }, { "hvp", case_hvp }, { "qip", case_qip }, { "wcp", case_wcp }, { "qsix", case_qsix }, { "iocp", case_iocp }, { "wkf", case_wkf }, { "tmr2", case_tmr2 }, { "awcp", case_awcp }, { "swf", case_swf }, { "etw", case_etw }, { "kd", case_kd }, { "of", case_of }, { "tls", case_tls }, { "ahc", case_ahc }, { "vmi", case_vmi }, { "csr", case_csr }, { "sec", case_sec } };
+static const struct tm_case g_cases[] = { { "sat", case_sat }, { "qsi", case_qsi }, { "hvp", case_hvp }, { "qip", case_qip }, { "wcp", case_wcp }, { "qsix", case_qsix }, { "iocp", case_iocp }, { "wkf", case_wkf }, { "tmr2", case_tmr2 }, { "awcp", case_awcp }, { "swf", case_swf }, { "etw", case_etw }, { "kd", case_kd }, { "of", case_of }, { "tls", case_tls }, { "ahc", case_ahc }, { "vmi", case_vmi }, { "csr", case_csr }, { "sec", case_sec }, { "csrc", case_csrc }, { "nls", case_nls } };
 
 int main( int argc, char** argv )
 {

@@ -271,5 +271,11 @@ namespace emu::nt
 		bool query_system_measured( const call& c, reply& r );   // NtQuerySystemInformation classes C5H, 37H
 		uint64_t etw_notification_event_ = 0;                   // NtTraceControl 1BH: the registered event (0 = none)
 		uint64_t hv_page_ = 0;                                  // the hypervisor shared page (class C5H), mapped at the first query
+		// P40 (U2064-U2066): the model of a CONNECTED CSR client (nt_kernel_measured.cpp) - what a process its loader connected to the
+		// session's CSR server sees (tm_nt csrc.*), never a CSR server: the API port answer, the shared section's view, the NLS files
+		reply map_csr_shared_view( const call& c, const std::string& what );
+		reply svc_initialize_nls_files( const call& c );
+		bool svc_create_file_measured( const call& c, reply& r );   // NtCreateFile: the console-driver frontier (false = not handled here)
+		uint64_t csr_port_ = 0;                                 // the API port handle of this process (0 = not connected)
 	};
 }
