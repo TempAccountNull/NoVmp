@@ -644,8 +644,11 @@ namespace emu::nt
 	// NtQueryVolumeInformationFile( FileHandle, IoStatusBlock, FsInformation, Length, FsInformationClass ) - phnt ntioapi.h:2709 (the WDK's
 	// ZwQueryVolumeInformationFile documents the call and FILE_FS_DEVICE_INFORMATION {DEVICE_TYPE DeviceType, ULONG Characteristics}).
 	// MEASURED (tm_nt of.fsdev): on the image's directory, class 4 FileFsDeviceInformation, Length 8 = STATUS_SUCCESS, IoStatus
-	// {STATUS_SUCCESS, Information 8}, DeviceType 7 (FILE_DEVICE_DISK), Characteristics 60020H, exactly 8 bytes written. Other classes /
-	// lengths / handles: stop.
+	// {STATUS_SUCCESS, Information 8}, DeviceType 7 (FILE_DEVICE_DISK), Characteristics 20020H, exactly 8 bytes written. Other classes /
+	// lengths / handles: stop. P40 (U2062): Characteristics belong to the VOLUME of the directory - the emulated image directory lies on
+	// the system volume (the environment's SystemRoot drive), so the value is the one measured with the current directory on the guest's
+	// system volume C: (20020H; tm_nt of.fsdev run by nt_measured.py from <SystemRoot>); P39 had measured 60020H from a worktree on E:,
+	// another volume of the guest (seen by the coordinator's verify_merge in the main checkout on C:, P40).
 	reply kernel::svc_query_volume_information_file( const call& c )
 	{
 		if ( !c.stack_args ) return stop_( "NtQueryVolumeInformationFile: the stack arguments are not readable" );
@@ -655,8 +658,8 @@ namespace emu::nt
 								 std::to_string( cls ) + ", Length " + hex( len ) + " )";
 		if ( it == handles_.end() || it->second.kind != "file (directory)" || cls != 4 || len != 8 ) return stop_( what + " - not measured (tm_nt of.fsdev: the image directory, class 4, 8)" );
 		if ( !user_buffer( c.args[ 1 ], 16, UC_PROT_WRITE ) || !user_buffer( c.args[ 2 ], 8, UC_PROT_WRITE ) ) return done_( status::access_violation, what + ": IoStatusBlock / FsInformation not writable" );
-		reply rr = done_( status::success, what + ": FILE_FS_DEVICE_INFORMATION DeviceType 7 (FILE_DEVICE_DISK), Characteristics 60020H (measured: tm_nt of.fsdev)" );
-		const uint32_t d[ 2 ] = { 7, 0x60020 };
+		reply rr = done_( status::success, what + ": FILE_FS_DEVICE_INFORMATION DeviceType 7 (FILE_DEVICE_DISK), Characteristics 20020H (the system volume; measured: tm_nt of.fsdev)" );
+		const uint32_t d[ 2 ] = { 7, 0x20020 };
 		const uint64_t io[ 2 ] = { 0, 8 };
 		if ( !put( c.args[ 2 ], d, 8, rr ) || !put( c.args[ 1 ], io, 16, rr ) ) return stop_( "writing the result failed after the probe" );
 		return rr;

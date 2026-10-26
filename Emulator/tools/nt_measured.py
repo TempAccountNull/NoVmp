@@ -86,8 +86,12 @@ def main(argv):
     if cap_sha and live_sha == cap_sha:
         say('the live ntdll.dll equals the VMware-guest capture: the native reference applies')
         diffs = []
+        # P40 (U2062): every case runs with the current directory on the system volume (<SystemRoot>) - case 'of' measures the
+        # current directory's VOLUME (FileFsDeviceInformation Characteristics), and the emulated image directory lies on the system
+        # volume; P39 ran it from wherever test.cmd ran (a worktree on E: gave 60020H, the main checkout on C: 20020H)
+        sysroot = os.environ.get('SystemRoot', r'C:\Windows')
         for c in CASES:
-            r = subprocess.run([tm, c], capture_output=True, timeout=300)
+            r = subprocess.run([tm, c], capture_output=True, timeout=300, cwd=sysroot)
             got = [l for l in r.stdout.decode('ascii', 'replace').replace('\r\n', '\n').split('\n') if l.startswith('tm_nt ')]
             if r.returncode != 0 or got != by_case[c]:
                 diffs.append('%s (exit %d, %d vs %d lines%s)' % (c, r.returncode, len(got), len(by_case[c]),

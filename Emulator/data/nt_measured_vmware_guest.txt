@@ -10,6 +10,7 @@
 # hypervisor page's timing values as zero / non-zero; the CSR shared section's CONTENTS are never read. Attribute names, KnownDlls entry
 # names, provider GUIDs and status codes are fixed system values. The emulator implements these answers in Emulator/src/
 # nt_kernel_measured.cpp (+ nt_kernel_sys.cpp classes C0H / 22H / 24H; selftests nt_measured_*); an input not listed is a loud stop.
+# P40 (U2062): every case is run with the current directory on the system volume (<SystemRoot>): of.fsdev is the system volume's value.
 tm_nt sat.0: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 330H) -> status C0000225H, ReturnLength 0H, written 0H
 tm_nt sat.1: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 0H) -> status C0000225H, ReturnLength 0H, written 0H
 tm_nt sat.2: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 8H) -> status C0000225H, ReturnLength 0H, written 0H
@@ -143,7 +144,7 @@ tm_nt kd.map.2: NtMapViewOfSection("KERNEL32.DLL", -1, &base (0), 0, 0, NULL, &s
 tm_nt kd.link: NtOpenSymbolicLinkObject(&h, 1, root \KnownDlls, "KnownDllPath") -> status 00000000H, handle <handle> (non-zero, multiple of 4)
 tm_nt kd.target: NtQuerySymbolicLinkObject(link, MaximumLength 400H) -> status 00000000H, Length 26H, MaximumLength 400H, ReturnedLength 28H, target <SystemRoot>\System32 (= GetSystemDirectoryW)
 tm_nt of.curdir: NtOpenFile(&h, 100020H, "\??\<current directory>\" OBJ_CASE_INSENSITIVE, &iosb, 3, 21H) -> status 00000000H, handle <handle> (non-zero, multiple of 4), IoStatus.Status 00000000H, Information 1H
-tm_nt of.fsdev: NtQueryVolumeInformationFile(the directory, &iosb, buf, 8, FileFsDeviceInformation 4) -> status 00000000H, IoStatus.Status 00000000H, Information 8H; DeviceType 7H, Characteristics 60020H, byte 8 untouched
+tm_nt of.fsdev: NtQueryVolumeInformationFile(the directory, &iosb, buf, 8, FileFsDeviceInformation 4) -> status 00000000H, IoStatus.Status 00000000H, Information 8H; DeviceType 7H, Characteristics 20020H, byte 8 untouched
 tm_nt of.close: NtClose -> 00000000H
 tm_nt of.missing: NtOpenFile(... a directory that does not exist ...) -> status C0000034H, handle not written, IoStatus not written
 tm_nt tls.threads: threads of this process before the call: 1

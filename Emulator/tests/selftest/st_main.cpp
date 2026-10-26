@@ -2947,7 +2947,7 @@ namespace
 		CHECK( w5_stop( w5_call( *p, "NtOpenFile", { S + 0x58, 0x100020, O, S + 0x60, 3, 0x21 } ) ), "a path outside the emulated file system: stop" );
 		w5_put( *p, S + 0x70, 0xCCCCCCCCCCCCCCCCull );
 		r = w5_call( *p, "NtQueryVolumeInformationFile", { fd, S + 0x60, S + 0x70, 8, 4 } );
-		CHECK( w5_ok( r ) && rd( S + 0x70, 4 ) == 7 && rd( S + 0x74, 4 ) == 0x60020 && rd( S + 0x68, 8 ) == 8, "of.fsdev: FILE_DEVICE_DISK, 60020H, Information 8" );
+		CHECK( w5_ok( r ) && rd( S + 0x70, 4 ) == 7 && rd( S + 0x74, 4 ) == 0x20020 && rd( S + 0x68, 8 ) == 8, "of.fsdev: FILE_DEVICE_DISK, 20020H (the system volume, P40 U2062), Information 8" );
 		CHECK( w5_stop( w5_call( *p, "NtQueryVolumeInformationFile", { fd, S + 0x60, S + 0x70, 8, 1 } ) ), "another class: stop" );
 		// 3. ProcessTlsInformation (tm_nt tls.*, tls.idx*)
 		const uint64_t T = S + 0x3000, V1 = S + 0x3100, V2 = S + 0x3200;
