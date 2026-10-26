@@ -61,6 +61,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "tp_probe", "Emulator\tests\
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "tl_ldr", "Emulator\tests\pe\tl_ldr\tl_ldr.vcxproj", "{A68EA63F-EAAD-4449-8952-0DD424354603}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "tm_nt", "Emulator\tests\pe\tm_nt\tm_nt.vcxproj", "{BCD1B323-711A-4A77-BF7B-73C9754EED93}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -167,6 +169,10 @@ Global
 		{A68EA63F-EAAD-4449-8952-0DD424354603}.Debug|x64.Build.0 = Debug|x64
 		{A68EA63F-EAAD-4449-8952-0DD424354603}.Release|x64.ActiveCfg = Release|x64
 		{A68EA63F-EAAD-4449-8952-0DD424354603}.Release|x64.Build.0 = Release|x64
+		{BCD1B323-711A-4A77-BF7B-73C9754EED93}.Debug|x64.ActiveCfg = Debug|x64
+		{BCD1B323-711A-4A77-BF7B-73C9754EED93}.Debug|x64.Build.0 = Debug|x64
+		{BCD1B323-711A-4A77-BF7B-73C9754EED93}.Release|x64.ActiveCfg = Release|x64
+		{BCD1B323-711A-4A77-BF7B-73C9754EED93}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -195,6 +201,7 @@ Global
 		{A2F62E87-36A9-4641-B2A6-D6EB3615B6E8} = {6D6705D5-B7A9-4922-A499-776CB8835031}
 		{B58B11F5-192F-4613-B610-7B7DB0CFD4EE} = {6D6705D5-B7A9-4922-A499-776CB8835031}
 		{A68EA63F-EAAD-4449-8952-0DD424354603} = {6D6705D5-B7A9-4922-A499-776CB8835031}
+		{BCD1B323-711A-4A77-BF7B-73C9754EED93} = {6D6705D5-B7A9-4922-A499-776CB8835031}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {43AEF470-2FF3-5242-923F-C62C32A8EAE1}

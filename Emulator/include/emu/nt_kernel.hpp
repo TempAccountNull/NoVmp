@@ -65,7 +65,9 @@ namespace emu::nt
 								  not_committed = 0xC000002D, object_name_not_found = 0xC0000034, object_path_not_found = 0xC000003A, buffer_too_small = 0xC0000023,
 								  invalid_info_class = 0xC0000003, not_implemented = 0xC0000002, image_not_at_base = 0x40000003, buffer_overflow = 0x80000005,
 								  no_more_entries = 0x8000001A, object_type_mismatch = 0xC0000024, not_supported = 0xC00000BB,
-								  invalid_address = 0xC0000141;
+								  invalid_address = 0xC0000141,
+								  // P39 (shared\ntstatus.h)
+								  not_found = 0xC0000225;
 	}
 	namespace mem   // um\winnt.h MEM_*
 	{
@@ -108,6 +110,7 @@ namespace emu::nt
 		uint64_t process_id = 0, thread_id = 0, peb = 0, teb = 0;
 		uint64_t total_phys = 0;             // U2032: the platform profile's TotalPhys
 		uint32_t processors = 0;             // U2032: dwNumberOfProcessors
+		uint64_t rng_seed = 0;               // P39 (U2052): engine_config::rng_seed (decision D8) - the deterministic process cookie
 	};
 
 	// one system call as the guest made it
@@ -237,5 +240,11 @@ namespace emu::nt
 		};
 		bool guest_ustring( uint64_t us, std::string& out, std::string& why );
 		bool guest_object_attributes( uint64_t oa, object_attributes& a, std::string& why );
+		// P39 (U2050-U2079): the undocumented services of the --Sys loader - phnt prototypes, behaviour measured natively by tm_nt
+		// (nt_kernel_measured.cpp; Emulator/data/nt_measured_vmware_guest.txt)
+		bool dispatch_measured( const call& c, reply& r );
+		reply svc_query_security_attributes_token( const call& c );
+		bool query_system_measured( const call& c, reply& r );   // NtQuerySystemInformation classes C5H, 37H
+		uint64_t hv_page_ = 0;                                  // the hypervisor shared page (class C5H), mapped at the first query
 	};
 }

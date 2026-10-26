@@ -302,6 +302,7 @@ namespace emu::win
 		process_state pstate_;                   // U2025-U2027: loader data, process parameters, heap
 		bool loader_start_ = false;              // U2031: --Sys through the real ntdll!LdrInitializeThunk
 		uint64_t start_context_ = 0, iretq_stub_ = 0, start_rsp_ = 0, ntdll_base_ = 0;
+		uint64_t rng_seed_ = 0;   // P39 (U2052): engine_config::rng_seed (the kernel's process cookie)
 		bool build_kernel_views( const environment_facts& f, std::vector<std::string>& lines, std::string& error );
 
 	public:

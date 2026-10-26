@@ -100,7 +100,7 @@ namespace emu::nt
 			r = svc_allocate_virtual_memory_ex( c );
 			return true;
 		}
-		return false;
+		return dispatch_measured( c, r );   // P39: the undocumented services (phnt prototypes, measured behaviour; nt_kernel_measured.cpp)
 	}
 
 	// ZwAllocateVirtualMemoryEx (WDK km\ntifs.h:31416: ProcessHandle, BaseAddress, RegionSize, AllocationType, PageProtection,
@@ -287,9 +287,23 @@ namespace emu::nt
 				break;
 			}
 			case 0x24:
+			{
+				// P39 (U2052): MEASURED natively (tm_nt qip.24*): a NON-ZERO 4-byte value, equal on every query in one process (a
+				// per-process secret: Windows picks it at random - the value itself is never recorded). Replaces Wine's stub 0 (P36). The
+				// emulator's value is deterministic: SplitMix64 (Steele / Lea / Flood, "Fast splittable pseudorandom number generators",
+				// OOPSLA 2014 - the finalizer constants of the published algorithm) of the seeded model's seed (decision D8), low 32 bits,
+				// never 0 - a model choice with the measured shape, not a Windows value
+				uint64_t z = f_.rng_seed + 0x9E3779B97F4A7C15ull * 0x24;
+				z = ( z ^ ( z >> 30 ) ) * 0xBF58476D1CE4E5B9ull;
+				z = ( z ^ ( z >> 27 ) ) * 0x94D049BB133111EBull;
+				z ^= z >> 31;
+				uint32_t v = uint32_t( z );
+				if ( !v ) v = 1;
 				data.assign( 4, 0 );
-				what = "ProcessCookie 0 (Wine's answer; the Windows value has no source)";
+				std::memcpy( data.data(), &v, 4 );
+				what = "ProcessCookie " + hex( v ) + " (non-zero, per process - measured shape tm_nt qip.24; the value: SplitMix64 of the seed, a model choice)";
 				break;
+			}
 			default:
 				return false;
 		}
@@ -301,8 +315,9 @@ namespace emu::nt
 		const uint32_t rl = uint32_t( data.size() );
 		if ( len != data.size() )
 		{
-			r = done_( status::info_length_mismatch, "class " + hex( cls ) + ": length " + hex( len ) + ", needs " + hex( data.size() ) + " (STATUS_INFO_LENGTH_MISMATCH)" );
-			if ( pret && !put( pret, &rl, 4, r ) ) r = stop_( "writing ReturnLength failed after the probe" );
+			// P39 (U2052): MEASURED (tm_nt qip.22.8 / qip.24.8): STATUS_INFO_LENGTH_MISMATCH and ReturnLength NOT written (Wine writes it)
+			r = done_( status::info_length_mismatch, "class " + hex( cls ) + ": length " + hex( len ) + ", needs " + hex( data.size() ) + " (STATUS_INFO_LENGTH_MISMATCH, ReturnLength not written - measured)" );
+			(void)rl;
 			return true;
 		}
 		if ( !user_buffer( out, data.size(), UC_PROT_WRITE ) )
@@ -461,13 +476,12 @@ namespace emu::nt
 				break;
 			}
 			case 0xC0:   // SystemFlushInformation (the name: the guest ntdll.pdb enum _SYSTEM_INFORMATION_CLASS)
-				// NOT PROVIDED (an explicit, reviewed decision - P36): no source gives its layout (Wine 11.0 / ReactOS 0.4.16 name it only:
-				// include/winternl.h:2226, sdk/include/ndk/extypes.h:425); answered as Wine answers every class it does not model -
-				// STATUS_INVALID_INFO_CLASS, nothing written (dlls/ntdll/unix/system.c NtQuerySystemInformation default: "Several
-				// Information Classes are not implemented on Windows and return ... STATUS_INVALID_INFO_CLASS")
-				return done_( status::invalid_info_class, "SystemInformationClass 0xC0 SystemFlushInformation: NOT PROVIDED by the emulated kernel (no layout source) - "
-														  "STATUS_INVALID_INFO_CLASS, nothing written (Wine's answer for an unmodelled class)" );
+				// P39 (U2052): MEASURED natively (tm_nt qsi.c0*) - replaces the P36 answer STATUS_INVALID_INFO_CLASS ("NOT PROVIDED": no layout
+				// source then); the layout from phnt ntexapi.h:7057 SYSTEM_FLUSH_INFORMATION (nt_kernel_measured.cpp query_system_measured)
+				if ( reply m; query_system_measured( c, m ) ) return m;
+				return stop_( "SystemInformationClass 0xC0: the measured answer is missing" );
 			default:
+				if ( reply m; query_system_measured( c, m ) ) return m;   // P39: undocumented classes (phnt layouts, measured; nt_kernel_measured.cpp)
 				return stop_( "SystemInformationClass " + hex( cls ) + " (length " + hex( len ) + "): not modelled yet (demand-driven; the class's layout needs a source)" );
 		}
 		if ( pret && !user_buffer( pret, 4, UC_PROT_WRITE ) ) return done_( status::access_violation, "ReturnLength " + hex( pret ) + " not writable" );

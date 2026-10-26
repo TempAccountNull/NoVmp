@@ -692,6 +692,7 @@ namespace emu::win
 			return nullptr;
 		}
 		for ( auto& l : p->e_->log() ) p->log_.push_back( "engine: " + l );
+		p->rng_seed_ = ec.rng_seed;   // P39 (U2052)
 		const bool ok = p->build( facts, po, pe_file, error );
 		log = p->log_;
 		if ( !ok ) return nullptr;
@@ -892,6 +893,7 @@ namespace emu::win
 		kf.teb = tb;
 		kf.total_phys = f.total_phys;   // U2032
 		kf.processors = f.processors;
+		kf.rng_seed = rng_seed_;   // P39 (U2052): the seeded model's seed (decision D8) - the process cookie
 		kf.registry = facts_.registry.get();   // U2034 (facts_ owns it for the process' lifetime)
 		kernel_ = std::make_unique<nt::kernel>( *e_, kf );
 		hle_ = std::make_unique<hle::module>();

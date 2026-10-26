@@ -761,6 +761,11 @@ Add-Suite 'win_env_process' 'emulator win_env' 'py' ( Join-Path $Root 'Emulator\
 # its frontier - every service before it answered in order, a loud stop at the first service without a source (P36); T2 --Sys
 # without --loader refused as in M5.
 Add-Suite 'win_env_sys_loader' 'emulator win_env' 'py' ( Join-Path $Root 'Emulator\tools\win_env_sys_loader.py' ) @( $Root, $T )
+# U2051 (coordinator p3sys, plan 3.M5 --Sys, notes\eread\P39_sys_loader.md): the native measurements of the undocumented services of
+# the --Sys loader (Emulator\data\nt_measured_vmware_guest.txt, our own test PE tm_nt; USER DECISION 2026-10-25: phnt prototypes,
+# behaviour measured natively in the VMware guest, decision 3.0.7): the file's shape and identifier screen, and - when the live ntdll is
+# the guest capture - a fresh native tm_nt run (one process per case) equal to the recorded lines.
+Add-Suite 'nt_measured' 'emulator win_env' 'py' ( Join-Path $Root 'Emulator\tools\nt_measured.py' ) @( $Root, $T )
 # U1990-U1991 (agent p3m4, user decision 2026-10-25, notes\eread\P34_phase3_m4.md): capture_sysdlls.py labels a capture only on
 # the positive evidence of U1893's environment detection (emu-alltest "tag environment:", run with an empty case file); the
 # self-test: mocked / forced (--tag-env) wrong environments and unknown (--tag-profiles none) refuse without writing, the live

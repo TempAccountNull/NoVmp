@@ -2539,13 +2539,16 @@ namespace
 		r = w5_call( *p, "NtQuerySystemInformation", { 0, S + 0x100, 0x30, S + 0x60 } );
 		CHECK( w5_status( r, N::status::info_length_mismatch ) && rd( S + 0x60, 4 ) == 0x40, "a wrong length: STATUS_INFO_LENGTH_MISMATCH, ReturnLength 40H" );
 		r = w5_call( *p, "NtQuerySystemInformation", { 0xC0, S + 0x100, 0x20, S + 0x60 } );
-		CHECK( w5_status( r, N::status::invalid_info_class ) && r.writes.empty(), "class C0H (no layout source): STATUS_INVALID_INFO_CLASS, nothing written" );
-		CHECK( w5_stop( w5_call( *p, "NtQuerySystemInformation", { 0x37, S + 0x100, 0x408, S + 0x60 } ) ), "class 37H (no source for the Windows 10 layout): stop" );
+		CHECK( w5_ok( r ) && rd( S + 0x100, 4 ) == 7 && rd( S + 0x104, 4 ) == 0x40 && rd( S + 0x108, 8 ) == 0 && rd( S + 0x60, 4 ) == 0x20,
+			   "class C0H (P39: measured, tm_nt qsi.c0r): SupportedFlushMethods 7, ProcessorCacheFlushSize 40H, ReturnLength 20H: " + r.text );
+		CHECK( w5_ok( w5_call( *p, "NtQuerySystemInformation", { 0x37, S + 0x100, 0x408, S + 0x60 } ) ), "class 37H (P39: measured, tm_nt qsi.37r): answered" );
 		// 5. process classes
 		r = w5_call( *p, "NtQueryInformationProcess", { cp, 0x22, S + 0x70, 4, S + 0x78 } );
 		CHECK( w5_ok( r ) && rd( S + 0x70, 4 ) == 0xD, "ProcessExecuteFlags: DISABLE | DISABLE_THUNK_EMULATION | PERMANENT" );
 		w5_put( *p, S + 0x70, 0x55 );
-		CHECK( w5_ok( w5_call( *p, "NtQueryInformationProcess", { cp, 0x24, S + 0x70, 4, 0 } ) ) && rd( S + 0x70, 4 ) == 0, "ProcessCookie 0 (Wine)" );
+		CHECK( w5_ok( w5_call( *p, "NtQueryInformationProcess", { cp, 0x24, S + 0x70, 4, 0 } ) ) && rd( S + 0x70, 4 ) != 0, "ProcessCookie non-zero (P39: measured shape tm_nt qip.24)" );
+		w5_put( *p, S + 0x78, 0x55 );
+		CHECK( w5_ok( w5_call( *p, "NtQueryInformationProcess", { cp, 0x24, S + 0x78, 4, 0 } ) ) && rd( S + 0x78, 4 ) == rd( S + 0x70, 4 ), "ProcessCookie: equal on a second query (tm_nt qip.24.same)" );
 		CHECK( w5_status( w5_call( *p, "NtQueryInformationProcess", { cp, 0x24, S + 0x70, 8, 0 } ), N::status::info_length_mismatch ), "ProcessCookie, 8 bytes: STATUS_INFO_LENGTH_MISMATCH" );
 		// 6. the captured registry subset
 		auto ustr = [ & ]( uint64_t at, const std::string& s ) {
@@ -2663,6 +2666,123 @@ namespace
 		}
 	}
 
+	// ------------------------------------------------------------------------------------------------ P39 (U2050-U2079): the measured services
+	// nt_measured_services: the undocumented system services of the --Sys loader (phnt prototypes) answer EXACTLY what tm_nt measured natively
+	// in the VMware guest (Emulator/data/nt_measured_vmware_guest.txt) and stop loudly for every input that was not measured. Helper prefix ms_.
+	// a UNICODE_STRING at AT whose characters (UTF-16, ASCII here) are written at CHARS
+	void ms_ustr( emu::win::process& p, uint64_t at, uint64_t chars, const std::string& s )
+	{
+		std::vector<uint16_t> w;
+		for ( char ch : s ) w.push_back( uint16_t( uint8_t( ch ) ) );
+		std::string e2;
+		CHECK( p.eng().write( chars, w.data(), w.size() * 2, e2 ), "guest write " + e2 );
+		w5_put( p, at, uint64_t( s.size() * 2 ) | ( uint64_t( s.size() * 2 + 2 ) << 16 ) );
+		w5_put( p, at + 8, chars );
+	}
+
+	void t_nt_measured_services()
+	{
+		std::string err;
+		auto p = w5_create( w5_build( { w5_trivial }, err ), emu::env_boundary::sys, err );
+		CHECK( p != nullptr, "process: " + err );
+		if ( !p ) return;
+		namespace N = emu::nt;
+		const uint64_t S = w5_scratch;
+		auto rd = [ & ]( uint64_t va, int n ) { return w4_read( *p, va, n ); };
+		// 1. NtQuerySecurityAttributesToken (phnt ntseapi.h:947; measured: tm_nt sat.0 - sat.name1 STATUS_NOT_FOUND, ReturnLength 0, 0 bytes written)
+		{
+			const uint64_t tok = ~0ull - 3, buf = S + 0x400, ret = S + 0x3F0;
+			ms_ustr( *p, S + 0x100, S + 0x200, "WIN://SYSAPPID" );   // the array: two UNICODE_STRINGs at S + 100H / 110H
+			ms_ustr( *p, S + 0x110, S + 0x280, "WIN://PKG" );
+			for ( uint32_t len : { 0x330u, 0u, 8u, 0x10u, 0x18u, 0x1000u } )
+			{
+				w5_put( *p, ret, 0xCCCCCCCCCCCCCCCCull );
+				w5_put( *p, buf, 0xCCCCCCCCCCCCCCCCull );
+				auto r = w5_call( *p, "NtQuerySecurityAttributesToken", { tok, S + 0x100, 2, buf, len, ret } );
+				CHECK( w5_status( r, N::status::not_found ) && rd( ret, 4 ) == 0 && rd( ret + 4, 4 ) == 0xCCCCCCCCull && rd( buf, 8 ) == 0xCCCCCCCCCCCCCCCCull,
+					   "sat: the loader's 2 names, Length " + std::to_string( len ) + ": STATUS_NOT_FOUND, ReturnLength 0 (4 bytes), buffer untouched: " + r.text );
+			}
+			w5_put( *p, ret, 0xCCCCCCCCCCCCCCCCull );
+			CHECK( w5_status( w5_call( *p, "NtQuerySecurityAttributesToken", { tok, S + 0x110, 1, buf, 0x100, ret } ), N::status::not_found ) && rd( ret, 4 ) == 0,
+				   "sat.name1: WIN://PKG alone: STATUS_NOT_FOUND" );
+			CHECK( w5_stop( w5_call( *p, "NtQuerySecurityAttributesToken", { tok, 0, 0, buf, 0x100, ret } ) ), "no names (all attributes, TSA://ProcUnique): not modelled - stop" );
+			CHECK( w5_stop( w5_call( *p, "NtQuerySecurityAttributesToken", { ~0ull - 4, S + 0x100, 2, buf, 0x330, ret } ) ), "NtCurrentThreadToken(): not measured - stop" );
+			CHECK( w5_stop( w5_call( *p, "NtQuerySecurityAttributesToken", { tok, S + 0x100, 2, buf, 0x330, 0 } ) ), "ReturnLength NULL: not measured - stop" );
+			ms_ustr( *p, S + 0x110, S + 0x280, "WIN://OTHER" );
+			CHECK( w5_stop( w5_call( *p, "NtQuerySecurityAttributesToken", { tok, S + 0x100, 2, buf, 0x330, ret } ) ), "another name: not measured - stop" );
+			CHECK( w5_stop( w5_call( *p, "NtQuerySecurityAttributesToken", { tok, S + 0x100, 2, buf, 0x330, ret }, false ) ), "stack arguments not readable: stop" );
+		}
+		// 2. NtQuerySystemInformation C0H / C5H / 37H (phnt ntexapi.h:8339; measured: tm_nt qsi.*)
+		{
+			const uint64_t out = S + 0x800, ret = S + 0x7F0;
+			auto fill = [ & ]() { for ( uint64_t k = 0; k < 0x420; k += 8 ) w5_put( *p, out + k, 0xCCCCCCCCCCCCCCCCull ); w5_put( *p, ret, 0xCCCCCCCCCCCCCCCCull ); };
+			fill();
+			auto r = w5_call( *p, "NtQuerySystemInformation", { 0xC0, out, 0x20, 0 } );
+			CHECK( w5_ok( r ) && rd( out, 8 ) == 0x4000000007ull && rd( out + 8, 8 ) == 0 && rd( out + 0x18, 8 ) == 0 && rd( out + 0x20, 8 ) == 0xCCCCCCCCCCCCCCCCull,
+				   "qsi.c0: Length 20H, ReturnLength NULL: 7 / 40H / 0, exactly 20H bytes: " + r.text );
+			for ( uint32_t len : { 0u, 0x10u, 0x1Fu } )
+			{
+				fill();
+				r = w5_call( *p, "NtQuerySystemInformation", { 0xC0, out, len, ret } );
+				CHECK( w5_status( r, N::status::info_length_mismatch ) && rd( ret, 4 ) == 0x20 && rd( out, 8 ) == 0xCCCCCCCCCCCCCCCCull, "qsi.c0 Length " + std::to_string( len ) + ": mismatch, ReturnLength 20H, nothing written" );
+			}
+			fill();
+			CHECK( w5_ok( w5_call( *p, "NtQuerySystemInformation", { 0xC0, out, 0x28, ret } ) ) && rd( ret, 4 ) == 0x20 && rd( out + 0x20, 8 ) == 0xCCCCCCCCCCCCCCCCull, "qsi.c0.28: 20H bytes, ReturnLength 20H" );
+			CHECK( w5_stop( w5_call( *p, "NtQuerySystemInformation", { 0xC0, out, 0x30, ret } ) ), "qsi.c0 Length 30H: not measured - stop" );
+			// C5H
+			fill();
+			r = w5_call( *p, "NtQuerySystemInformation", { 0xC5, out, 8, 0 } );
+			const uint64_t hv = rd( out, 8 );
+			CHECK( w5_ok( r ) && hv && !( hv & 0xFFF ) && rd( out + 8, 8 ) == 0xCCCCCCCCCCCCCCCCull, "qsi.c5: a page-aligned non-NULL address, 8 bytes: " + r.text );
+			CHECK( p->eng().accessible( hv, 0x1000, UC_PROT_READ ) && !p->eng().accessible( hv, 1, UC_PROT_WRITE ) && rd( hv, 8 ) == 0, "the hypervisor page: readable, not writable, zero (timing values: M6)" );
+			w5_put( *p, S + 0x700, 0 );
+			auto q = w5_call( *p, "NtQueryVirtualMemory", { N::current_process, hv, 0, S + 0x700, 0x30, S + 0x6F0 } );
+			CHECK( w5_ok( q ) && rd( S + 0x700, 8 ) == hv && rd( S + 0x718, 8 ) == 0x1000 && rd( S + 0x720, 4 ) == N::mem::commit && rd( S + 0x724, 4 ) == N::page::readonly &&
+					   rd( S + 0x728, 4 ) == N::mem::private_ && rd( S + 0x710, 4 ) == N::page::readonly,
+				   "hvp.mbi: MEM_COMMIT, PAGE_READONLY, MEM_PRIVATE, AllocationProtect PAGE_READONLY, RegionSize 1000H: " + q.text );
+			fill();
+			CHECK( w5_ok( w5_call( *p, "NtQuerySystemInformation", { 0xC5, out, 0x10, ret } ) ) && rd( out, 8 ) == hv && rd( ret, 4 ) == 8 && rd( out + 8, 8 ) == 0xCCCCCCCCCCCCCCCCull,
+				   "qsi.c5.10: the same page, ReturnLength 8" );
+			for ( uint32_t len : { 0u, 4u } )
+			{
+				fill();
+				CHECK( w5_status( w5_call( *p, "NtQuerySystemInformation", { 0xC5, out, len, ret } ), N::status::info_length_mismatch ) && rd( ret, 4 ) == 8 && rd( out, 8 ) == 0xCCCCCCCCCCCCCCCCull,
+					   "qsi.c5 Length " + std::to_string( len ) + ": mismatch, ReturnLength 8, nothing written" );
+			}
+			CHECK( w5_stop( w5_call( *p, "NtQuerySystemInformation", { 0xC5, out, 0xC, ret } ) ), "qsi.c5 Length CH: not measured - stop" );
+			// 37H
+			fill();
+			r = w5_call( *p, "NtQuerySystemInformation", { 0x37, out, 0x408, 0 } );
+			CHECK( w5_ok( r ) && rd( out, 4 ) == 0 && rd( out + 4, 4 ) == 0xCCCCCCCCull && rd( out + 8, 8 ) == 0xFF && rd( out + 0x10, 8 ) == 0 && rd( out + 0x18, 8 ) == 0xCCCCCCCCCCCCCCCCull,
+				   "qsi.37: HighestNodeNumber 0, Reserved untouched, node 0 Mask FFH Group 0, nothing after 18H: " + r.text );
+			for ( uint32_t len : { 4u, 8u, 0xCu, 0x10u, 0x17u } )
+			{
+				fill();
+				CHECK( w5_ok( w5_call( *p, "NtQuerySystemInformation", { 0x37, out, len, ret } ) ) && rd( ret, 4 ) == 4 && rd( out, 4 ) == 0 && rd( out + 4, 4 ) == 0xCCCCCCCCull,
+					   "qsi.37 Length " + std::to_string( len ) + ": HighestNodeNumber only, ReturnLength 4" );
+			}
+			for ( uint32_t len : { 0x18u, 0x408u, 0x410u } )
+			{
+				fill();
+				CHECK( w5_ok( w5_call( *p, "NtQuerySystemInformation", { 0x37, out, len, ret } ) ) && rd( ret, 4 ) == 0x18 && rd( out + 8, 8 ) == 0xFF, "qsi.37 Length " + std::to_string( len ) + ": ReturnLength 18H" );
+			}
+			fill();
+			CHECK( w5_status( w5_call( *p, "NtQuerySystemInformation", { 0x37, out, 0, ret } ), N::status::info_length_mismatch ) && rd( ret, 4 ) == 4, "qsi.37.0: mismatch, ReturnLength 4" );
+			CHECK( w5_stop( w5_call( *p, "NtQuerySystemInformation", { 0x37, out, 2, ret } ) ) && w5_stop( w5_call( *p, "NtQuerySystemInformation", { 0x37, out, 0x418, ret } ) ),
+				   "qsi.37 Length 2 / 418H: not measured - stop" );
+		}
+		// 3. NtQueryInformationProcess 22H / 24H (measured: tm_nt qip.*)
+		{
+			const uint64_t out = S + 0x900, ret = S + 0x8F0;
+			w5_put( *p, ret, 0xCCCCCCCCCCCCCCCCull );
+			CHECK( w5_status( w5_call( *p, "NtQueryInformationProcess", { N::current_process, 0x22, out, 8, ret } ), N::status::info_length_mismatch ) && rd( ret, 8 ) == 0xCCCCCCCCCCCCCCCCull,
+				   "qip.22.8: mismatch, ReturnLength NOT written" );
+			CHECK( w5_status( w5_call( *p, "NtQueryInformationProcess", { N::current_process, 0x24, out, 8, ret } ), N::status::info_length_mismatch ) && rd( ret, 8 ) == 0xCCCCCCCCCCCCCCCCull,
+				   "qip.24.8: mismatch, ReturnLength NOT written" );
+			CHECK( w5_ok( w5_call( *p, "NtQueryInformationProcess", { N::current_process, 0x22, out, 4, ret } ) ) && rd( out, 4 ) == 0xD && rd( ret, 4 ) == 4, "qip.22r: ExecuteFlags DH, ReturnLength 4" );
+		}
+	}
+
 	struct test_case { const char* name; void ( *fn )(); };
 	const test_case cases[] = {
 		{ "options_oep_defaults", t_options_oep_defaults },
@@ -2718,6 +2838,7 @@ namespace
 		{ "win_env_process_state", t_win_env_process_state },
 		{ "nt_kernel_sys_services", t_nt_kernel_sys_services },
 		{ "win_env_nt_continue", t_win_env_nt_continue },
+		{ "nt_measured_services", t_nt_measured_services },
 	};
 }
 
