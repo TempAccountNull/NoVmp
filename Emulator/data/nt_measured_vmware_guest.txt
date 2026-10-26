@@ -193,6 +193,7 @@ tm_nt ahc.4: NtApphelpCacheControl(6 LookupCdb, Name "tm_nt_no_such.dll", Params
 tm_nt ahc.5: NtApphelpCacheControl(6 LookupCdb, Name "t2_import.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
 tm_nt ahc.6: NtApphelpCacheControl(6 LookupCdb, Name "t3_tls.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
 tm_nt ahc.7: NtApphelpCacheControl(6 LookupCdb, Name "t3_tls.vmware_guest.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.8: NtApphelpCacheControl(6 LookupCdb, Name "t5_stdout.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
 tm_nt vmi.fresh: NtSetInformationVirtualMemory(-1, 4, 1, {a fresh image view's base, 1000H}, &1, 4) -> status C00000BBH
 tm_nt vmi.again: the same call again -> status C00000BBH
 tm_nt vmi.loaded: the same call on this process' kernelbase.dll base -> status C00000BBH

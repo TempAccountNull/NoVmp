@@ -214,6 +214,18 @@ namespace emu::win
 		std::string pending;          // the current instruction's line: written when the next instruction starts / the run stops
 		bool have_pending = false;
 		bool pending_mem = false;
+		// P41 (U2084): the console capture - the --Sys entry hooks (address -> export), the calls waiting for their return, the file
+		std::map<uint64_t, std::string> con_hooks;
+		struct con_wait
+		{
+			uint64_t ret = 0, rsp = 0, pwritten = 0;
+			console_attempt a;
+		};
+		std::vector<con_wait> con_waits;
+		std::unique_ptr<output_file> con;
+		std::string con_dir;
+		uint64_t con_max = 0;
+		bool con_failed = false;
 
 		void stop( stop_kind k, const std::string& detail )
 		{
@@ -441,11 +453,86 @@ namespace emu::win
 			c.pending += s;
 		}
 
+		// P41 (U2084): the console capture - text of the guest (bounded: at most 512 units read; host safety: only mapped guest memory,
+		// read through the engine), printable ASCII kept, everything else escaped
+		std::string con_text( uc_engine* uc, uint64_t a, uint64_t n, bool wide, bool nul_terminated )
+		{
+			std::string s;
+			if ( !a ) return s;
+			const uint64_t cap = 512;
+			for ( uint64_t i = 0; i < ( nul_terminated ? cap : std::min( n, cap ) ); i++ )
+			{
+				uint16_t v = 0;
+				if ( uc_mem_read( uc, a + i * ( wide ? 2 : 1 ), &v, wide ? 2 : 1 ) != UC_ERR_OK )
+				{
+					s += "<unreadable>";
+					break;
+				}
+				if ( nul_terminated && !v ) break;
+				char e[ 16 ];
+				if ( v == 13 ) s += "\\r";
+				else if ( v == 10 ) s += "\\n";
+				else if ( v == 9 ) s += "\\t";
+				else if ( v == '\\' ) s += "\\\\";
+				else if ( v == '"' ) s += "\\" "\"";
+				else if ( v >= 0x20 && v < 0x7F ) s += char( v );
+				else
+				{
+					std::snprintf( e, sizeof( e ), wide ? "\\u%04X" : "\\x%02X", unsigned( v ) );
+					s += e;
+				}
+			}
+			if ( !nul_terminated && n > cap ) s += "... (" + std::to_string( n ) + " units, the first 512 shown)";
+			return s;
+		}
+
+		// record one attempt: in the run result and (from the first attempt on) in <console dir>\console_capture.txt
+		void con_record( process::hook_ctx& c, console_attempt a )
+		{
+			a.index = c.r->console.size() + 1;
+			const std::string line = "#" + std::to_string( a.index ) + " insn " + std::to_string( a.insn ) + " " + a.via + " handle " + hex( a.handle ) + " length " +
+									 std::to_string( a.length ) + " text \"" + a.text + "\" -> " + a.result + "\n";
+			c.r->console.push_back( std::move( a ) );
+			if ( c.con_dir.empty() || c.con_failed ) return;
+			if ( !c.con )
+			{
+				c.con = std::make_unique<output_file>();
+				std::string err;
+				const std::string path = c.con_dir + "\\console_capture.txt";
+				if ( !c.con->create( path, c.con_max, err ) )
+				{
+					c.con.reset();
+					c.con_failed = true;
+					c.r->console_file = "(not written: " + err + ")";
+					return;
+				}
+				c.r->console_file = path;
+				c.con->write( "# console capture (P41, emu::win): every console / standard-handle output ATTEMPT of the emulated process, in order - observation "
+							  "only; the process got the measured results of a process WITHOUT a console (tm_nt con.*)\n" );
+			}
+			if ( !c.con->write( line ) ) c.r->console_truncated = true;
+		}
+
+		// --Sys: the result of a waiting attempt when its call returns (RAX, the TEB's LastErrorValue, the written count)
+		void con_return( uc_engine* uc, process::hook_ctx& c )
+		{
+			auto w = c.con_waits.back();
+			c.con_waits.pop_back();
+			uint64_t rax = read_reg( uc, UC_X86_REG_RAX ), gs = read_reg( uc, UC_X86_REG_GS_BASE );
+			uint32_t le = 0, wr = 0;
+			const bool lok = uc_mem_read( uc, gs + 0x68, &le, 4 ) == UC_ERR_OK;
+			std::string res = "returned " + hex( uint32_t( rax ) ) + ( lok ? ", LastError " + std::to_string( le ) : std::string() );
+			if ( w.pwritten ) res += uc_mem_read( uc, w.pwritten, &wr, 4 ) == UC_ERR_OK ? ", written " + std::to_string( wr ) : ", written <unreadable>";
+			w.a.result = res;
+			con_record( c, w.a );
+		}
+
 		void on_code( uc_engine* uc, uint64_t address, uint32_t size, void* user )
 		{
 			auto& c = *static_cast<process::hook_ctx*>( user );
 			c.r->insns++;
 			c.last_insn = address;
+			if ( !c.con_waits.empty() && address == c.con_waits.back().ret && read_reg( uc, UC_X86_REG_RSP ) == c.con_waits.back().rsp + 8 ) con_return( uc, c );   // P41 (U2084)
 			if ( size == 2 )
 			{
 				uint8_t b[ 2 ] = {};
@@ -562,6 +649,20 @@ namespace emu::win
 			call.insns = r.insns;   // U2032: the virtual clock
 			const nt::reply rep = c.p->kern().dispatch( call );
 			s.writes = rep.writes;
+			if ( s.name == "NtWriteFile" && c.con_waits.empty() && s.stack_args_read && c.p->std_handle( uc, s.args[ 0 ] ) )
+			{
+				// P41 (U2084): NtWriteFile on a standard handle / handle 0 outside the hooked output exports (a program's own system call)
+				console_attempt ca;
+				ca.insn = r.insns;
+				ca.via = "NtWriteFile";
+				ca.handle = s.args[ 0 ];
+				ca.length = uint32_t( s.args[ 6 ] );
+				ca.text = con_text( uc, s.args[ 5 ], uint32_t( s.args[ 6 ] ), false, false );
+				char st[ 16 ];
+				std::snprintf( st, sizeof( st ), "%08X", rep.status );
+				ca.result = rep.kind == nt::reply_kind::done ? std::string( "status " ) + st + "H" : std::string( "not answered (stop)" );
+				con_record( c, ca );
+			}
 			if ( rep.kind == nt::reply_kind::resume )   // U2030: NtContinue - the full CPU state from the CONTEXT, back to user mode by IRETQ
 			{
 				std::string why;
@@ -639,6 +740,40 @@ namespace emu::win
 			}
 		}
 
+		// P41 (U2084): --Sys - execution entered an output export of kernelbase (the hooks of process::run): the attempt waits for its return
+		void on_con_api( uc_engine* uc, uint64_t address, uint32_t, void* user )
+		{
+			auto& c = *static_cast<process::hook_ctx*>( user );
+			if ( c.stopped ) return;
+			const auto it = c.con_hooks.find( address );
+			if ( it == c.con_hooks.end() ) return;
+			const std::string& n = it->second;
+			const uint64_t rcx = read_reg( uc, UC_X86_REG_RCX ), rdx = read_reg( uc, UC_X86_REG_RDX ), r8 = read_reg( uc, UC_X86_REG_R8 ), r9 = read_reg( uc, UC_X86_REG_R9 );
+			const uint64_t rsp = read_reg( uc, UC_X86_REG_RSP );
+			uint64_t ret = 0;
+			if ( uc_mem_read( uc, rsp, &ret, 8 ) != UC_ERR_OK ) return;
+			process::hook_ctx::con_wait w;
+			w.ret = ret;
+			w.rsp = rsp;
+			w.a.insn = c.r->insns;
+			w.a.via = "kernelbase.dll!" + n;
+			if ( n == "OutputDebugStringA" || n == "OutputDebugStringW" )
+			{
+				w.a.text = con_text( uc, rcx, 0, n.back() == 'W', true );
+				w.a.length = w.a.text.size();
+			}
+			else
+			{
+				if ( n == "WriteFile" && !c.p->std_handle( uc, rcx ) ) return;   // a write to a file / pipe: not a console attempt
+				w.a.handle = rcx;
+				w.a.length = uint32_t( r8 );
+				w.a.text = con_text( uc, rdx, uint32_t( r8 ), n == "WriteConsoleW", false );
+				w.pwritten = r9;
+			}
+			w.a.result = "did not return before the stop";
+			c.con_waits.push_back( w );
+		}
+
 		// plan 3.M5 (U2012): an --HLE API stub was reached (emu::hle)
 		void on_hle( uc_engine* uc, uint64_t address, uint32_t, void* user )
 		{
@@ -651,6 +786,17 @@ namespace emu::win
 			a.stub = address;
 			const hle::result res = c.p->hle().call( address, uc, c.p->kern(), c.p->image_base(), a.api, a.args );
 			a.outcome = res.text;
+			if ( res.console )   // P41 (U2084): an output attempt through the API stubs
+			{
+				console_attempt ca;
+				ca.insn = r.insns;
+				ca.via = a.api;
+				ca.handle = res.con_handle;
+				ca.length = res.con_length;
+				ca.text = con_text( uc, res.con_buffer, res.con_length, res.con_wide, false );
+				ca.result = res.con_result;
+				con_record( c, ca );
+			}
 			if ( res.kind == hle::result_kind::returned )
 			{
 				a.rax = res.rax;
@@ -1180,6 +1326,36 @@ namespace emu::win
 		}
 		log_.push_back( loader_start_ ? "run: IRETQ to ntdll!LdrInitializeThunk " + hex( start_va_ ) + " with RCX = the CONTEXT " + hex( start_context_ ) + " (the --Sys loader start), at most " + std::to_string( po_.max_insns ) + " instructions" : "run: SYSRETQ to " + ( start_va_ == map_.entry ? "the entry " + hex( map_.entry ) : "the TLS start trampoline " + hex( start_va_ ) + " (then the entry " + hex( map_.entry ) + ")" ) +
 						" at CPL 3, at most " + std::to_string( po_.max_insns ) + " instructions" );
+		// P41 (U2084): the console capture - under --Sys an entry hook on each output export of the capture's kernelbase (at its slot)
+		hc_->con_hooks.clear();
+		hc_->con_waits.clear();
+		hc_->con.reset();
+		hc_->con_dir = po_.console_dir;
+		hc_->con_max = po_.console_max_bytes;
+		hc_->con_failed = false;
+		if ( loader_start_ && facts_.files && facts_.files->count( "kernelbase.dll" ) )
+		{
+			const auto& kb = facts_.files->at( "kernelbase.dll" );
+			pe::image ki;
+			std::vector<pe::export_entry> ex;
+			std::string perr;
+			if ( pe::parse( kb, ki, perr ) && pe::exports( kb, ki, ex, perr ) )
+			{
+				const uint64_t slot = system_image_slot( "kernelbase.dll" );
+				for ( const auto& x : ex )
+					if ( !x.forwarder && ( x.name == "WriteFile" || x.name == "WriteConsoleA" || x.name == "WriteConsoleW" || x.name == "OutputDebugStringA" || x.name == "OutputDebugStringW" ) )
+						hc_->con_hooks[ slot + x.rva ] = x.name;
+			}
+			for ( const auto& [ va, n ] : hc_->con_hooks )
+				if ( uc_hook_add( uc, &h, UC_HOOK_CODE, (void*)on_con_api, hc_.get(), va, va ) != UC_ERR_OK )
+				{
+					error = "uc_hook_add (console capture) failed";
+					log_.push_back( "FAILED: " + error );
+					return false;
+				}
+			log_.push_back( "console capture: " + std::to_string( hc_->con_hooks.size() ) + " output exports of kernelbase.dll hooked (WriteFile on a standard handle, WriteConsoleA / W, "
+							"OutputDebugStringA / W) + NtWriteFile on a standard handle; observation only" );
+		}
 		// 4. the run: until the return sentinel, a stop of the hooks, or the instruction bound (no host time)
 		ue = e_->emulate( begin, guest_return_sentinel, po_.max_insns );
 		std::string rerr;
@@ -1200,6 +1376,13 @@ namespace emu::win
 				hc_->stop( stop_kind::error, std::string( "emulation ended without a stop reason: " ) + uc_strerror( ue ) + ", rip " + hex( rip ) );
 		}
 		log_.push_back( std::string( "stop: " ) + name_of( r.stop ) + " - " + r.detail );
+		while ( !hc_->con_waits.empty() )   // P41 (U2084): attempts whose call had not returned when the run stopped
+		{
+			auto w = hc_->con_waits.back();
+			hc_->con_waits.pop_back();
+			con_record( *hc_, w.a );
+		}
+		if ( hc_->con ) hc_->con->close();
 		// U2020: the counters that come from the run's records; the tail ring oldest first
 		if ( po_.counters )
 		{
@@ -1413,6 +1596,7 @@ namespace emu::win
 		o.push_back( "probe: system calls " + std::to_string( ns ) + " (" + std::to_string( p.syscalls.size() ) + " services)" );
 		for ( auto& [ k, v ] : p.syscalls ) o.push_back( "probe: syscall " + k + " x" + std::to_string( v ) );
 		o.push_back( "probe: API calls " + std::to_string( na ) + " (" + std::to_string( p.apis.size() ) + " APIs)" );
+		o.push_back( "probe: console output attempts " + std::to_string( r.console.size() ) + " (P41 console capture)" );
 		for ( auto& [ k, v ] : p.apis ) o.push_back( "probe: api " + k + " x" + std::to_string( v ) );
 		o.push_back( "probe: exceptions " + std::to_string( ne ) + " (each one stops the run until exception dispatch, milestone M7)" );
 		for ( auto& [ k, v ] : p.exceptions ) o.push_back( "probe: exception vector " + std::to_string( k ) + " x" + std::to_string( v ) );
@@ -1497,5 +1681,34 @@ namespace emu::win
 		if ( kernel_ )
 			for ( auto& l : kernel_->describe() ) d.push_back( "  " + l );
 		return d;
+	}
+
+	// P41 (U2084): is HANDLE one of the process' standard handles (PEB->ProcessParameters StandardInput / Output / Error, read now) or 0
+	bool process::std_handle( uc_engine* uc, uint64_t handle ) const
+	{
+		if ( handle == 0 ) return true;
+		uint64_t params = 0, h[ 3 ] = {};
+		if ( uc_mem_read( uc, guest_peb_va + 0x20, &params, 8 ) != UC_ERR_OK || !params || uc_mem_read( uc, params + 0x20, h, sizeof( h ) ) != UC_ERR_OK ) return false;
+		return handle == h[ 0 ] || handle == h[ 1 ] || handle == h[ 2 ];
+	}
+
+	std::vector<std::string> process::console_summary( const run_result& r ) const
+	{
+		std::vector<std::string> o;
+		o.push_back( "console capture: " + std::to_string( r.console.size() ) + " output attempt(s)" +
+					 ( r.console_file.empty() ? std::string( r.console.empty() ? " (no file: nothing was written)" : " (no file: no capture folder)" ) : "; file " + r.console_file ) +
+					 ( r.console_truncated ? " (truncated at the size bound)" : "" ) );
+		for ( const auto& a : r.console )
+			o.push_back( "console capture #" + std::to_string( a.index ) + ": insn " + std::to_string( a.insn ) + " " + a.via + " handle " + hex( a.handle ) + " length " + std::to_string( a.length ) +
+						 " text \"" + a.text + "\" -> " + a.result );
+		// the process parameters' console fields as the process left them (the model starts detached: ConsoleHandle -1, no standard
+		// handles; a native detached process reads ConsoleHandle 0 after its kernelbase start - tm_nt con.pp)
+		uc_engine* uc = e_->handle();
+		uint64_t params = 0, f[ 5 ] = {};
+		if ( uc_mem_read( uc, guest_peb_va + 0x20, &params, 8 ) == UC_ERR_OK && params && uc_mem_read( uc, params + 0x10, f, sizeof( f ) ) == UC_ERR_OK )
+			o.push_back( "console fields at the stop: PEB->ProcessParameters " + hex( params ) + ( params == pstate_.parameters ? " (the environment's block)" : " (the process' copy)" ) +
+						 ": ConsoleHandle " + hex( f[ 0 ] ) + ", ConsoleFlags " + hex( uint32_t( f[ 1 ] ) ) + ", StandardInput " + hex( f[ 2 ] ) + ", StandardOutput " + hex( f[ 3 ] ) +
+						 ", StandardError " + hex( f[ 4 ] ) );
+		return o;
 	}
 }

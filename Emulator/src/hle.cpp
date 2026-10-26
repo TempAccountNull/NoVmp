@@ -37,7 +37,10 @@ namespace emu::hle
 		};
 		// kernel32.dll APIs of milestone M5 (the names as exported; compared exactly, the DLL name without case)
 		const known kernel32[] = { { "GetCurrentProcessId", api::get_current_process_id }, { "GetCurrentThreadId", api::get_current_thread_id },
-								   { "ExitProcess", api::exit_process }, { "GetModuleHandleW", api::get_module_handle_w }, { "GetModuleHandleA", api::get_module_handle_a } };
+								   { "ExitProcess", api::exit_process }, { "GetModuleHandleW", api::get_module_handle_w }, { "GetModuleHandleA", api::get_module_handle_a },
+								   // P41 (U2083): a process without a console prints
+								   { "GetStdHandle", api::get_std_handle }, { "WriteFile", api::write_file }, { "WriteConsoleA", api::write_console_a },
+								   { "WriteConsoleW", api::write_console_w }, { "GetLastError", api::get_last_error } };
 	}
 
 	std::string binding::label() const
@@ -175,9 +178,102 @@ namespace emu::hle
 				r.rax = image_base;
 				r.text = "NULL -> the executable's base address " + hex( image_base );
 				return r;
+			case api::get_std_handle:
+			{
+				// the process parameters' StandardInput / Output / Error (RTL_USER_PROCESS_PARAMETERS +20H / +28H / +30H; the PEB's
+				// ProcessParameters at +20H); LastError unchanged (measured: tm_nt con.std.*)
+				const uint32_t which = uint32_t( args[ 0 ] );
+				const int slot = which == uint32_t( -10 ) ? 0 : which == uint32_t( -11 ) ? 1 : which == uint32_t( -12 ) ? 2 : -1;
+				if ( slot < 0 )
+				{
+					r.text = "GetStdHandle( " + hex( which ) + " ): not STD_INPUT / OUTPUT / ERROR_HANDLE - not modelled";
+					return r;
+				}
+				uint64_t params = 0, h = 0;
+				if ( uc_mem_read( uc, f.peb + 0x20, &params, 8 ) != UC_ERR_OK || !params || uc_mem_read( uc, params + 0x20 + 8ull * slot, &h, 8 ) != UC_ERR_OK )
+				{
+					r.text = "GetStdHandle: the process parameters are not readable";
+					return r;
+				}
+				r.kind = result_kind::returned;
+				r.rax = h;
+				r.text = "GetStdHandle( " + std::string( slot == 0 ? "STD_INPUT_HANDLE" : slot == 1 ? "STD_OUTPUT_HANDLE" : "STD_ERROR_HANDLE" ) + " ) = " + hex( h ) +
+						 ( h ? std::string() : " (no standard handles: a process started without a console; LastError unchanged - measured: tm_nt con.std)" );
+				return r;
+			}
+			case api::write_file:
+			case api::write_console_a:
+			case api::write_console_w:
+			{
+				const bool file = b.id == api::write_file;
+				r.console = true;
+				r.con_handle = args[ 0 ];
+				r.con_buffer = args[ 1 ];
+				r.con_length = uint32_t( args[ 2 ] );
+				r.con_wide = b.id == api::write_console_w;
+				if ( args[ 0 ] != 0 )
+				{
+					r.text = b.label() + "( " + hex( args[ 0 ] ) + ", ... ): a handle other than the no-console standard handle 0 is not modelled";
+					r.con_result = "not answered (stop)";
+					return r;
+				}
+				uint32_t lasterr = 6;   // ERROR_INVALID_HANDLE (shared\winerror.h)
+				std::string how;
+				if ( file )
+				{
+					// *lpNumberOfBytesWritten = 0 first (measured: written 0), then the ONE kernel layer: NtWriteFile( 0, ... )
+					if ( args[ 3 ] )
+					{
+						const uint32_t zero = 0;
+						if ( !k.user_buffer( args[ 3 ], 4, UC_PROT_WRITE ) || uc_mem_write( uc, args[ 3 ], &zero, 4 ) != UC_ERR_OK )
+						{
+							r.text = "WriteFile: lpNumberOfBytesWritten is not writable - not modelled";
+							r.con_result = "not answered (stop)";
+							return r;
+						}
+					}
+					nt::call c;
+					c.name = "NtWriteFile";
+					c.args = { 0, 0, 0, 0, 0, args[ 1 ], uint32_t( args[ 2 ] ), 0, 0, 0, 0, 0 };
+					c.stack_args = true;
+					const nt::reply rep = k.dispatch( c );
+					if ( rep.kind != nt::reply_kind::done || rep.status != 0xC0000008 )
+					{
+						r.text = "WriteFile: the kernel layer's NtWriteFile did not answer STATUS_INVALID_HANDLE: " + rep.text;
+						r.con_result = "not answered (stop)";
+						return r;
+					}
+					how = "NtWriteFile( 0 ) = STATUS_INVALID_HANDLE -> ";
+				}
+				if ( uc_mem_write( uc, f.teb + 0x68, &lasterr, 4 ) != UC_ERR_OK )   // TEB LastErrorValue (68H)
+				{
+					r.text = b.label() + ": the TEB is not writable";
+					r.con_result = "not answered (stop)";
+					return r;
+				}
+				r.kind = result_kind::returned;
+				r.rax = 0;
+				r.con_result = "FALSE, LastError 6 (ERROR_INVALID_HANDLE)" + std::string( file ? ", *lpNumberOfBytesWritten 0" : ", the written count not written" );
+				r.text = b.label() + "( 0, " + hex( args[ 1 ] ) + ", " + std::to_string( uint32_t( args[ 2 ] ) ) + ", " + hex( args[ 3 ] ) + " ): " + how + r.con_result +
+						 " (a process without a console; measured: tm_nt " + ( file ? "con.api.wfile" : "con.api.wcon" ) + ")";
+				return r;
+			}
+			case api::get_last_error:
+			{
+				uint32_t v = 0;
+				if ( uc_mem_read( uc, f.teb + 0x68, &v, 4 ) != UC_ERR_OK )
+				{
+					r.text = "GetLastError: the TEB is not readable";
+					return r;
+				}
+				r.kind = result_kind::returned;
+				r.rax = v;
+				r.text = "the TEB's LastErrorValue " + hex( v );
+				return r;
+			}
 			default:
 				r.text = b.label() + " is not implemented in milestone M5 (the --HLE APIs of M5: kernel32.dll GetCurrentProcessId, GetCurrentThreadId, ExitProcess, "
-									 "GetModuleHandleW / A( NULL ))";
+									 "GetModuleHandleW / A( NULL ); P41: GetStdHandle, WriteFile, WriteConsoleA / W, GetLastError)";
 				return r;
 		}
 	}

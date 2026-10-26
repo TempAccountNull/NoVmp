@@ -965,7 +965,7 @@ static void case_ahc( void )
 {
 	/* P41 (exploration x5, system call 196): the test PEs' own image names (the loader's LookupCdb for the process image) */
 	static const wchar_t* const names[] = { L"KERNELBASE.dll", L"KERNEL32.DLL", L"kernel32.dll", L"ntdll.dll", L"tm_nt_no_such.dll", L"t2_import.exe", L"t3_tls.exe",
-											L"t3_tls.vmware_guest.exe" };
+											L"t3_tls.vmware_guest.exe", L"t5_stdout.exe" };
 	size_t q, k;
 	for ( q = 0; q < sizeof( names ) / sizeof( names[ 0 ] ); q++ )
 	{

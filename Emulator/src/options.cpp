@@ -134,7 +134,7 @@ namespace emu
 			"  boundary  --Sys (default: syscall-level emulation of the real system DLLs) | --HLE (API-level)\n"
 			"  rng       --seeded (default, deterministic) | --HostSeed (hardware DRNG)\n"
 			"  --max-insns N   instruction bound (decimal or 0x hex, 64-bit)\n"
-			"  --out-dir DIR   output folder (recorded; nothing is created)\n"
+			"  --out-dir DIR   output folder (recorded, not created; emu-oep writes its console capture console_capture.txt there, P41)\n"
 			"  -h, --help\n";
 		if ( tool == tool_kind::oep )
 			return "usage: emu-oep [options] INPUT | emu-oep (--guest | --host) [--sysdlls DIR] --syscall-number NAME\n"

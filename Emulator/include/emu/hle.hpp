@@ -21,6 +21,17 @@
 //                                calling process (.exe file)." - the handle is the module's base address (Windows Data
 //                                Types: HINSTANCE / HMODULE "the base address of the module in memory"); a module name =
 //                                stop (no module list in M5)
+// P41 (U2083, USER DECISION 2026-10-26 "started without a console"): the APIs a console program uses to print, with the results a process
+// WITHOUT a console gets (MEASURED natively by our own test PE tm_nt in a detached process, tm_nt con.*; the documented functions:
+// um\processenv.h GetStdHandle "If an application does not have associated standard handles ... the return value is NULL", um\fileapi.h
+// WriteFile, um\consoleapi.h WriteConsoleA / W, um\errhandlingapi.h GetLastError):
+//   GetStdHandle( STD_INPUT / OUTPUT / ERROR_HANDLE ) = the process parameters' StandardInput / Output / Error (0: no standard handles;
+//                                LastError unchanged - tm_nt con.std.*); another value = stop
+//   WriteFile( 0, ... )          *lpNumberOfBytesWritten = 0, then the kernel layer's NtWriteFile( 0 ) = STATUS_INVALID_HANDLE ->
+//                                FALSE, LastError 6 ERROR_INVALID_HANDLE (tm_nt con.api.wfile / con.ntwf); another handle = stop
+//   WriteConsoleA / W( 0, ... )  FALSE, LastError 6, the written count NOT written (tm_nt con.api.wcon); another handle = stop
+//   GetLastError()               the TEB's LastErrorValue (68H)
+// Each WriteFile / WriteConsole call is an output ATTEMPT that win_env records in the console capture (its text decoded; observation only).
 // The TLS start (U2010): under --HLE the loader's part of process start for TLS - the index, the thread's TLS block from the
 // template, the callbacks with DLL_PROCESS_ATTACH before the entry point - is done by emu::win (win_env.cpp) with a user-mode
 // trampoline in this page (start_trampoline).
@@ -43,7 +54,8 @@ namespace emu::hle
 	inline constexpr uint64_t max_stubs = 0x800;                 // stubs in [module_va, +8000H); the trampoline above
 	inline constexpr uint64_t trampoline_va = module_va + 0x8000;
 
-	enum class api { unknown, get_current_process_id, get_current_thread_id, exit_process, get_module_handle_w, get_module_handle_a };
+	enum class api { unknown, get_current_process_id, get_current_thread_id, exit_process, get_module_handle_w, get_module_handle_a,
+					 get_std_handle, write_file, write_console_a, write_console_w, get_last_error };   // P41 (U2083): the last five
 
 	struct binding
 	{
@@ -61,6 +73,11 @@ namespace emu::hle
 		uint64_t rax = 0;
 		uint32_t exit_status = 0;
 		std::string text;
+		// P41 (U2083): an output attempt (WriteFile / WriteConsoleA / W) for win_env's console capture
+		bool console = false;
+		uint64_t con_handle = 0, con_buffer = 0, con_length = 0;
+		bool con_wide = false;
+		std::string con_result;
 	};
 
 	class module

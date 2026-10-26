@@ -890,7 +890,7 @@ namespace emu::nt
 		// ParamsOutSize 4 at +170H, the rest 0). MEASURED (tm_nt ahc.*): for "KERNELBASE.dll", "KERNEL32.DLL", "kernel32.dll", "ntdll.dll"
 		// and a name no file has = STATUS_SUCCESS, the 4 output bytes = 0, no context byte changed (no compatibility-database entry for these
 		// modules in the guest); P41 (U2080): the same for the test PEs' own image names "t2_import.exe", "t3_tls.exe", "t3_tls.vmware_guest.exe"
-		// (tm_nt ahc.5 / .6 / .7). Other names (an entry may exist for them in the environment's database): stop until measured; other classes
+		// (tm_nt ahc.5 / .6 / .7) and "t5_stdout.exe" (ahc.8). Other names (an entry may exist for them in the environment's database): stop until measured; other classes
 		// / layouts: stop.
 		const uint32_t cls = uint32_t( c.args[ 0 ] );
 		const uint64_t ctx = c.args[ 1 ];
@@ -912,8 +912,8 @@ namespace emu::nt
 		std::memcpy( &pout, d + 0x168, 8 );
 		if ( !layout || d[ 0x170 ] != 4 ) return stop_( what + " context bytes:" + hx + " - another layout: not measured" );
 		const std::string ln = lower( nm );
-		if ( ln != "kernelbase.dll" && ln != "kernel32.dll" && ln != "ntdll.dll" && ln != "t2_import.exe" && ln != "t3_tls.exe" && ln != "t3_tls.vmware_guest.exe" )
-			return stop_( what + " - this module name is not measured (tm_nt ahc: kernelbase.dll, kernel32.dll, ntdll.dll, t2_import.exe, t3_tls.exe, t3_tls.vmware_guest.exe)" );
+		if ( ln != "kernelbase.dll" && ln != "kernel32.dll" && ln != "ntdll.dll" && ln != "t2_import.exe" && ln != "t3_tls.exe" && ln != "t3_tls.vmware_guest.exe" && ln != "t5_stdout.exe" )
+			return stop_( what + " - this module name is not measured (tm_nt ahc: kernelbase.dll, kernel32.dll, ntdll.dll, t2_import.exe, t3_tls.exe, t3_tls.vmware_guest.exe, t5_stdout.exe)" );
 		if ( !user_buffer( pout, 4, UC_PROT_WRITE ) ) return stop_( what + " - ParamsOut not writable: not measured" );
 		reply rr = done_( status::success, what + ": no compatibility-database entry - ParamsOut = 0 (measured: tm_nt ahc)" );
 		const uint32_t zero = 0;

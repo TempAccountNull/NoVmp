@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 r"""win_env_sys_loader.py - suite win_env_sys_loader (plan 3.M5 part 2, ledger U2039; P39 U2060; P40 U2067; P41 U2086): the opt-in --Sys
---loader start through the VMware-guest environment's real ntdll!LdrInitializeThunk - since P41 to the END of the test PEs: T2 / T3 PASS
-under --Sys (the plan 3.M5 done criterion).
+--loader start through the VMware-guest environment's real ntdll!LdrInitializeThunk - since P41 to the END of the test PEs: T2 / T3 / T5
+PASS under --Sys (the plan 3.M5 done criterion for T2 / T3).
 
 P41 (USER DECISION 2026-10-26 "started without a console"): the emulated process is the model of a process started DETACHED (process
 parameters ConsoleHandle -1 = RTL_USER_PROC_DETACHED_PROCESS, no standard handles); every system service the real ntdll / kernelbase /
@@ -10,11 +10,16 @@ nt_measured_vmware_guest.txt; P39 / P40 / P41), never forwarded to the host. Che
 by it; the system DLLs are mapped as data and run only in emulation):
   - the capture holds the loader files and the registry subset with the P39 / P40 / P41 items (capture_sysdlls.py --dll / --reg / --reg-value)
   - T2 --Sys without --loader: refused (exit 3) as in milestone M5
-  - T2 and T3 (its service number patched from the capture, as win_env_m5; a copy of its own in test_pe\sysloader\) under --Sys
+  - T2, T3 (its service number patched from the capture, as win_env_m5; a copy of its own in test_pe\sysloader\) and T5 under --Sys
     --loader: the kernel-side start (NLS / API set views, the CONTEXT, IRETQ to LdrInitializeThunk); EVERY system service answered, in the
-    recorded order (EXPECTED below: T2 210, T3 202 services); the guest's exit status 2BH / 2EH (emu-oep exit 0); nothing forwarded
+    recorded order (EXPECTED below: T2 210, T3 202, T5 211 services); the guest's exit status 2BH / 2EH / 2FH (emu-oep exit 0); nothing
+    forwarded; the process parameters' console fields at the stop = what a natively detached process reads (ConsoleHandle 0 after its
+    kernelbase start, no standard handles: tm_nt con.pp)
   - the same test PEs under --HLE: the same exit status (the observable result of both modes)
-  - the NATIVE REFERENCE (labelled, decision 3.0.7), only when the live ntdll equals the capture: T2 / T3 started natively DETACHED
+  - the CONSOLE CAPTURE (P41, U2084): T5 prints through WriteFile and WriteConsoleW to its (absent) standard output; under --Sys and
+    --HLE the capture file <out-dir>\console_capture.txt holds both attempts with their text and results (FALSE, LastError 6), while T5 got
+    the measured "no console" results (its exit status 2FH says so)
+  - the NATIVE REFERENCE (labelled, decision 3.0.7), only when the live ntdll equals the capture: T2 / T3 / T5 started natively DETACHED
     (tm_nt run.detached: CreateProcessW( DETACHED_PROCESS )) exit with the same codes as their emulated runs
 A changed service sequence fails this suite (a newly answered or changed service must update EXPECTED and the notes). Exit 0 = PASS,
 1 = FAIL, 2 = usage.
@@ -104,8 +109,40 @@ EXPECTED = {
     'NtAssociateWaitCompletionPacket NtCreateTimer2 NtCreateWaitCompletionPacket NtAssociateWaitCompletionPacket NtSetInformationWorkerFactory '
     'NtSetInformationWorkerFactory NtQuerySecurityAttributesToken NtQuerySecurityAttributesToken NtApphelpCacheControl NtSetInformationVirtualMemory '
     'NtSetEvent NtSetEvent NtSetInformationWorkerFactory NtSetEvent NtTestAlert NtContinue NtTerminateProcess ').split(),
+    'T5': ('NtQueryPerformanceCounter NtProtectVirtualMemory NtProtectVirtualMemory NtCreateEvent NtQuerySystemInformation NtQueryInformationProcess '
+    'NtQuerySystemInformation NtQueryVirtualMemory NtQueryVirtualMemory NtProtectVirtualMemory NtOpenKey NtQueryValueKey NtClose NtOpenKey NtOpenKey '
+    'NtOpenKey NtQueryInformationProcess NtQueryInformationProcess NtQuerySecurityAttributesToken NtQuerySecurityAttributesToken NtOpenKey '
+    'NtQueryValueKey NtClose NtQueryInformationProcess NtQuerySystemInformation NtQuerySystemInformation NtAllocateVirtualMemoryEx '
+    'NtAllocateVirtualMemoryEx NtAllocateVirtualMemoryEx NtQuerySystemInformation NtAllocateVirtualMemory NtFreeVirtualMemory NtAllocateVirtualMemory '
+    'NtQuerySystemInformation NtQuerySystemInformation NtCreateEvent NtCreateWaitCompletionPacket NtQuerySystemInformationEx NtCreateIoCompletion '
+    'NtCreateWorkerFactory NtCreateTimer2 NtCreateWaitCompletionPacket NtAssociateWaitCompletionPacket NtCreateTimer2 NtCreateWaitCompletionPacket '
+    'NtAssociateWaitCompletionPacket NtSetInformationWorkerFactory NtSetInformationWorkerFactory NtSetInformationWorkerFactory '
+    'NtAssociateWaitCompletionPacket NtTraceControl NtTraceControl NtTraceControl NtTraceControl NtFreeVirtualMemory NtProtectVirtualMemory '
+    'NtOpenDirectoryObject NtProtectVirtualMemory NtOpenSymbolicLinkObject NtQuerySymbolicLinkObject NtClose NtProtectVirtualMemory '
+    'NtProtectVirtualMemory NtCreateEvent NtCreateEvent NtProtectVirtualMemory NtProtectVirtualMemory NtOpenFile NtQueryVolumeInformationFile '
+    'NtSetEvent NtAllocateVirtualMemory NtOpenSection NtMapViewOfSection NtQueryPerformanceCounter NtProtectVirtualMemory NtProtectVirtualMemory '
+    'NtProtectVirtualMemory NtProtectVirtualMemory NtOpenSection NtMapViewOfSection NtQueryPerformanceCounter NtProtectVirtualMemory '
+    'NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory NtClose NtProtectVirtualMemory NtClose NtProtectVirtualMemory '
+    'NtSetInformationProcess NtApphelpCacheControl NtApphelpCacheControl NtSetInformationVirtualMemory NtQuerySystemInformation '
+    'NtQuerySystemInformation NtOpenSection NtCreateSection NtConnectPort NtClose NtMapViewOfSection NtClose NtAllocateVirtualMemory '
+    'NtInitializeNlsFiles NtSetInformationProcess NtTraceControl NtTraceControl NtQueryInformationToken NtAccessCheck NtAccessCheck NtOpenProcessToken '
+    'NtQueryInformationToken NtQueryInformationToken NtQueryInformationToken NtOpenDirectoryObject NtQueryInformationToken NtClose NtCreateMutant '
+    'NtWaitForSingleObject NtOpenSemaphore NtCreateSemaphore NtCreateSemaphore NtReleaseMutant NtQueryWnfStateData NtCreateEvent '
+    'NtCreateWaitCompletionPacket NtSetWnfProcessNotificationEvent NtAssociateWaitCompletionPacket NtSubscribeWnfStateChange NtQueryWnfStateData '
+    'NtSubscribeWnfStateChange NtQueryWnfStateData NtSubscribeWnfStateChange NtQueryWnfStateData NtAllocateVirtualMemory NtSetTimer2 NtOpenKey '
+    'NtTraceControl NtTraceControl NtTraceControl NtTraceControl NtSetInformationVirtualMemory NtOpenKey NtTraceControl NtTraceControl '
+    'NtQuerySystemInformation NtSetEvent NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory '
+    'NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory '
+    'NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory '
+    'NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory NtOpenKey NtOpenKey NtOpenKey NtQueryValueKey NtClose '
+    'NtQueryInformationToken NtOpenKey NtOpenKey NtQueryValueKey NtClose NtOpenKey NtQueryValueKey NtClose NtQuerySystemInformationEx '
+    'NtCreateIoCompletion NtCreateWorkerFactory NtSetInformationWorkerFactory NtCreateTimer2 NtCreateWaitCompletionPacket '
+    'NtAssociateWaitCompletionPacket NtCreateTimer2 NtCreateWaitCompletionPacket NtAssociateWaitCompletionPacket NtSetInformationWorkerFactory '
+    'NtSetInformationWorkerFactory NtQuerySecurityAttributesToken NtQuerySecurityAttributesToken NtProtectVirtualMemory NtProtectVirtualMemory '
+    'NtApphelpCacheControl NtSetInformationVirtualMemory NtSetEvent NtSetEvent NtSetInformationWorkerFactory NtSetEvent NtTestAlert NtContinue '
+    'NtWriteFile NtTerminateProcess NtClose NtClose NtClose NtClose NtQueryWnfStateData NtTerminateProcess ').split(),
 }
-STATUS = {'T2': 0x2B, 'T3': 0x2E}
+STATUS = {'T2': 0x2B, 'T3': 0x2E, 'T5': 0x2F}
 # P41: the registry items the start of a process without a console asks (capture_sysdlls.py --reg / --reg-value; local, never committed)
 P41_REGISTRY = [
     r'key	absent	\registry\machine\system\currentcontrolset\control\stateseparation\redirectionmap\keys',
@@ -113,7 +150,9 @@ P41_REGISTRY = [
     r'key	absent	\registry\machine\system\currentcontrolset\control\srp\gp\dll',
     r'key	present	\registry\machine\software\policies\microsoft\windows\safer\codeidentifiers',
     r'key	present	\registry\machine\system\currentcontrolset\control\filesystem',
+    r'key	absent	\registry\machine\software\microsoft\windows nt\currentversion\image file execution options\t5_stdout.exe',
 ]
+T5_TEXTS = ('t5_stdout: hello from WriteFile' + chr(92) + 'r' + chr(92) + 'n', 't5_stdout: hello from WriteConsoleW' + chr(92) + 'r' + chr(92) + 'n')
 
 
 def say(msg):
@@ -128,7 +167,7 @@ def main(argv):
     oep = os.path.join(tests, 'emu-oep.exe')
     pe_dir = os.path.join(tests, 'test_pe')
     tm = os.path.join(pe_dir, 'tm_nt.exe')
-    t2, t3 = (os.path.join(pe_dir, n) for n in ('t2_import.exe', 't3_tls.exe'))
+    t2, t3, t5 = (os.path.join(pe_dir, n) for n in ('t2_import.exe', 't3_tls.exe', 't5_stdout.exe'))
     fails = []
 
     def check(ok, what):
@@ -137,7 +176,7 @@ def main(argv):
             fails.append(what)
         return ok
 
-    for p in (oep, t2, t3, tm):
+    for p in (oep, t2, t3, t5, tm):
         if not os.path.isfile(p):
             say('FAIL %s missing (build.cmd first)' % p)
             return 1
@@ -160,9 +199,15 @@ def main(argv):
     open(t3p, 'wb').write(bytes(img))
     rc, out = T1H.run([oep, '--guest', '--Sys', t2])
     check(rc == 3 and any(l.startswith('[emu-oep] error: --Sys:') and 'LdrInitializeThunk' in l for l in out), 'T2 --Sys without --loader: refused, exit 3')
+    outdir = os.path.join(tests, 'sysloader_out')
     status = {}
-    for tag, path in (('T2', t2), ('T3', t3p)):
-        rc, out = T1H.run([oep, '--guest', '--Sys', '--loader', '--counters', path])
+    for tag, path in (('T2', t2), ('T3', t3p), ('T5', t5)):
+        od = os.path.join(outdir, tag.lower() + '_sys')
+        os.makedirs(od, exist_ok=True)
+        cf = os.path.join(od, 'console_capture.txt')
+        if os.path.isfile(cf):
+            os.remove(cf)   # this suite's own output file of an earlier run (one file)
+        rc, out = T1H.run([oep, '--guest', '--Sys', '--loader', '--counters', '--out-dir', od, path])
         obs = T1H.observable(out)
         check(any('env: NLS view at ' in l for l in obs) and any('env: API set schema view at ' in l and 'schema version 6' in l for l in obs) and
               any('env: --Sys loader start: CONTEXT at ' in l and 'RDX = the ntdll base' in l for l in obs) and
@@ -181,18 +226,39 @@ def main(argv):
         reads = [l for l in out if l.startswith('[emu-oep] probe: read ')]
         check(any('PEB.AnsiCodePageData' in l for l in reads) and any('PEB.UnicodeCaseTableData' in l for l in reads) and any('PARAMS.ImagePathName' in l for l in reads),
               '%s: the real loader read the NLS pointers and the process parameters the kernel side wrote' % tag)
-
+        check(any(l.startswith('[emu-oep] console fields at the stop: ') and "(the process' copy): ConsoleHandle 0x0, ConsoleFlags 0x0, StandardInput 0x0, StandardOutput 0x0, "
+                  'StandardError 0x0' in l for l in out),
+              '%s: the process parameters after the start = a natively detached process (ConsoleHandle 0, no standard handles: tm_nt con.pp)' % tag)
+        if tag == 'T5':
+            cap_lines = [l for l in out if l.startswith('[emu-oep] console capture #')]
+            body = open(cf, encoding='ascii').read() if os.path.isfile(cf) else ''
+            check(len(cap_lines) == 2 and 'kernelbase.dll!WriteFile handle 0x0 length 33 text "%s" -> returned 0x0, LastError 6, written 0' % T5_TEXTS[0] in cap_lines[0] and
+                  'kernelbase.dll!WriteConsoleW handle 0x0 length 37 text "%s" -> returned 0x0, LastError 6' % T5_TEXTS[1] in cap_lines[1] and
+                  all(t in body for t in T5_TEXTS) and body.count(chr(10)) == 3,
+                  'T5 --Sys: the console capture holds both output attempts (kernelbase WriteFile / WriteConsoleW on the standard handle 0, their text, FALSE / LastError 6) in %s' % cf)
+        else:
+            check(not os.path.isfile(cf) and any('console capture: 0 output attempt(s)' in l for l in out), '%s --Sys: no output attempt, no capture file' % tag)
     # --HLE: the same observable result
-    for tag, path in (('T2', t2), ('T3', t3p)):
-        rc, out = T1H.run([oep, '--guest', '--HLE', path])
+    for tag, path in (('T2', t2), ('T3', t3p), ('T5', t5)):
+        od = os.path.join(outdir, tag.lower() + '_hle')
+        os.makedirs(od, exist_ok=True)
+        cf = os.path.join(od, 'console_capture.txt')
+        if os.path.isfile(cf):
+            os.remove(cf)
+        rc, out = T1H.run([oep, '--guest', '--HLE', '--out-dir', od, path])
         st = [l for l in out if l.startswith('[emu-oep] observable: exit status: ')]
         h = int(st[0].split(': ', 2)[2].split()[0], 16) if len(st) == 1 else None
         check(rc == 0 and h == STATUS[tag] and h == status.get(tag), '%s --HLE: the guest exit status %02XH = the --Sys result (got %s)' % (tag, STATUS[tag], h))
+        if tag == 'T5':
+            body = open(cf, encoding='ascii').read() if os.path.isfile(cf) else ''
+            check('KERNEL32.dll!WriteFile handle 0x0 length 33 text "%s" -> FALSE, LastError 6 (ERROR_INVALID_HANDLE), *lpNumberOfBytesWritten 0' % T5_TEXTS[0] in body and
+                  'KERNEL32.dll!WriteConsoleW handle 0x0 length 37 text "%s" -> FALSE, LastError 6 (ERROR_INVALID_HANDLE), the written count not written' % T5_TEXTS[1] in body,
+                  'T5 --HLE: the console capture holds both output attempts (the API stubs, their text, FALSE / LastError 6) in %s' % cf)
     # the native reference: started DETACHED (our own test PEs only)
     live = os.path.join(os.environ.get('SystemRoot', r'C:\Windows'), 'System32', 'ntdll.dll')
     cap_sha = hashlib.sha256(open(os.path.join(cap, 'ntdll.dll'), 'rb').read()).hexdigest()
     if os.path.isfile(live) and hashlib.sha256(open(live, 'rb').read()).hexdigest() == cap_sha:
-        for tag, path in (('T2', t2), ('T3', t3p)):
+        for tag, path in (('T2', t2), ('T3', t3p), ('T5', t5)):
             r = subprocess.run([tm, 'run.detached', path], capture_output=True, text=True, timeout=120)
             m = [re.search(r'exit code ([0-9A-F]+)H', l) for l in r.stdout.splitlines() if l.startswith('tm_nt run.detached: ')]
             code = int(m[0].group(1), 16) if len(m) == 1 and m[0] else None
@@ -204,8 +270,9 @@ def main(argv):
     if fails:
         say('FAIL (%d problem(s))' % len(fails))
         return 1
-    say('PASS: T2 / T3 run to their end under --Sys --loader (the real LdrInitializeThunk, %d / %d answered services, the model of a process '
-        'started without a console) with the exit status 2BH / 2EH = --HLE = the detached native reference' % (len(EXPECTED['T2']), len(EXPECTED['T3'])))
+    say('PASS: T2 / T3 / T5 run to their end under --Sys --loader (the real LdrInitializeThunk, %d / %d / %d answered services, the model of a process '
+        'started without a console) with the exit status 2BH / 2EH / 2FH = --HLE = the detached native reference; T5\'s output attempts captured in both modes'
+        % (len(EXPECTED['T2']), len(EXPECTED['T3']), len(EXPECTED['T5'])))
     return 0
 
 

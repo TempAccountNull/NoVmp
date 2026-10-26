@@ -5,10 +5,14 @@
 // emu::nt answers the services of M5, --HLE binds imports to the API stubs of emu::hle and runs TLS callbacks; --Sys refuses images
 // with imports / TLS (the real LdrInitializeThunk start is not modelled, notes\eread\P35_phase3_m5.md). INPUT is only ever read as a file
 // and written into guest memory: never loaded, mapped executable or run on the host, never under a debugger (AGENT_RULES
-// "Host safety"). Nothing is written or created (--out-dir is recorded only) except the trace file --trace FILE names (U2020).
+// "Host safety"). Nothing is written or created except the trace file --trace FILE names (U2020) and the console capture (P41, below).
 // U2020 (plan 3.M5 part 2): --counters prints the probe counters (CPUID leaves with the answers, RDTSC / RDTSCP / RDPID, reads
 // of PEB / TEB / KUSER members, system calls, API calls, exceptions) and the last instructions at the stop; --trace FILE writes
 // one line per instruction. Both only observe: the guest sees the same machine with or without them.
+// P41 (U2084): the CONSOLE CAPTURE - the emulated process runs WITHOUT a console (the model of a detached process); every console /
+// standard-handle output attempt it makes is written to <out-dir>\console_capture.txt (--out-dir DIR; default: the folder of
+// emu-oep.exe), created at the first attempt; the summary (the file's path, the attempt count, each attempt) is printed at the stop.
+// Observation only: the program gets the measured "no console" results either way.
 //
 //   emu-oep [--host | --guest | --max] [--Sys | --HLE] [--seeded | --HostSeed] [--max-insns N] [--image-base ADDR]
 //           [--sysdlls DIR] [--dry-run] [--out-dir DIR] [--counters] [--trace FILE [--trace-regs] [--trace-last N]] INPUT
@@ -121,6 +125,12 @@ int main( int argc, char** argv )
 	po.trace_path = o.trace_file;
 	po.trace_regs = o.trace_regs;   // U2040
 	po.trace_last = o.trace_last;
+	{
+		// P41 (U2084): the console capture's folder - --out-dir, else the folder of this executable (the build output)
+		std::error_code ec2;
+		const std::filesystem::path self = std::filesystem::absolute( std::filesystem::path( argv[ 0 ] ), ec2 );
+		po.console_dir = !o.out_dir.empty() ? o.out_dir : ( ec2 ? std::string( "." ) : self.parent_path().string() );
+	}
 	std::vector<std::string> plog;
 	auto p = emu::win::process::create( ec, facts, po, file, plog, error );
 	for ( auto& l : plog ) std::cout << "[emu-oep] " << l << "\n";
@@ -144,6 +154,7 @@ int main( int argc, char** argv )
 	if ( rr.stop != emu::win::stop_kind::terminated )
 		for ( auto& l : p->state_dump( rr ) ) std::cout << "[emu-oep] " << l << "\n";
 	for ( auto& l : p->probe_summary( rr ) ) std::cout << "[emu-oep] " << l << "\n";   // U2020: --counters
+	for ( auto& l : p->console_summary( rr ) ) std::cout << "[emu-oep] " << l << "\n";   // P41 (U2084): the console capture
 	if ( rr.stop == emu::win::stop_kind::terminated )
 	{
 		char b[ 128 ];

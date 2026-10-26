@@ -153,6 +153,10 @@ namespace emu::win
 		// writes; trace_last > 0 keeps only the last trace_last lines in memory and writes them when the run stops
 		bool trace_regs = false;
 		uint64_t trace_last = 0;
+		// P41 (U2084): the console capture - the folder of console_capture.txt ("" = the attempts are only listed, no file); the file is
+		// created at the first attempt (a run without one creates nothing); at most console_max_bytes (disk rule), then marked truncated
+		std::string console_dir;
+		uint64_t console_max_bytes = 64ull << 20;
 	};
 
 	enum class stop_kind { none, terminated, unknown_syscall, unimplemented_syscall, unimplemented_api, fault, count, returned, error };
@@ -178,6 +182,19 @@ namespace emu::win
 		uint64_t index = 0, stub = 0, rax = 0;
 		std::string api, outcome;
 		std::array<uint64_t, 4> args{};   // RCX, RDX, R8, R9
+	};
+
+	// P41 (U2084): one console / standard-handle output ATTEMPT of the emulated process (observation only - what it got is unchanged):
+	// --HLE: WriteFile / WriteConsoleA / W through the API stubs; --Sys: execution entering kernelbase's WriteFile (on a standard handle
+	// or handle 0), WriteConsoleA / W, OutputDebugStringA / W (the result read at the return), and NtWriteFile on such a handle outside them
+	struct console_attempt
+	{
+		uint64_t index = 0, insn = 0;   // 1, 2, ...; the instruction count at the call
+		std::string via;                // "kernelbase.dll!WriteFile", "KERNEL32.dll!WriteConsoleW" (--HLE), "NtWriteFile" ...
+		uint64_t handle = 0;
+		uint64_t length = 0;            // bytes / characters the program passed
+		std::string text;               // decoded, at most 512 characters, control characters escaped
+		std::string result;             // what the program got
 	};
 
 	// U2020 (plan 3.M5 part 2, demand item 1 of oep_progress.md run 1): the probe counters of one run (process_options::counters).
@@ -236,6 +253,9 @@ namespace emu::win
 		reg::dump final;
 		bool have_final = false;
 		probe_counters probes;                 // U2020: filled when process_options::counters
+		std::vector<console_attempt> console;  // P41 (U2084): the output attempts, in order
+		std::string console_file;              // the capture file written ("" = none: no attempt, or no folder)
+		bool console_truncated = false;
 	};
 
 	class process
@@ -272,6 +292,9 @@ namespace emu::win
 		const std::vector<std::string>& environment_lines() const { return env_lines_; }
 		// U2020: the probe-counter summary of a run with process_options::counters ("probe: ..." lines; empty otherwise)
 		std::vector<std::string> probe_summary( const run_result& r ) const;
+		// P41 (U2084): the console capture's summary (the file, the attempt count, each attempt) and the process parameters' console
+		// fields as the process left them (ConsoleHandle, StandardInput / Output / Error of PEB->ProcessParameters at the stop)
+		std::vector<std::string> console_summary( const run_result& r ) const;
 		// U2020: ADDRESS as "<region> +off" (the engine region holding it), for traces and summaries
 		std::string where( uint64_t address ) const;
 		// U2020: the environment structure and member ADDRESS lies in (PEB / TEB / KUSER / ...); false outside them
@@ -314,5 +337,7 @@ namespace emu::win
 		void add_module( module_image m ) { modules_.push_back( std::move( m ) ); }
 		const std::vector<module_image>& modules() const { return modules_; }
 		const process_state& state() const { return pstate_; }
+		// P41 (U2084): HANDLE is one of the process' standard handles (the current process parameters) or 0
+		bool std_handle( uc_engine* uc, uint64_t handle ) const;
 	};
 }
