@@ -49205,6 +49205,54 @@ static void xpg_xor_flags_survive(void)
 }
 /* ---- end U2043 (xpg_) ---- */
 
+/* ---- U2045 (sj_): tb_gen_code's restart bound read back after siglongjmp(jmp_trans, -2) (P38, the setjmp audit) ---- */
+/*
+ * tb_gen_code restarts a translation that runs out of TCGContext.temps (U450: every PSHUFD imm8
+ * leaks a temp) with half its instruction bound, via siglongjmp(jmp_trans, -2) raised inside
+ * gen_intermediate_code. Since U2045 (backport of upstream QEMU 344b63b380, setjmp_gen_code, never
+ * inlined in our build) the sigsetjmp sits in its own small function that returns at once after the
+ * jump, and the bound lives in tb_gen_code's frame: under MSVC sigsetjmp is the opaque
+ * _setjmp_wrapper, the compiler sees an ordinary call and may reuse a local's stack slot while it is
+ * dead in its view (U2043 lost cc_op that way; P38: the U2044 build kept max_insns' slot by allocation
+ * only). Translation only (UC_CTL_TB_REQUEST_CACHE, nothing executed), SJ_N x PSHUFD xmm0, xmm0,
+ * 39h at a page start: the bound 512 (TCG_MAX_INSNS) runs out of temps, one restart with 256 =
+ * 512 / 2 fits, so the TB is exactly 256 instructions / 1280 bytes; the next TB the same.
+ */
+#define SJ_N 3001
+#define SJ_BASE 0x100000
+
+static void sj_tb_restart_halves(void)
+{
+    static const uint8_t pshufd0[5] = {0x66, 0x0f, 0x70, 0xc0, 0x39};
+    uint8_t *code = (uint8_t *)malloc(SJ_N * 5);
+    uc_engine *uc;
+    uc_tb tb;
+    int i;
+
+    TEST_CHECK(code != NULL);
+    if (!code) {
+        return;
+    }
+    for (i = 0; i < SJ_N; i++) {
+        memcpy(code + 5 * i, pshufd0, 5);
+    }
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_mem_map(uc, SJ_BASE, 0x20000, UC_PROT_ALL));
+    OK(uc_mem_write(uc, SJ_BASE, code, SJ_N * 5));
+    for (i = 0; i < 2; i++) {
+        uint64_t pc = SJ_BASE + (uint64_t)i * 256 * 5;
+
+        memset(&tb, 0, sizeof(tb));
+        OK(uc_ctl_request_cache(uc, pc, &tb));
+        TEST_CHECK(tb.pc == pc && tb.icount == 256 && tb.size == 256 * 5);
+        TEST_MSG("TB %d: pc %llx icount %u size %u, expected pc %llx icount 256 size 1280", i,
+                 (unsigned long long)tb.pc, (unsigned)tb.icount, (unsigned)tb.size, (unsigned long long)pc);
+    }
+    OK(uc_close(uc));
+    free(code);
+}
+/* ---- end U2045 (sj_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -49881,4 +49929,5 @@ TEST_LIST = {
     {"test_x86_kc_max_profile", test_x86_kc_max_profile},
     {"test_x86_xpg_xor_then_crossing_insn", xpg_xor_then_crossing_insn},
     {"test_x86_xpg_xor_flags_survive", xpg_xor_flags_survive},
+    {"test_x86_sj_tb_restart_halves", sj_tb_restart_halves},
     {NULL, NULL}};

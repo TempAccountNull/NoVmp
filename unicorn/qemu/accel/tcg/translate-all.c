@@ -1170,6 +1170,58 @@ void tcg_exec_init(struct uc_struct *uc, uint32_t tb_size)
     uc->del_inline_hook = uc_del_inline_hook;
 }
 
+/*
+ * Isolate the portion of code gen which can setjmp/longjmp.
+ * Return the size of the generated code, or negative on error.
+ *
+ * Backport of upstream QEMU 344b63b380 ("accel/tcg: Split out setjmp_gen_code", ledger U2045), adapted to
+ * this core: gen_intermediate_code(cpu, tb, max_insns), the UC_TRACE lines and the jump-offset setup that
+ * this core does between the translation and tcg_gen_code. After siglongjmp(jmp_trans, -2) (tcg.c
+ * tcg_raise_tb_overflow) nothing of this frame is read but the return value; max_insns lives in the caller.
+ */
+#if __Use_Original_Qemu != 1 /* ours (U2045) */
+/*
+ * NoVmp (ledger U2045, notes/eread/P38_setjmp_audit.md): never inlined. Under MSVC sigsetjmp is the opaque
+ * _setjmp_wrapper (util/setjmp-wrapper-win32.asm), so the compiler applies no returns-twice handling;
+ * inlined into tb_gen_code (a static function called once), this setjmp would again resume in tb_gen_code's
+ * frame, whose stack slots the first return may have given to other variables (P38: max_insns' slot was dead
+ * across gen_intermediate_code; U2043 lost cc_op that way). GCC never inlines a function that calls setjmp.
+ */
+QEMU_NOINLINE
+#endif /* __Use_Original_Qemu (U2045) */
+static int setjmp_gen_code(CPUState *cpu, TranslationBlock *tb, int *max_insns)
+{
+    TCGContext *tcg_ctx = cpu->uc->tcg_ctx;
+    CPUArchState *env = cpu->env_ptr;
+    int ret = sigsetjmp(tcg_ctx->jmp_trans, 0);
+    if (unlikely(ret != 0)) {
+        return ret;
+    }
+
+    tcg_func_start(tcg_ctx);
+
+    tcg_ctx->cpu = env_cpu(env);
+    UC_TRACE_START(UC_TRACE_TB_TRANS);
+    gen_intermediate_code(cpu, tb, *max_insns);
+    UC_TRACE_END(UC_TRACE_TB_TRANS, "[uc] translate tb 0x%" PRIx64 ": ", tb->pc);
+    tcg_ctx->cpu = NULL;
+    *max_insns = tb->icount;
+
+    /* generate machine code */
+    tb->jmp_reset_offset[0] = TB_JMP_RESET_OFFSET_INVALID;
+    tb->jmp_reset_offset[1] = TB_JMP_RESET_OFFSET_INVALID;
+    tcg_ctx->tb_jmp_reset_offset = tb->jmp_reset_offset;
+    if (TCG_TARGET_HAS_direct_jump) {
+        tcg_ctx->tb_jmp_insn_offset = tb->jmp_target_arg;
+        tcg_ctx->tb_jmp_target_addr = NULL;
+    } else {
+        tcg_ctx->tb_jmp_insn_offset = NULL;
+        tcg_ctx->tb_jmp_target_addr = tb->jmp_target_arg;
+    }
+
+    return tcg_gen_code(tcg_ctx, tb);
+}
+
 /* Called with mmap_lock held for user mode emulation.  */
 TranslationBlock *tb_gen_code(CPUState *cpu,
                               target_ulong pc, target_ulong cs_base,
@@ -1184,12 +1236,7 @@ TranslationBlock *tb_gen_code(CPUState *cpu,
     tb_page_addr_t phys_pc, phys_page2;
     target_ulong virt_page2;
     tcg_insn_unit *gen_code_buf;
-    int gen_code_size, search_size;
-    /*
-     * Modified between sigsetjmp(jmp_trans) and a possible siglongjmp (temp or
-     * frame overflow restart): volatile, so MSVC does not restore a stale copy.
-     */
-    volatile int max_insns;
+    int gen_code_size, search_size, max_insns;
 
     assert_memory_lock();
 #ifdef HAVE_PTHREAD_JIT_PROTECT
@@ -1238,35 +1285,8 @@ TranslationBlock *tb_gen_code(CPUState *cpu,
     tcg_ctx->tb_cflags = cflags;
  tb_overflow:
 
-    gen_code_size = sigsetjmp(tcg_ctx->jmp_trans, 0);
-    if (unlikely(gen_code_size != 0)) {
-        goto error_return;
-    }
-
-    tcg_func_start(tcg_ctx);
-
-    tcg_ctx->cpu = env_cpu(env);
-    UC_TRACE_START(UC_TRACE_TB_TRANS);
-    gen_intermediate_code(cpu, tb, max_insns);
-    UC_TRACE_END(UC_TRACE_TB_TRANS, "[uc] translate tb 0x%" PRIx64 ": ", tb->pc);
-    tcg_ctx->cpu = NULL;
-    max_insns = tb->icount;
-
-    /* generate machine code */
-    tb->jmp_reset_offset[0] = TB_JMP_RESET_OFFSET_INVALID;
-    tb->jmp_reset_offset[1] = TB_JMP_RESET_OFFSET_INVALID;
-    tcg_ctx->tb_jmp_reset_offset = tb->jmp_reset_offset;
-    if (TCG_TARGET_HAS_direct_jump) {
-        tcg_ctx->tb_jmp_insn_offset = tb->jmp_target_arg;
-        tcg_ctx->tb_jmp_target_addr = NULL;
-    } else {
-        tcg_ctx->tb_jmp_insn_offset = NULL;
-        tcg_ctx->tb_jmp_target_addr = tb->jmp_target_arg;
-    }
-
-    gen_code_size = tcg_gen_code(tcg_ctx, tb);
+    gen_code_size = setjmp_gen_code(cpu, tb, &max_insns);
     if (unlikely(gen_code_size < 0)) {
- error_return:
         switch (gen_code_size) {
         case -1:
             /*
