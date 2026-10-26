@@ -400,13 +400,27 @@ namespace emu::nt
 
 	reply kernel::svc_terminate_process( const call& c )
 	{
+		if ( c.args[ 0 ] == 0 )
+		{
+			// P41 (U2082): ProcessHandle NULL - ntdll's RtlExitUserProcess calls it first ("terminate every other thread"), then detaches the
+			// DLLs and calls it with NtCurrentProcess(). MEASURED (tm_nt term.null, prototype phnt ntpsapi.h NtTerminateProcess): STATUS_SUCCESS,
+			// the calling thread continues; the process' exit code is this FIRST status (tm_nt's exit code was 2BH although its main then
+			// returned 0). The emulated process has one thread: nothing else to end.
+			if ( !exit_status_set_ )
+			{
+				exit_status_set_ = true;
+				exit_status_ = uint32_t( c.args[ 1 ] );
+			}
+			return answered( status::success, "NtTerminateProcess( NULL, " + hex( uint32_t( c.args[ 1 ] ) ) + " ): every other thread ends (the emulated process has one) - STATUS_SUCCESS, "
+											  "the caller continues; the process' exit status is now " + hex( exit_status_ ) + " (measured: tm_nt term.null)" );
+		}
 		if ( c.args[ 0 ] != current_process )
-			return stopped( "NtTerminateProcess with ProcessHandle " + hex( c.args[ 0 ] ) + ": only NtCurrentProcess() is modelled (no handle table; a NULL handle's "
-							"semantics are not documented)" );
+			return stopped( "NtTerminateProcess with ProcessHandle " + hex( c.args[ 0 ] ) + ": only NtCurrentProcess() / NULL are modelled (no handle table)" );
 		reply r;
 		r.kind = reply_kind::terminated;
-		r.exit_status = uint32_t( c.args[ 1 ] );
-		r.text = "process terminated, ExitStatus " + hex( r.exit_status ) + " (ProcessHandle = NtCurrentProcess())";
+		r.exit_status = exit_status_set_ ? exit_status_ : uint32_t( c.args[ 1 ] );
+		r.text = "process terminated, ExitStatus " + hex( r.exit_status ) + " (ProcessHandle = NtCurrentProcess()" +
+				 ( exit_status_set_ ? std::string( "; the status of the first NtTerminateProcess( NULL ) - measured: tm_nt term.null" ) : std::string() ) + ")";
 		return r;
 	}
 
@@ -419,6 +433,7 @@ namespace emu::nt
 		if ( const auto it = handles_.find( h ); it != handles_.end() )
 		{
 			const std::string what = it->second.kind + " \"" + it->second.name + "\"";
+			if ( named_objects_.count( it->second.name ) && named_objects_[ it->second.name ] > 0 ) named_objects_[ it->second.name ]--;   // P41 (U2076): the last handle ends a named object
 			handles_.erase( it );
 			return answered( status::success, "handle " + hex( h ) + " (" + what + ") closed" );
 		}

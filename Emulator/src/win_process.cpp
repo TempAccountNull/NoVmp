@@ -54,9 +54,9 @@ namespace emu::win
 						   pp_cmdline = EMU_OFF( process_parameters, "CommandLine" ), pp_env = EMU_OFF( process_parameters, "Environment" ),
 						   pp_title = EMU_OFF( process_parameters, "WindowTitle" ), pp_desktop = EMU_OFF( process_parameters, "DesktopInfo" ),
 						   pp_shell = EMU_OFF( process_parameters, "ShellInfo" ), pp_runtime = EMU_OFF( process_parameters, "RuntimeData" ),
-						   pp_envsize = EMU_OFF( process_parameters, "EnvironmentSize" );
+						   pp_envsize = EMU_OFF( process_parameters, "EnvironmentSize" ), pp_console = EMU_OFF( process_parameters, "ConsoleHandle" );   // P41 (U2069)
 		static_assert( pp_max == 0 && pp_len == 4 && pp_flags == 8 && pp_curdir == 0x38 && pp_dllpath == 0x50 && pp_image == 0x60 && pp_cmdline == 0x70 && pp_env == 0x80 &&
-						   pp_title == 0xB0 && pp_desktop == 0xC0 && pp_shell == 0xD0 && pp_runtime == 0xE0 && pp_envsize == 0x3F0,
+						   pp_title == 0xB0 && pp_desktop == 0xC0 && pp_shell == 0xD0 && pp_runtime == 0xE0 && pp_envsize == 0x3F0 && pp_console == 0x10,
 					   "_RTL_USER_PROCESS_PARAMETERS" );
 		// _HEAP (the anonymous _HEAP_SEGMENT part: Heap 28H, BaseAddress 30H; Flags 70H, ForceFlags 74H)
 		constexpr uint32_t heap_heap = EMU_OFF( heap, "Heap" ), heap_base_address = EMU_OFF( heap, "BaseAddress" ), heap_flags = EMU_OFF( heap, "Flags" ),
@@ -246,6 +246,13 @@ namespace emu::win
 		w.u32( base + pp_flags, rtl_user_process_parameters_normalized );
 		w.u64( base + pp_env, env_va );
 		w.u64( base + pp_envsize, block.size() * 2 );
+		// P41 (U2069, USER DECISION 2026-10-26 "started without a console"): the emulated process is the model of a process started
+		// DETACHED - CreateProcessW( ..., DETACHED_PROCESS, STARTUPINFOW {cb only} ): ConsoleHandle = RTL_USER_PROC_DETACHED_PROCESS (-1,
+		// phnt ntrtl.h:4433; the creator's rule: ReactOS 0.4.16 kernel32/client/proc.c:681-685, reference only), ConsoleFlags 0, no
+		// standard handles (StandardInput / Output / Error 0: no STARTF_USESTDHANDLES), WindowFlags / ShowWindowFlags 0. Measured from
+		// inside our own detached test PE (tm_nt con.pp: the same values after kernelbase's start). Without it (ConsoleHandle 0) the real
+		// kernelbase allocates a NEW console for a console-subsystem image (\Device\ConDrv\Server + a console host: the P40 frontier).
+		w.u64( base + pp_console, ~0ull );
 		if ( !w.ok )
 		{
 			error = "process parameters: " + w.err;
@@ -255,7 +262,7 @@ namespace emu::win
 		st.environment = env_va;
 		st.environment_size = block.size() * 2;
 		lines.push_back( "RTL_USER_PROCESS_PARAMETERS at " + hex( base ) + " (normalized, Flags 1; Length / MaximumLength " + hex( used ) + "): ImagePathName " + id.image_path +
-						 ", CommandLine " + cmd + ", CurrentDirectory " + id.image_dir + "\\, WindowTitle = the image path, DesktopInfo Winsta0\\Default - placeholders (user \"" +
+						 ", CommandLine " + cmd + ", CurrentDirectory " + id.image_dir + "\\, WindowTitle = the image path, DesktopInfo Winsta0\\Default, ConsoleHandle -1 (started without a console: the model of a DETACHED_PROCESS start, P41), no standard handles - placeholders (user \"" +
 						 id.user + "\", computer \"" + id.computer + "\"), no real identifier" );
 		lines.push_back( "environment block at " + hex( env_va ) + ": " + std::to_string( env.size() ) + " variables, " + hex( block.size() * 2 ) +
 						 " bytes (EnvironmentSize), placeholders derived from the capture's system root and the platform facts" );

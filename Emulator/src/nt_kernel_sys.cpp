@@ -249,10 +249,32 @@ namespace emu::nt
 			return stop_( std::string( c.name ) + " \"" + full + "\" (access " + hex( c.args[ 1 ] ) + "): the key is not in the environment's captured registry subset - capture it "
 						  "(present / absent and its values) before this run can continue" );
 		};
+		// P41 (U2073): an absent key - STATUS_OBJECT_NAME_NOT_FOUND with the handle written NULL (MEASURED: tm_nt hku.safer; before P41 the
+		// handle was left unwritten)
+		const auto absent = [ & ]( const std::string& why ) {
+			reply ra = done_( status::object_name_not_found, "key \"" + full + "\" is absent " + why + " (STATUS_OBJECT_NAME_NOT_FOUND, handle NULL)" );
+			const uint64_t zero = 0;
+			if ( user_buffer( c.args[ 0 ], 8, UC_PROT_WRITE ) && !put( c.args[ 0 ], &zero, 8, ra ) ) return stop_( "writing the handle failed after the probe" );
+			return ra;
+		};
+		// P41 (U2073): the USER's keys \REGISTRY\USER\<the user SID>\... - the environment's user SID is the PLACEHOLDER of TokenUser
+		// (S-1-5-21-1000001-1000002-1000003-1001, nt_kernel_measured.cpp); the user hive is never captured (real identifiers): each
+		// key is MEASURED from inside our own test PE with its own SID (tm_nt hku.*) and listed here. Other user keys: stop.
+		{
+			const std::string up = "\\registry\\user\\s-1-5-21-1000001-1000002-1000003-1001";
+			static const char* const measured_absent[] = { "\\software\\policies\\microsoft\\windows\\safer\\codeidentifiers" };   // tm_nt hku.safer
+			if ( key.rfind( up, 0 ) == 0 )
+			{
+				const std::string rest = key.substr( up.size() );
+				for ( auto m : measured_absent )
+					if ( rest == m ) return absent( "for the user (measured from inside: tm_nt hku.*)" );
+				return stop_( std::string( c.name ) + " \"" + full + "\": a key of the user's hive that was not measured (tm_nt hku.*: measured from inside with the process' own SID)" );
+			}
+		}
 		if ( !f_.registry ) return none();
 		const auto reg = f_.registry->find( key );
 		if ( reg == f_.registry->end() ) return none();
-		if ( !reg->second.present ) return done_( status::object_name_not_found, "key \"" + full + "\" is absent in the captured environment (STATUS_OBJECT_NAME_NOT_FOUND)" );
+		if ( !reg->second.present ) return absent( "in the captured environment" );
 		if ( !user_buffer( c.args[ 0 ], 8, UC_PROT_WRITE ) ) return done_( status::access_violation, "KeyHandle " + hex( c.args[ 0 ] ) + " not writable" );
 		object o;
 		o.kind = "key";
@@ -302,6 +324,21 @@ namespace emu::nt
 				data.assign( 4, 0 );
 				std::memcpy( data.data(), &v, 4 );
 				what = "ProcessCookie " + hex( v ) + " (non-zero, per process - measured shape tm_nt qip.24; the value: SplitMix64 of the seed, a model choice)";
+				break;
+			}
+			case 0x31:
+			{
+				// P41 (U2070): ProcessConsoleHostProcess (phnt ntpsapi.h:222 / :809-821, a ULONG_PTR). MEASURED (tm_nt con.chp.*, a process
+				// started detached): Length 8 = STATUS_SUCCESS, ReturnLength 8, the value its kernelbase set (1); Length 4 / 10H =
+				// STATUS_INFO_LENGTH_MISMATCH, ReturnLength not written (the generic rule below). Before any set: not measured - stop.
+				if ( !console_host_set_ )
+				{
+					r = stop_( "NtQueryInformationProcess ProcessConsoleHostProcess (31H) before the process set it: not measured" );
+					return true;
+				}
+				data.assign( 8, 0 );
+				std::memcpy( data.data(), &console_host_, 8 );
+				what = "ProcessConsoleHostProcess " + hex( console_host_ ) + " (set by the process; measured: tm_nt con.chp.8)";
 				break;
 			}
 			default:
@@ -581,6 +618,7 @@ namespace emu::nt
 		const auto it = handles_.find( c.args[ 0 ] );
 		if ( it == handles_.end() || it->second.kind.rfind( "event", 0 ) != 0 )
 		{
+			if ( n == "NtWaitForSingleObject" && it != handles_.end() && it->second.kind == "mutant" ) return svc_mutant_wait_release( c );   // P41 (U2076)
 			if ( n == "NtWaitForSingleObject" && it != handles_.end() )
 				return stop_( "NtWaitForSingleObject on the " + it->second.kind + " handle " + hex( c.args[ 0 ] ) + ": waiting on this object type is not modelled" );
 			return done_( it == handles_.end() ? status::invalid_handle : status::object_type_mismatch, "handle " + hex( c.args[ 0 ] ) + " is not an event of this process" );

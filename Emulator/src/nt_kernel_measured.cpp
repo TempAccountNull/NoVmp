@@ -127,6 +127,69 @@ namespace emu::nt
 			r = svc_set_information_process( c );
 			return true;
 		}
+		if ( c.name == "NtOpenProcessToken" )
+		{
+			r = svc_open_process_token( c );
+			return true;
+		}
+		if ( c.name == "NtQueryInformationToken" )
+		{
+			r = svc_query_information_token( c );
+			return true;
+		}
+		if ( c.name == "NtAccessCheck" )
+		{
+			r = svc_access_check( c );
+			return true;
+		}
+		if ( c.name == "NtReleaseMutant" || ( c.name == "NtWaitForSingleObject" && handles_.count( c.args[ 0 ] ) && handles_.at( c.args[ 0 ] ).kind == "mutant" ) )
+		{
+			r = svc_mutant_wait_release( c );
+			return true;
+		}
+		if ( c.name == "NtOpenSemaphore" || c.name == "NtCreateSemaphore" )
+		{
+			r = svc_wil_semaphore( c );
+			return true;
+		}
+		if ( c.name == "NtOpenMutant" || c.name == "NtOpenEvent" )
+		{
+			r = svc_named_decode( c );
+			return true;
+		}
+		if ( c.name == "NtSetWnfProcessNotificationEvent" || c.name == "NtSubscribeWnfStateChange" )
+		{
+			r = svc_wnf_more( c );
+			return true;
+		}
+		if ( c.name == "NtTestAlert" )
+		{
+			// P41 (U2081): NtTestAlert() - phnt ntpsapi.h (no arguments); the end of the loader's process initialisation. MEASURED (tm_nt alert):
+			// a thread with no queued APC that was not alerted = STATUS_SUCCESS (twice). The emulated process has one thread, no APC is ever
+			// queued (no APC service is modelled) and nothing alerts it: STATUS_SUCCESS.
+			r = done_( status::success, "NtTestAlert(): no APC queued, not alerted - STATUS_SUCCESS (measured: tm_nt alert)" );
+			return true;
+		}
+		if ( c.name == "NtSetTimer2" )
+		{
+			r = svc_set_timer2( c );
+			return true;
+		}
+		if ( c.name == "NtQueryWnfStateData" )
+		{
+			r = svc_query_wnf_state_data( c );
+			return true;
+		}
+		if ( c.name == "NtCreateMutant" )
+		{
+			r = svc_create_mutant( c );
+			return true;
+		}
+		if ( c.name == "NtWriteFile" )
+		{
+			r = svc_write_file( c );
+			return true;
+		}
 		if ( c.name == "NtApphelpCacheControl" )
 		{
 			r = svc_apphelp_cache_control( c );
@@ -313,7 +376,9 @@ namespace emu::nt
 			{ 12, 4, 0, 0, "WorkerFactoryTimeoutWaiters" }, { 13, 4, 0, 0, "WorkerFactoryFlags" }, { 14, 4, 0x180, 0, "WorkerFactoryThreadSoftMaximum" }, { 14, 4, 0x200, 0, "WorkerFactoryThreadSoftMaximum" },
 			{ 0, 8, 0xFFFFFFFFFF676980ull, status::invalid_info_class, "WorkerFactoryTimeout" }, { 1, 8, 0xFFFFFFFFFF676980ull, status::invalid_info_class, "WorkerFactoryRetryTimeout" },
 			{ 2, 8, 0xFFFFFFFFDC3CBA00ull, 0, "WorkerFactoryIdleTimeout" }, { 5, 8, 0x200, status::info_length_mismatch, "WorkerFactoryThreadMaximum" },
-			{ 5, 0, 0x200, status::info_length_mismatch, "WorkerFactoryThreadMaximum" } };
+			{ 5, 0, 0x200, status::info_length_mismatch, "WorkerFactoryThreadMaximum" },
+			// P41 (U2080): the loader's second factory (exploration x5) - MEASURED tm_nt swf.13.4.1 / swf.2.8.ffffffffee1e5d00 / swf.5.4.3
+			{ 13, 4, 1, 0, "WorkerFactoryFlags" }, { 2, 8, 0xFFFFFFFFEE1E5D00ull, 0, "WorkerFactoryIdleTimeout" }, { 5, 4, 3, 0, "WorkerFactoryThreadMaximum" } };
 		const uint32_t cls = uint32_t( c.args[ 1 ] ), len = uint32_t( c.args[ 3 ] );
 		const auto it = handles_.find( c.args[ 0 ] );
 		if ( it == handles_.end() || it->second.kind != "worker factory" ) return stop_( "NtSetInformationWorkerFactory: handle " + hex( c.args[ 0 ] ) + " is not a worker factory - not measured" );
@@ -348,6 +413,15 @@ namespace emu::nt
 		const auto it = handles_.find( in );
 		const std::string what = "NtTraceControl( " + hex( fn ) + ", input " + hex( in ) + ( it != handles_.end() ? " (" + it->second.kind + ")" : std::string() ) + " (" + hex( ilen ) +
 								 " bytes), output " + hex( c.args[ 3 ] ) + " / " + hex( olen ) + ", ReturnLength " + hex( c.args[ 5 ] ) + " )";
+		// P41 (U2072): the input bytes for a stop's text (up to A0H; the measurement replays them)
+		std::string inhex;
+		if ( ilen && ilen <= 0xA0 && user_buffer( c.args[ 1 ], ilen, UC_PROT_READ ) )
+		{
+			uint8_t ib[ 0xA0 ] = {};
+			std::string err;
+			e_.read( c.args[ 1 ], ib, ilen, err );
+			for ( uint32_t i = 0; i < ilen; i++ ) { char t2[ 4 ]; std::snprintf( t2, sizeof( t2 ), "%02X", ib[ i ] ); inhex += ( i ? " " : "" ) + std::string( t2 ); }
+		}
 		// function 1BH EtwAddNotificationEvent, 4 input bytes = a synchronization event handle of the process (the loader's call), no
 		// output. MEASURED (tm_nt etw.*): in a native process (whose ntdll already made this call during its own start) the call answers
 		// STATUS_ALREADY_REGISTERED (C0000718H) - so the process' FIRST registration succeeded (the only earlier call of function 1BH in
@@ -368,7 +442,18 @@ namespace emu::nt
 			static const prov provs[] = {
 				{ { 0x5C, 0xAB, 0x95, 0x35, 0x2A, 0x04, 0x8E, 0x4C, 0xB9, 0x42, 0x2D, 0x05, 0x9B, 0xFE, 0xB1, 0xB1 }, 1, false, "tm_nt etw.reg" },
 				{ { 0x7B, 0xC8, 0x5F, 0x30, 0x2A, 0x00, 0x26, 0x5E, 0xD2, 0x97, 0x60, 0x22, 0x30, 0x12, 0xCA, 0x9C }, 2, true, "tm_nt etw.reg2" },
-				{ { 0xFA, 0x2A, 0x1D, 0x90, 0xF6, 0x4F, 0xD7, 0x46, 0x8D, 0x0E, 0x53, 0x64, 0x5E, 0x1A, 0x47, 0xF5 }, 3, true, "tm_nt etw.reg3" } };
+				{ { 0xFA, 0x2A, 0x1D, 0x90, 0xF6, 0x4F, 0xD7, 0x46, 0x8D, 0x0E, 0x53, 0x64, 0x5E, 0x1A, 0x47, 0xF5 }, 3, true, "tm_nt etw.reg3" },
+				// P41 (U2072): kernelbase's provider of a process started without a console (trace c3, system call 105: RegType 3, LoggerId 4,
+				// ReplyCallback set) - MEASURED tm_nt etw.reg4: STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0xB9, 0xAF, 0x74, 0x3C, 0x82, 0x8D, 0xE3, 0x44, 0xB5, 0x2C, 0x36, 0x5D, 0xBF, 0x48, 0x38, 0x2A }, 4, true, "tm_nt etw.reg4" },
+				// P41 (U2072): three more providers of the start of a process without a console (exploration x4: kernelbase's 0A27EFF1-... /
+				// FE5EF905-..., kernel32's 58446CE3-...; LoggerId 5 / 6 / 7, ReplyCallback set) - MEASURED tm_nt etw.reg5 / .reg6 / .reg7
+				// provider 5 is ENABLED in the guest (an ETW session of the measuring environment enables it): the reply carries its enable
+				// information (tm_nt etw.reg5.fields: EnableCallbackContext (+70H) FFH << 32 | 1, EnableFilterDesc (+78H) 41H, EnableCallback (+80H)
+				// A0H << 56, ProviderTraits (+90H) 8, TraitsFlags (+98H) 1) - written as measured below (enabled_ = true)
+				{ { 0x0A, 0x27, 0xEF, 0xF1, 0x32, 0x0D, 0x52, 0x43, 0xBA, 0x52, 0xDB, 0xAB, 0x41, 0xE1, 0xD8, 0x59 }, 5, true, "tm_nt etw.reg5" },
+				{ { 0xFE, 0x5E, 0xF9, 0x05, 0x75, 0x7F, 0xC7, 0x49, 0xA9, 0x94, 0x60, 0xA5, 0x5C, 0xC0, 0x95, 0x71 }, 6, true, "tm_nt etw.reg6" },
+				{ { 0x58, 0x44, 0x6C, 0xE3, 0x80, 0xED, 0xD7, 0x4A, 0xA8, 0xBE, 0x52, 0xDD, 0xA1, 0xEB, 0x5F, 0x1C }, 7, true, "tm_nt etw.reg7" } };
 			uint8_t d[ 0xA0 ] = {};
 			std::string err, guid;
 			if ( ilen != 0xA0 || olen != 0xA0 || c.args[ 1 ] != c.args[ 3 ] || !user_buffer( c.args[ 1 ], 0xA0, UC_PROT_READ | UC_PROT_WRITE ) )
@@ -385,19 +470,57 @@ namespace emu::nt
 				for ( int i = 0x16; i < 0xA0; i++ ) same = same && ( ( i >= 0x20 && i < 0x28 ) || d[ i ] == 0 );
 				if ( same ) hit = &pv;
 			}
-			if ( !hit ) return stop_( what + " - EtwRegisterGuidsCode for provider bytes " + guid + " / another input: not measured (the provider's enable state is the environment's)" );
+			if ( !hit ) return stop_( what + " - EtwRegisterGuidsCode for provider bytes " + guid + " / another input: not measured (the provider's enable state is the environment's)" + "; input bytes " + inhex );
 			if ( c.args[ 5 ] && !user_buffer( c.args[ 5 ], 4, UC_PROT_WRITE ) ) return done_( status::access_violation, what + ": ReturnLength not writable" );
 			object o;
 			o.kind = "etw registration";
 			o.name = guid;
 			const uint64_t h = open_handle( o );
-			reply rr = done_( status::success, what + ": provider " + guid + " registered, ReplyHandle " + hex( h ) + ", not enabled (measured: " + hit->tag + ")" );
+			const bool enabled = hit->logger == 5;
+			reply rr = done_( status::success, what + ": provider " + guid + " (LoggerId " + std::to_string( d[ 0x14 ] ) + ", ReplyCallback " + ( ( d[ 0x20 ] | d[ 0x21 ] | d[ 0x22 ] | d[ 0x23 ] | d[ 0x24 ] | d[ 0x25 ] | d[ 0x26 ] | d[ 0x27 ] ) ? "set" : "NULL" ) +
+												 ") registered, ReplyHandle " + hex( h ) + ( enabled ? ", ENABLED as in the guest (the measured enable fields +70H .. +98H)" : ", not enabled" ) + " (measured: " + hit->tag + ")" );
 			const uint32_t a0 = 0xA0;
 			if ( !put( c.args[ 1 ] + 0x18, &h, 8, rr ) || !put( c.args[ 1 ] + 0x2C, &a0, 4, rr ) || ( c.args[ 5 ] && !put( c.args[ 5 ], &a0, 4, rr ) ) )
 				return stop_( "writing the result failed after the probe" );
+			if ( enabled )
+			{
+				const uint64_t ctx = ( uint64_t( 0xFF ) << 32 ) | 1, filt = 0x41, cb = uint64_t( 0xA0 ) << 56, traits = 8;
+				const uint32_t tf = 1;
+				if ( !put( c.args[ 1 ] + 0x70, &ctx, 8, rr ) || !put( c.args[ 1 ] + 0x78, &filt, 8, rr ) || !put( c.args[ 1 ] + 0x80, &cb, 8, rr ) || !put( c.args[ 1 ] + 0x90, &traits, 8, rr ) ||
+					 !put( c.args[ 1 ] + 0x98, &tf, 4, rr ) )
+					return stop_( "writing the result failed after the probe" );
+			}
 			return rr;
 		}
-		if ( fn != 0x1B || c.args[ 3 ] || olen ) return stop_( what + " - not measured" );
+		if ( fn == 0x1E )
+		{
+			// P41 (U2072): function 1EH EtwSetProviderTraitsCode (phnt ntwmi.h:6377; no layout in phnt) as kernelbase calls it after its
+			// provider registration (etw.reg4): input 18H {the ReplyHandle, a pointer to the traits blob, USHORT size 33H, 6 more bytes},
+			// output 78H, ReturnLength. MEASURED (tm_nt etwt.*, the same blob of the capture's kernelbase build, a fresh registration):
+			// STATUS_SUCCESS, ReturnLength 0, no output byte written, the input unchanged. Other shapes / handles: stop.
+			uint64_t h = 0, blob = 0;
+			uint16_t sz = 0;
+			if ( ilen != 0x18 || olen != 0x78 || !user_buffer( c.args[ 1 ], 0x18, UC_PROT_READ ) || !user_buffer( c.args[ 3 ], 0x78, UC_PROT_WRITE ) )
+				return stop_( what + " - EtwSetProviderTraitsCode with another shape: not measured (18H in, 78H out is); input bytes " + inhex );
+			std::string err;
+			e_.read( c.args[ 1 ], &h, 8, err );
+			e_.read( c.args[ 1 ] + 8, &blob, 8, err );
+			e_.read( c.args[ 1 ] + 0x10, &sz, 2, err );
+			const auto hr = handles_.find( h );
+			// the measured (provider, traits size) pairs: tm_nt etwt (B9AF743C, 33H), etwt5 (0A27EFF1, 25H), etwt6 (FE5EF905, 39H), etwt7 (58446CE3, 39H)
+			const std::string pn = hr != handles_.end() ? hr->second.name : std::string();
+			const bool known = ( pn == "B9AF743C828DE344B52C365DBF48382A" && sz == 0x33 ) || ( pn == "0A27EFF1320D5243BA52DBAB41E1D859" && sz == 0x25 ) ||
+							   ( pn == "FE5EF905757FC749A99460A55CC09571" && sz == 0x39 ) || ( pn == "58446CE380EDD74AA8BE52DDA1EB5F1C" && sz == 0x39 );
+			if ( hr == handles_.end() || hr->second.kind != "etw registration" || !known || !user_buffer( blob, sz, UC_PROT_READ ) )
+				return stop_( what + " - EtwSetProviderTraitsCode for handle " + hex( h ) + ", traits size " + hex( sz ) + ": not measured (tm_nt etwt*: the four providers' blobs are)" );
+			if ( c.args[ 5 ] && !user_buffer( c.args[ 5 ], 4, UC_PROT_WRITE ) ) return done_( status::access_violation, what + ": ReturnLength not writable" );
+			reply rr = done_( status::success, what + ": EtwSetProviderTraitsCode for registration " + hex( h ) + " (provider " + hr->second.name + "), traits " + hex( sz ) + " bytes at " + hex( blob ) + " -" +
+												 " STATUS_SUCCESS, ReturnLength 0, no output written (measured: tm_nt etwt*.set)" );
+			const uint32_t zero = 0;
+			if ( c.args[ 5 ] && !put( c.args[ 5 ], &zero, 4, rr ) ) return stop_( "writing the result failed after the probe" );
+			return rr;
+		}
+		if ( fn != 0x1B || c.args[ 3 ] || olen ) return stop_( what + " - not measured; input bytes " + inhex );
 		if ( ilen == 8 ) return done_( status::invalid_parameter, what + ": 8 input bytes - STATUS_INVALID_PARAMETER (measured: tm_nt etw.event8)" );
 		if ( ilen != 4 ) return stop_( what + " - input length not measured" );
 		if ( in == 0 ) return done_( status::invalid_parameter, what + ": handle 0 - STATUS_INVALID_PARAMETER (measured: tm_nt etw.zero)" );
@@ -451,9 +574,33 @@ namespace emu::nt
 		object o;
 		if ( c.name == "NtOpenDirectoryObject" )
 		{
-			if ( lower( full ) != "\\knowndlls" || access != 3 ) return stop_( what + " - not measured (tm_nt kd.open: \"\\KnownDlls\", 3)" );
-			o.kind = "directory";
-			o.name = "\\KnownDlls";
+			// P41 (U2075): the session's named-object directory - MEASURED (tm_nt bno.*): "\Sessions\<the PEB SessionId>\BaseNamedObjects",
+			// OBJ_CASE_INSENSITIVE, access FH (kernelbase's) or 3 = STATUS_SUCCESS + a handle (object type "Directory"); another session
+			// number = STATUS_OBJECT_PATH_NOT_FOUND (C000003AH) with the handle written NULL
+			uint32_t sid = 0;
+			std::string err;
+			e_.read( f_.peb + 0x2C0, &sid, 4, err );   // PEB SessionId (2C0H, ntdll.pdb _PEB)
+			const std::string bno = "\\sessions\\" + std::to_string( sid ) + "\\basenamedobjects";
+			const std::string lf = lower( full );
+			if ( !oa.root && ( oa.attributes & 0x40 ) && ( access == 0xF || access == 3 ) && lf.rfind( "\\sessions\\", 0 ) == 0 && lf.size() > 27 &&
+				 lf.substr( lf.size() - 17 ) == "\\basenamedobjects" && lf != bno )
+			{
+				const uint64_t zero = 0;
+				reply rn = done_( status::object_path_not_found, what + ": another session's directory - STATUS_OBJECT_PATH_NOT_FOUND, handle NULL (measured: tm_nt bno.other)" );
+				if ( !put( c.args[ 0 ], &zero, 8, rn ) ) return stop_( "writing the handle failed after the probe" );
+				return rn;
+			}
+			if ( lf == bno && !oa.root && ( oa.attributes & 0x40 ) && ( access == 0xF || access == 3 ) )
+			{
+				o.kind = "directory";
+				o.name = "\\Sessions\\" + std::to_string( sid ) + "\\BaseNamedObjects";
+			}
+			else
+			{
+				if ( lower( full ) != "\\knowndlls" || access != 3 ) return stop_( what + " - not measured (tm_nt kd.open: \"\\KnownDlls\", 3)" );
+				o.kind = "directory";
+				o.name = "\\KnownDlls";
+			}
 		}
 		else if ( c.name == "NtOpenSymbolicLinkObject" )
 		{
@@ -688,6 +835,21 @@ namespace emu::nt
 			for ( uint32_t i = 0; i < len; i++ ) { char t[ 4 ]; std::snprintf( t, sizeof( t ), "%02X", d[ i ] ); hx += ( i ? " " : "" ) + std::string( t ); }
 		}
 		const std::string what = "NtSetInformationProcess( " + hex( c.args[ 0 ] ) + ", class " + hex( cls ) + ", " + hex( in ) + ", Length " + hex( len ) + " ) bytes: " + hx;
+		if ( c.args[ 0 ] == current_process && cls == 0x31 )
+		{
+			// P41 (U2070): ProcessConsoleHostProcess (phnt ntpsapi.h:222, PROCESS_CONSOLE_HOST_PROCESS_INFORMATION :809-821, a ULONG_PTR).
+			// kernelbase of a process started WITHOUT a console (ConsoleHandle RTL_USER_PROC_DETACHED_PROCESS) sets it to 1 (the emulated
+			// trace, P41 run c1). MEASURED (tm_nt con.chp.* / con.chps.*, a detached process): the value reads 1 after its start (so
+			// kernelbase's set succeeded - the default of a process is 0 - inferred); a further set of 1 with Length 8 = STATUS_SUCCESS;
+			// Length 4 / 10H = STATUS_INFO_LENGTH_MISMATCH. Other values (a console host's process id): not measured - stop.
+			if ( len != 8 ) return done_( status::info_length_mismatch, what + ": ProcessConsoleHostProcess needs Length 8 - STATUS_INFO_LENGTH_MISMATCH (measured: tm_nt con.chps.4 / .10)" );
+			uint64_t v = 0;
+			std::memcpy( &v, d, 8 );
+			if ( v != 1 ) return stop_( what + " - ProcessConsoleHostProcess value " + hex( v ) + ": not measured (1 is: a process started without a console)" );
+			console_host_set_ = true;
+			console_host_ = v;
+			return done_( status::success, what + ": ProcessConsoleHostProcess := 1 (a process without a console; measured: tm_nt con.chps.8 / con.chp.after)" );
+		}
 		if ( c.args[ 0 ] != current_process || cls != 0x23 ) return stop_( what + " - not measured" );
 		uint32_t hdr[ 4 ];
 		std::memcpy( hdr, d, 16 );
@@ -727,7 +889,8 @@ namespace emu::nt
 		// class 6 ApphelpCacheServiceLookupCdb with the loader's context layout (178H bytes: LookupCdb.Name at +E8H, ParamsOut at +168H,
 		// ParamsOutSize 4 at +170H, the rest 0). MEASURED (tm_nt ahc.*): for "KERNELBASE.dll", "KERNEL32.DLL", "kernel32.dll", "ntdll.dll"
 		// and a name no file has = STATUS_SUCCESS, the 4 output bytes = 0, no context byte changed (no compatibility-database entry for these
-		// modules in the guest). Other names (an entry may exist for them in the environment's database): stop until measured; other classes
+		// modules in the guest); P41 (U2080): the same for the test PEs' own image names "t2_import.exe", "t3_tls.exe", "t3_tls.vmware_guest.exe"
+		// (tm_nt ahc.5 / .6 / .7). Other names (an entry may exist for them in the environment's database): stop until measured; other classes
 		// / layouts: stop.
 		const uint32_t cls = uint32_t( c.args[ 0 ] );
 		const uint64_t ctx = c.args[ 1 ];
@@ -749,7 +912,8 @@ namespace emu::nt
 		std::memcpy( &pout, d + 0x168, 8 );
 		if ( !layout || d[ 0x170 ] != 4 ) return stop_( what + " context bytes:" + hx + " - another layout: not measured" );
 		const std::string ln = lower( nm );
-		if ( ln != "kernelbase.dll" && ln != "kernel32.dll" && ln != "ntdll.dll" ) return stop_( what + " - this module name is not measured (tm_nt ahc: kernelbase.dll, kernel32.dll, ntdll.dll)" );
+		if ( ln != "kernelbase.dll" && ln != "kernel32.dll" && ln != "ntdll.dll" && ln != "t2_import.exe" && ln != "t3_tls.exe" && ln != "t3_tls.vmware_guest.exe" )
+			return stop_( what + " - this module name is not measured (tm_nt ahc: kernelbase.dll, kernel32.dll, ntdll.dll, t2_import.exe, t3_tls.exe, t3_tls.vmware_guest.exe)" );
 		if ( !user_buffer( pout, 4, UC_PROT_WRITE ) ) return stop_( what + " - ParamsOut not writable: not measured" );
 		reply rr = done_( status::success, what + ": no compatibility-database entry - ParamsOut = 0 (measured: tm_nt ahc)" );
 		const uint32_t zero = 0;
@@ -1241,5 +1405,574 @@ namespace emu::nt
 		const uint32_t rl = 0x18;
 		if ( !put( out, &highest, 4, r ) || !put( out + 8, node.data(), 16, r ) || ( pret && !put( pret, &rl, 4, r ) ) ) r = stop_( "writing the result failed after the probe" );
 		return true;
+	}
+
+	// NtWriteFile( FileHandle, Event, ApcRoutine, ApcContext, IoStatusBlock, Buffer, Length, ByteOffset, Key ) - phnt ntioapi.h:2911-2921.
+	// P41 (U2071): a process started WITHOUT a console has no standard handles (tm_nt con.pp: StandardInput / Output / Error 0;
+	// GetStdHandle = 0); a write to that handle 0 is what its "console output" becomes. MEASURED (tm_nt con.ntwf, a detached process):
+	// NtWriteFile( NULL, NULL, NULL, NULL, &iosb, "tm", 2, NULL, NULL ) = STATUS_INVALID_HANDLE (C0000008H), the IoStatusBlock not written
+	// (and WriteFile on GetStdHandle(STD_OUTPUT_HANDLE) = FALSE, LastError 6, written 0: tm_nt con.api.wfile). The emulator records every
+	// such attempt in the console capture (win_env, observation only). Every other handle (a file, a pipe ...): not modelled - stop.
+	reply kernel::svc_write_file( const call& c )
+	{
+		const std::string what = "NtWriteFile( " + hex( c.args[ 0 ] ) + ", Event " + hex( c.args[ 1 ] ) + ", Apc " + hex( c.args[ 2 ] ) + ", IoStatusBlock " + hex( c.args[ 4 ] ) +
+								 ", Buffer " + hex( c.stack_args ? c.args[ 5 ] : 0 ) + ", Length " + hex( c.stack_args ? uint32_t( c.args[ 6 ] ) : 0 ) + " )";
+		if ( c.args[ 0 ] == 0 && !c.args[ 1 ] && !c.args[ 2 ] )
+			return done_( status::invalid_handle, what + ": handle 0 - the standard handle of a process without a console: STATUS_INVALID_HANDLE, IoStatusBlock not written (measured: tm_nt con.ntwf)" );
+		return stop_( what + " - a write to this handle is not modelled (only the no-console standard handle 0 is measured: tm_nt con.ntwf)" );
+	}
+
+	// ------------------------------------------------------------------------------------------------ the process token (P41, U2073)
+	// NtOpenProcessToken( ProcessHandle, DesiredAccess, *TokenHandle ) - phnt ntseapi.h:609-613. MEASURED (tm_nt tok.open / tok.open.read):
+	// NtCurrentProcess() with 8 (TOKEN_QUERY) or 20008H = STATUS_SUCCESS + a handle (non-zero, multiple of 4). Other processes / access: stop.
+	reply kernel::svc_open_process_token( const call& c )
+	{
+		const uint32_t access = uint32_t( c.args[ 1 ] );
+		const std::string what = "NtOpenProcessToken( " + hex( c.args[ 0 ] ) + ", access " + hex( access ) + ", " + hex( c.args[ 2 ] ) + " )";
+		if ( c.args[ 0 ] != current_process || ( access != 8 && access != 0x20008 ) ) return stop_( what + " - not measured (NtCurrentProcess(), 8 / 20008H are)" );
+		if ( !user_buffer( c.args[ 2 ], 8, UC_PROT_WRITE ) ) return done_( status::access_violation, what + ": TokenHandle not writable" );
+		object o;
+		o.kind = "token (process)";
+		o.value = access;
+		const uint64_t h = open_handle( o );
+		reply r = done_( status::success, what + ": the process token, handle " + hex( h ) + " (measured: tm_nt tok.open)" );
+		if ( !put( c.args[ 2 ], &h, 8, r ) ) return stop_( "writing the handle failed after the probe" );
+		return r;
+	}
+
+	// NtQueryInformationToken( TokenHandle, TokenInformationClass, TokenInformation, TokenInformationLength, ReturnLength ) - phnt
+	// ntseapi.h:721-727 (TOKEN_INFORMATION_CLASS: TokenSessionId 0CH, TokenIsAppContainer 1DH, TokenPrivateNameSpace 2AH). MEASURED (tm_nt
+	// tok.*; the same on NtCurrentProcessToken() and on a handle of NtOpenProcessToken): Length 4 or 8 = STATUS_SUCCESS, 4 bytes written,
+	// ReturnLength 4; Length 0 = STATUS_BUFFER_TOO_SMALL (C0000023H), nothing written, ReturnLength 4. Values: 0CH = the PEB SessionId
+	// (placeholder <the PEB SessionId>: the emulated PEB's), 1DH = 0 (not an app container), 2AH = 0. 2CH TokenBnoIsolation
+	// (TOKEN_BNO_ISOLATION_INFORMATION {PWSTR IsolationPrefix, BOOLEAN IsolationEnabled}, um\winnt.h; the trace: Length 120H) - MEASURED
+	// (tm_nt tok.h.2c*): Length 10H / 120H = STATUS_SUCCESS, 9 bytes written (IsolationPrefix NULL, IsolationEnabled FALSE; +9..+FH not
+	// written), ReturnLength 10H; Length 0 / 8 = STATUS_BUFFER_TOO_SMALL, ReturnLength 10H. Other classes / lengths / handles: stop.
+	reply kernel::svc_query_information_token( const call& c )
+	{
+		if ( !c.stack_args ) return stop_( "NtQueryInformationToken: the stack argument ReturnLength is not readable" );
+		const uint64_t h = c.args[ 0 ], out = c.args[ 2 ], pret = c.args[ 4 ];
+		const uint32_t cls = uint32_t( c.args[ 1 ] ), len = uint32_t( c.args[ 3 ] );
+		const auto it = handles_.find( h );
+		const bool tok = h == current_process_token || ( it != handles_.end() && it->second.kind == "token (process)" );
+		const std::string what = "NtQueryInformationToken( " + hex( h ) + ( h == current_process_token ? " NtCurrentProcessToken()" : std::string() ) + ", class " + hex( cls ) +
+								 ", " + hex( out ) + ", Length " + hex( len ) + ", ReturnLength " + hex( pret ) + " )";
+		if ( cls == 1 && h == current_thread_effective_token && pret && ( len == 0 || len >= 0x2C ) )
+		{
+			// P41 (U2073): TokenUser (TOKEN_USER {SID_AND_ATTRIBUTES {PSID Sid, ULONG Attributes}} + the SID, um\winnt.h) on
+			// NtCurrentThreadEffectiveToken() (-6, phnt ntpsapi.h:2491; the thread does not impersonate: the process token) - MEASURED (tm_nt
+			// tok.eff.1 / .1.0): Length 58H = STATUS_SUCCESS, ReturnLength 2CH, 2CH bytes {Sid = +10H, Attributes 0, the SID: Revision 1,
+			// IdentifierAuthority 5, 5 sub-authorities S-1-5-21-<domain>-<RID>, RID >= 1000}; Length 0 = STATUS_BUFFER_TOO_SMALL, ReturnLength
+			// 2CH. The user SID is a REAL IDENTIFIER: the environment answers a PLACEHOLDER of the same shape, S-1-5-21-1000001-1000002-
+			// 1000003-1001 (domain sub-authorities and RID chosen; never the measuring machine's).
+			const uint32_t need = 0x2C;
+			if ( !user_buffer( pret, 4, UC_PROT_WRITE ) || ( len && !user_buffer( out, len, UC_PROT_WRITE ) ) ) return done_( status::access_violation, what + ": an OUT buffer is not writable" );
+			if ( len == 0 )
+			{
+				reply rz = done_( status::buffer_too_small, what + ": TokenUser - STATUS_BUFFER_TOO_SMALL, ReturnLength 2CH (measured: tm_nt tok.eff.1.0)" );
+				if ( !put( pret, &need, 4, rz ) ) return stop_( "writing the result failed after the probe" );
+				return rz;
+			}
+			uint8_t u[ 0x2C ] = {};
+			const uint64_t sidp = out + 0x10;
+			std::memcpy( u, &sidp, 8 );
+			u[ 0x10 ] = 1;      // Revision
+			u[ 0x11 ] = 5;      // SubAuthorityCount
+			u[ 0x17 ] = 5;      // SECURITY_NT_AUTHORITY {0,0,0,0,0,5}
+			const uint32_t sa[ 5 ] = { 21, 1000001u, 1000002u, 1000003u, 1001u };   // placeholders (shape S-1-5-21-<domain>-<RID>)
+			std::memcpy( u + 0x18, sa, sizeof( sa ) );
+			reply ru = done_( status::success, what + ": TokenUser = the PLACEHOLDER user SID S-1-5-21-1000001-1000002-1000003-1001, ReturnLength 2CH (measured shape: tm_nt tok.eff.1)" );
+			if ( !put( out, u, 0x2C, ru ) || !put( pret, &need, 4, ru ) ) return stop_( "writing the result failed after the probe" );
+			return ru;
+		}
+		const bool bno = cls == 0x2C;
+		if ( !tok || !pret || ( !bno && ( ( cls != 0xC && cls != 0x1D && cls != 0x2A ) || ( len != 0 && len != 4 && len != 8 ) ) ) ||
+			 ( bno && len != 0 && len != 8 && len != 0x10 && len != 0x120 ) )
+			return stop_( what + " - not measured (the process token: classes 0CH / 1DH / 2AH with Length 0 / 4 / 8, 2CH with 0 / 8 / 10H / 120H, a ReturnLength)" );
+		if ( !user_buffer( pret, 4, UC_PROT_WRITE ) || ( len && !user_buffer( out, len, UC_PROT_WRITE ) ) ) return done_( status::access_violation, what + ": an OUT buffer is not writable" );
+		if ( bno )
+		{
+			const uint32_t need = 0x10;
+			if ( len < need )
+			{
+				reply rs = done_( status::buffer_too_small, what + ": TokenBnoIsolation - STATUS_BUFFER_TOO_SMALL, ReturnLength 10H (measured: tm_nt tok.h.2c.0 / .8)" );
+				if ( !put( pret, &need, 4, rs ) ) return stop_( "writing the result failed after the probe" );
+				return rs;
+			}
+			const uint8_t z[ 9 ] = {};
+			reply rb = done_( status::success, what + ": TokenBnoIsolation {IsolationPrefix NULL, IsolationEnabled FALSE} (9 bytes), ReturnLength 10H (measured: tm_nt tok.h.2c)" );
+			if ( !put( out, z, 9, rb ) || !put( pret, &need, 4, rb ) ) return stop_( "writing the result failed after the probe" );
+			return rb;
+		}
+		const uint32_t four = 4;
+		if ( len == 0 )
+		{
+			reply r = done_( status::buffer_too_small, what + ": STATUS_BUFFER_TOO_SMALL, ReturnLength 4 (measured: tm_nt tok.*.0)" );
+			if ( !put( pret, &four, 4, r ) ) return stop_( "writing the result failed after the probe" );
+			return r;
+		}
+		uint32_t v = 0;
+		std::string name = cls == 0x1D ? "TokenIsAppContainer 0" : "TokenPrivateNameSpace 0";
+		if ( cls == 0xC )
+		{
+			std::string err;
+			e_.read( f_.peb + 0x2C0, &v, 4, err );   // PEB SessionId (2C0H, ntdll.pdb _PEB)
+			name = "TokenSessionId " + std::to_string( v ) + " (= the PEB SessionId)";
+		}
+		reply r = done_( status::success, what + ": " + name + ", ReturnLength 4 (measured: tm_nt tok.*)" );
+		if ( !put( out, &v, 4, r ) || !put( pret, &four, 4, r ) ) return stop_( "writing the result failed after the probe" );
+		return r;
+	}
+
+	// NtAccessCheck( SecurityDescriptor, ClientToken, DesiredAccess, GenericMapping, PrivilegeSet, *PrivilegeSetLength, *GrantedAccess,
+	// *AccessStatus ) - phnt ntseapi.h:977-986. P41: decoded for the measurement (the security descriptor bytes, the mapping, the lengths).
+	reply kernel::svc_access_check( const call& c )
+	{
+		auto dump = [ & ]( uint64_t a, uint32_t n ) {
+			std::string s;
+			if ( !a || !user_buffer( a, n, UC_PROT_READ ) ) return std::string( "<n/a>" );
+			std::vector<uint8_t> b( n );
+			std::string err;
+			e_.read( a, b.data(), n, err );
+			for ( uint32_t i = 0; i < n; i++ ) { char t[ 4 ]; std::snprintf( t, sizeof( t ), "%02X", b[ i ] ); s += ( i ? " " : "" ) + std::string( t ); }
+			return s;
+		};
+		uint32_t psl = 0;
+		if ( c.args[ 5 ] && user_buffer( c.args[ 5 ], 4, UC_PROT_READ ) ) { std::string err; e_.read( c.args[ 5 ], &psl, 4, err ); }
+		// a SID at A as "S-R-AUTH-SUB-..." (winnt.h SID: Revision, SubAuthorityCount, IdentifierAuthority[6] big-endian, SubAuthority[])
+		auto sid_text = [ & ]( uint64_t a ) {
+			uint8_t h[ 8 ] = {};
+			std::string err;
+			if ( !a || !user_buffer( a, 8, UC_PROT_READ ) ) return std::string( "<n/a>" );
+			e_.read( a, h, 8, err );
+			if ( h[ 1 ] > 15 || !user_buffer( a + 8, 4ull * h[ 1 ], UC_PROT_READ ) ) return std::string( "<bad sid>" );
+			uint64_t auth = 0;
+			for ( int i = 2; i < 8; i++ ) auth = ( auth << 8 ) | h[ i ];
+			std::string s = "S-" + std::to_string( h[ 0 ] ) + "-" + std::to_string( auth );
+			for ( int i = 0; i < h[ 1 ]; i++ ) { uint32_t v = 0; e_.read( a + 8 + 4ull * i, &v, 4, err ); s += "-" + std::to_string( v ); }
+			return s;
+		};
+		std::string sd;
+		{
+			uint8_t h[ 40 ] = {};
+			std::string err;
+			if ( user_buffer( c.args[ 0 ], 40, UC_PROT_READ ) )
+			{
+				e_.read( c.args[ 0 ], h, 40, err );
+				uint16_t ctl = 0;
+				uint64_t own = 0, grp = 0, dacl = 0;
+				std::memcpy( &ctl, h + 2, 2 );
+				std::memcpy( &own, h + 8, 8 );
+				std::memcpy( &grp, h + 16, 8 );
+				std::memcpy( &dacl, h + 32, 8 );
+				sd = " {Revision " + std::to_string( h[ 0 ] ) + ", Control " + hex( ctl ) + ", Owner " + sid_text( own ) + ", Group " + sid_text( grp ) + ", DACL " + hex( dacl );
+				uint8_t ah[ 8 ] = {};
+				if ( !( ctl & 0x8000 ) && dacl && user_buffer( dacl, 8, UC_PROT_READ ) )
+				{
+					e_.read( dacl, ah, 8, err );
+					uint16_t asz = 0, cnt = 0;
+					std::memcpy( &asz, ah + 2, 2 );
+					std::memcpy( &cnt, ah + 4, 2 );
+					sd += " [AclRevision " + std::to_string( ah[ 0 ] ) + ", AclSize " + hex( asz ) + ", AceCount " + std::to_string( cnt );
+					uint64_t ace = dacl + 8;
+					for ( int i = 0; i < cnt && i < 8 && user_buffer( ace, 8, UC_PROT_READ ); i++ )
+					{
+						uint8_t eh[ 8 ] = {};
+						e_.read( ace, eh, 8, err );
+						uint16_t esz = 0;
+						uint32_t mask = 0;
+						std::memcpy( &esz, eh + 2, 2 );
+						std::memcpy( &mask, eh + 4, 4 );
+						sd += "; ACE type " + std::to_string( eh[ 0 ] ) + " flags " + hex( eh[ 1 ] ) + " size " + hex( esz ) + " mask " + hex( mask ) + " SID " + sid_text( ace + 8 );
+						if ( esz < 8 ) break;
+						ace += esz;
+					}
+					sd += "]";
+				}
+				sd += "}";
+			}
+		}
+		// P41 (U2074): MEASURED (tm_nt acc.N): ntdll's membership check of kernelbase's start - an ABSOLUTE SD {Revision 1, Control 4
+		// (SE_DACL_PRESENT), Owner = Group = the SID, no SACL, DACL {AclRevision 2, 1 ACE: ACCESS_ALLOWED type 0, flags 0, size 34H, mask 1,
+		// the SID}}, NtCurrentProcessToken(), DesiredAccess 1, GenericMapping {20001H, 20000H, 20000H, 1F0001H}, PrivilegeSetLength 38H -
+		// with a CAPABILITY GROUP SID (S-1-5-32 + 8 sub-authorities: derived from a capability name, the same on every machine) the
+		// desktop process' token is not a member: STATUS_SUCCESS, GrantedAccess 0, AccessStatus STATUS_ACCESS_DENIED (C0000022H),
+		// PrivilegeSet = {PrivilegeCount 0, Control 0} (8 bytes written), PrivilegeSetLength unchanged; the same for S-1-5-32-581 (tm_nt
+		// acc.2: the second check, ACE size 18H). The measured SIDs only.
+		{
+			static const char* const measured[] = {
+				"S-1-5-32-1604681682-535129537-3273749797-3666938095-336295784-2177615760-2743807136-2867270584",   // tm_nt acc.1
+				"S-1-5-32-581" };   // tm_nt acc.2 (BUILTIN alias RID 581, um\winnt.h DOMAIN_ALIAS_RID_DEFAULT_ACCOUNT)
+			uint8_t h[ 40 ] = {}, ah[ 8 ] = {}, eh[ 8 ] = {}, gm[ 16 ] = {};
+			static const uint8_t gm_want[ 16 ] = { 1, 0, 2, 0, 0, 0, 2, 0, 0, 0, 2, 0, 1, 0, 0x1F, 0 };
+			std::string err;
+			bool shape = c.stack_args && user_buffer( c.args[ 0 ], 40, UC_PROT_READ ) && c.args[ 1 ] == current_process_token && uint32_t( c.args[ 2 ] ) == 1 && psl == 0x38 &&
+						 user_buffer( c.args[ 3 ], 16, UC_PROT_READ );
+			uint64_t own = 0, grp = 0, sacl = 0, dacl = 0;
+			if ( shape )
+			{
+				e_.read( c.args[ 0 ], h, 40, err );
+				e_.read( c.args[ 3 ], gm, 16, err );
+				std::memcpy( &own, h + 8, 8 );
+				std::memcpy( &grp, h + 16, 8 );
+				std::memcpy( &sacl, h + 24, 8 );
+				std::memcpy( &dacl, h + 32, 8 );
+				shape = h[ 0 ] == 1 && h[ 2 ] == 4 && h[ 3 ] == 0 && !sacl && std::memcmp( gm, gm_want, 16 ) == 0 && dacl && user_buffer( dacl, 0x3C, UC_PROT_READ );
+			}
+			if ( shape )
+			{
+				e_.read( dacl, ah, 8, err );
+				e_.read( dacl + 8, eh, 8, err );
+				uint32_t mask = 0;
+				uint8_t subs = 0;
+				std::memcpy( &mask, eh + 4, 4 );
+				e_.read( dacl + 17, &subs, 1, err );   // the ACE's SID: SubAuthorityCount
+				const std::string s = sid_text( own );
+				shape = ah[ 0 ] == 2 && ah[ 4 ] == 1 && ah[ 5 ] == 0 && eh[ 0 ] == 0 && eh[ 1 ] == 0 && eh[ 2 ] == 16 + 4 * subs && eh[ 3 ] == 0 && mask == 1 && sid_text( grp ) == s &&
+						sid_text( dacl + 16 ) == s;
+				bool known = false;
+				for ( auto m : measured ) known = known || s == m;
+				if ( shape && known )
+				{
+					const uint64_t ps = c.args[ 4 ], pg = c.args[ 6 ], pa = c.args[ 7 ];
+					if ( !user_buffer( ps, 0x38, UC_PROT_WRITE ) || !user_buffer( pg, 4, UC_PROT_WRITE ) || !user_buffer( pa, 4, UC_PROT_WRITE ) )
+						return done_( status::access_violation, "NtAccessCheck: an OUT buffer is not writable" );
+					reply r = done_( status::success, "NtAccessCheck( the membership check of " + s + " (the membership check), NtCurrentProcessToken(), 1 ): not a member - "
+														  "STATUS_SUCCESS, GrantedAccess 0, AccessStatus STATUS_ACCESS_DENIED, PrivilegeSet {0, 0} (measured: tm_nt acc.*)" );
+					const uint64_t zero8 = 0;
+					const uint32_t zero = 0, denied = 0xC0000022;
+					if ( !put( ps, &zero8, 8, r ) || !put( pg, &zero, 4, r ) || !put( pa, &denied, 4, r ) ) return stop_( "writing the result failed after the probe" );
+					return r;
+				}
+			}
+		}
+		return stop_( "NtAccessCheck( SD " + hex( c.args[ 0 ] ) + sd + " [" + dump( c.args[ 0 ], 0x28 ) + "], ClientToken " + hex( c.args[ 1 ] ) + ", DesiredAccess " + hex( uint32_t( c.args[ 2 ] ) ) +
+					  ", GenericMapping " + hex( c.args[ 3 ] ) + " [" + dump( c.args[ 3 ], 16 ) + "], PrivilegeSet " + hex( c.args[ 4 ] ) + ", PrivilegeSetLength " + hex( c.args[ 5 ] ) + " = " + hex( psl ) +
+					  ", GrantedAccess " + hex( c.stack_args ? c.args[ 6 ] : 0 ) + ", AccessStatus " + hex( c.stack_args ? c.args[ 7 ] : 0 ) + " ) - not measured yet (P41)" );
+	}
+
+	// NtCreateMutant( *MutantHandle, DesiredAccess, ObjectAttributes, InitialOwner ) - phnt ntexapi.h. P41 (U2076): kernelbase's start
+	// creates the WIL staging mutant "Local\\SM0:<the process id>:304:WilStaging_02" relative to the session's BaseNamedObjects directory,
+	// OBJ_OPENIF, 1F0001H, InitialOwner FALSE. MEASURED (tm_nt mut.*): a name no object has = STATUS_SUCCESS + a handle (mut.fresh); the
+	// same name while the first one exists = STATUS_OBJECT_NAME_EXISTS (40000000H) + a handle (mut.loader: the process' own kernelbase
+	// created it during its start - so kernelbase's own first call was the creation). The emulated environment holds no other process,
+	// so the first call creates. Other names / roots / access: stop.
+	reply kernel::svc_create_mutant( const call& c )
+	{
+		object_attributes oa;
+		std::string why;
+		if ( c.args[ 2 ] && !guest_object_attributes( c.args[ 2 ], oa, why ) ) return stop_( "NtCreateMutant: " + why );
+		const auto it = handles_.find( oa.root );
+		const std::string what = "NtCreateMutant( " + hex( c.args[ 0 ] ) + ", access " + hex( uint32_t( c.args[ 1 ] ) ) + ", OA " + hex( c.args[ 2 ] ) + " {root " + hex( oa.root ) +
+								 ( it != handles_.end() ? " (" + it->second.kind + " " + it->second.name + ")" : std::string() ) + ", \"" + oa.name + "\", attributes " + hex( oa.attributes ) +
+								 "}, InitialOwner " + hex( uint8_t( c.args[ 3 ] ) ) + " )";
+		uint32_t sid = 0;
+		std::string err;
+		e_.read( f_.peb + 0x2C0, &sid, 4, err );   // PEB SessionId (2C0H, ntdll.pdb _PEB)
+		const std::string bno = "\\Sessions\\" + std::to_string( sid ) + "\\BaseNamedObjects";
+		const std::string want = "Local\\SM0:" + std::to_string( f_.process_id ) + ":304:WilStaging_02";
+		if ( !c.args[ 2 ] || it == handles_.end() || it->second.kind != "directory" || it->second.name != bno || oa.name != want || oa.attributes != 0x80 ||
+			 uint32_t( c.args[ 1 ] ) != 0x1F0001 || uint8_t( c.args[ 3 ] ) != 0 )
+			return stop_( what + " - not measured (tm_nt mut.*: the session's BaseNamedObjects, \"Local\\SM0:<the process id>:304:WilStaging_02\", OBJ_OPENIF, 1F0001H, FALSE)" );
+		if ( !user_buffer( c.args[ 0 ], 8, UC_PROT_WRITE ) ) return done_( status::access_violation, what + ": MutantHandle not writable" );
+		const std::string full = bno + "\\" + oa.name;
+		const bool exists = named_objects_.count( full ) && named_objects_[ full ] > 0;
+		object o;
+		o.kind = "mutant";
+		o.name = full;
+		const uint64_t hnd = open_handle( o );
+		named_objects_[ full ]++;
+		if ( !exists ) mutant_state_[ full ] = 1;   // InitialOwner FALSE: free (signal state 1)
+		reply r = done_( exists ? 0x40000000u : status::success, what + ": mutant handle " + hex( hnd ) + ( exists ? " - STATUS_OBJECT_NAME_EXISTS (measured: tm_nt mut.loader)" : " - created (measured: tm_nt mut.fresh)" ) );
+		if ( !put( c.args[ 0 ], &hnd, 8, r ) ) return stop_( "writing the handle failed after the probe" );
+		return r;
+	}
+
+	// P41 (U2076): the mutant's wait and release - MEASURED (tm_nt mut.wait* / mut.rel*, a fresh mutant of the loader's shape, one thread):
+	// NtWaitForSingleObject( the mutant, FALSE, NULL ) = STATUS_SUCCESS (acquired; a second wait by the owner also = STATUS_SUCCESS);
+	// NtReleaseMutant( h, &PreviousCount ) = STATUS_SUCCESS with PreviousCount = the signal state before the release (FFFFFFFFH after two
+	// waits, then 0); a release while not owned = STATUS_MUTANT_NOT_OWNED (C0000046H), PreviousCount not written. The phnt prototypes:
+	// ntexapi.h NtReleaseMutant, ntobapi.h NtWaitForSingleObject. One thread: the owner is always the waiting thread. Alertable / timeouts: stop.
+	reply kernel::svc_mutant_wait_release( const call& c )
+	{
+		const auto it = handles_.find( c.args[ 0 ] );
+		if ( it == handles_.end() || it->second.kind != "mutant" ) return stop_( c.name + ": handle " + hex( c.args[ 0 ] ) + " is not a mutant of this process - not measured" );
+		int64_t& s = mutant_state_[ it->second.name ];
+		if ( c.name == "NtWaitForSingleObject" )
+		{
+			if ( uint8_t( c.args[ 1 ] ) || c.args[ 2 ] ) return stop_( "NtWaitForSingleObject on the mutant " + hex( c.args[ 0 ] ) + " Alertable / with a timeout: not measured" );
+			s--;
+			return done_( status::success, "NtWaitForSingleObject( mutant " + hex( c.args[ 0 ] ) + " \"" + it->second.name + "\", FALSE, NULL ): acquired by the thread, signal state " +
+											   std::to_string( s ) + " (measured: tm_nt mut.wait*)" );
+		}
+		if ( s >= 1 ) return done_( 0xC0000046, "NtReleaseMutant( " + hex( c.args[ 0 ] ) + " ): not owned - STATUS_MUTANT_NOT_OWNED, PreviousCount not written (measured: tm_nt mut.rel2)" );
+		if ( c.args[ 1 ] && !user_buffer( c.args[ 1 ], 4, UC_PROT_WRITE ) ) return done_( status::access_violation, "NtReleaseMutant: PreviousCount not writable" );
+		const int32_t prev = int32_t( s );
+		s++;
+		reply r = done_( status::success, "NtReleaseMutant( mutant " + hex( c.args[ 0 ] ) + " ): released, PreviousCount " + std::to_string( prev ) + ", signal state " + std::to_string( s ) +
+											  " (measured: tm_nt mut.rel*)" );
+		if ( c.args[ 1 ] && !put( c.args[ 1 ], &prev, 4, r ) ) return stop_( "writing the result failed after the probe" );
+		return r;
+	}
+
+	// P41: the decoded stop of a named-object service whose OBJECT_ATTRIBUTES is argument 2 (shared/ntdef.h) - the measurement replays it
+	reply kernel::svc_named_decode( const call& c )
+	{
+		object_attributes oa;
+		std::string why;
+		if ( c.args[ 2 ] && !guest_object_attributes( c.args[ 2 ], oa, why ) ) return stop_( c.name + ": " + why );
+		const auto it = handles_.find( oa.root );
+		std::string a;
+		for ( int i = 3; i < 6; i++ ) a += ", " + hex( c.args[ size_t( i ) ] );
+		return stop_( c.name + "( " + hex( c.args[ 0 ] ) + ", access " + hex( uint32_t( c.args[ 1 ] ) ) + ", OA " + hex( c.args[ 2 ] ) + " {root " + hex( oa.root ) +
+					  ( it != handles_.end() ? " (" + it->second.kind + " " + it->second.name + ")" : std::string() ) + ", \"" + oa.name + "\", attributes " + hex( oa.attributes ) +
+					  "}" + a + " ) - not measured yet (P41)" );
+	}
+
+	// P41 (U2077): the WIL staging names kernelbase's start uses in the session's BaseNamedObjects (traces c12 / c15): "Local\\SM0:<the
+	// process id>:304:WilStaging_02" and names beginning "Local\\SM0:<the process id>:304:WilStaging_02_" relative to that directory
+	bool kernel::wil_name( const object_attributes& oa, std::string& full, std::string& why )
+	{
+		uint32_t sid = 0;
+		std::string err;
+		e_.read( f_.peb + 0x2C0, &sid, 4, err );   // PEB SessionId (2C0H, ntdll.pdb _PEB)
+		const std::string bno = "\\Sessions\\" + std::to_string( sid ) + "\\BaseNamedObjects";
+		const auto it = handles_.find( oa.root );
+		if ( it == handles_.end() || it->second.kind != "directory" || it->second.name != bno )
+		{
+			why = "the root is not the session's BaseNamedObjects directory";
+			return false;
+		}
+		const std::string pre = "Local\\SM0:" + std::to_string( f_.process_id ) + ":304:WilStaging_02_";
+		if ( oa.name.rfind( pre, 0 ) != 0 || oa.name.size() > pre.size() + 8 )
+		{
+			why = "not a WIL staging name of this process (\"" + pre + "...\")";
+			return false;
+		}
+		full = bno + "\\" + oa.name;
+		return true;
+	}
+
+	// NtOpenSemaphore( *SemaphoreHandle, DesiredAccess, ObjectAttributes ) / NtCreateSemaphore( ..., InitialCount, MaximumCount ) -
+	// phnt ntexapi.h. MEASURED (tm_nt wil.open.*): 1F0003H, attributes 0, a WIL staging name: an existing semaphore = STATUS_SUCCESS + a
+	// handle; a name no object has = STATUS_OBJECT_NAME_NOT_FOUND (C0000034H), the handle NOT written. NtCreateSemaphore: decoded stop until
+	// measured.
+	reply kernel::svc_wil_semaphore( const call& c )
+	{
+		object_attributes oa;
+		std::string why, full;
+		if ( !c.args[ 2 ] || !guest_object_attributes( c.args[ 2 ], oa, why ) ) return stop_( c.name + ": " + ( why.empty() ? std::string( "no ObjectAttributes" ) : why ) );
+		std::string a;
+		for ( int i = 3; i < 5; i++ ) a += ", " + hex( c.args[ size_t( i ) ] );
+		const std::string what = c.name + "( " + hex( c.args[ 0 ] ) + ", access " + hex( uint32_t( c.args[ 1 ] ) ) + ", OA {root " + hex( oa.root ) + ", \"" + oa.name + "\", attributes " +
+								 hex( oa.attributes ) + "}" + ( c.name == "NtCreateSemaphore" ? a : std::string() ) + " )";
+		if ( !wil_name( oa, full, why ) ) return stop_( what + " - " + why + ": not measured" );
+		if ( c.name == "NtCreateSemaphore" )
+		{
+			// MEASURED (tm_nt wil.create): 1F0003H, OBJ_OPENIF, InitialCount = MaximumCount = 28CF0H (the loader's; WIL encodes its data in
+			// the counts): a name no object has = STATUS_SUCCESS + a handle; the same name while it exists = STATUS_OBJECT_NAME_EXISTS
+			// (40000000H) + a handle. The counts are kept as given when 0 <= InitialCount <= MaximumCount and MaximumCount > 0 (the documented
+			// rule of a semaphore's count and limit: WDK km\wdm.h KeInitializeSemaphore); other counts / access / attributes: stop.
+			const int32_t init = int32_t( c.args[ 3 ] ), maxc = int32_t( c.args[ 4 ] );
+			if ( uint32_t( c.args[ 1 ] ) != 0x1F0003 || oa.attributes != 0x80 || maxc <= 0 || init < 0 || init > maxc ) return stop_( what + " - not measured (1F0003H, OBJ_OPENIF, 0 <= InitialCount <= MaximumCount > 0)" );
+			if ( !user_buffer( c.args[ 0 ], 8, UC_PROT_WRITE ) ) return done_( status::access_violation, what + ": SemaphoreHandle not writable" );
+			const bool exists = named_objects_.count( full ) && named_objects_[ full ] > 0;
+			object o;
+			o.kind = "semaphore";
+			o.name = full;
+			o.value = ( uint64_t( uint32_t( maxc ) ) << 32 ) | uint32_t( init );
+			const uint64_t hnd = open_handle( o );
+			named_objects_[ full ]++;
+			reply rc = done_( exists ? 0x40000000u : status::success, what + ": semaphore handle " + hex( hnd ) + ( exists ? " - STATUS_OBJECT_NAME_EXISTS (measured: tm_nt wil.create)" : " - created (measured: tm_nt wil.create)" ) );
+			if ( !put( c.args[ 0 ], &hnd, 8, rc ) ) return stop_( "writing the handle failed after the probe" );
+			return rc;
+		}
+		if ( uint32_t( c.args[ 1 ] ) != 0x1F0003 || oa.attributes != 0 ) return stop_( what + " - not measured (1F0003H, attributes 0 are)" );
+		if ( !user_buffer( c.args[ 0 ], 8, UC_PROT_WRITE ) ) return done_( status::access_violation, what + ": SemaphoreHandle not writable" );
+		if ( !named_objects_.count( full ) || !named_objects_[ full ] ) return done_( status::object_name_not_found, what + ": no such object - STATUS_OBJECT_NAME_NOT_FOUND, handle not written (measured: tm_nt wil.open.fresh)" );
+		object o;
+		o.kind = "semaphore";
+		o.name = full;
+		const uint64_t hnd = open_handle( o );
+		named_objects_[ full ]++;
+		reply r = done_( status::success, what + ": semaphore handle " + hex( hnd ) + " (measured: tm_nt wil.open.loader)" );
+		if ( !put( c.args[ 0 ], &hnd, 8, r ) ) return stop_( "writing the handle failed after the probe" );
+		return r;
+	}
+
+	// NtQueryWnfStateData( StateName, TypeId, ExplicitScope, *ChangeStamp, Buffer, *BufferLength ) - phnt ntexapi.h:1902-1909
+	// (WNF_STATE_NAME :1737-1752: a 64-bit encoded name). P41 (U2078): kernelbase's start queries the state 0280032EA3BC0875H with its
+	// TypeId {4E8552D648F96463H, 4E26174EC1F2029CH} (constants of the system DLL), no scope, a 1000H buffer. MEASURED (tm_nt wnf.*):
+	// STATUS_SUCCESS, 8 data bytes 01 00 00 00 00 00 00 00 (a configuration value of the guest), BufferLength 8, ChangeStamp written
+	// non-zero (placeholder 1: the counter of the state's changes); a buffer below 8 = STATUS_BUFFER_TOO_SMALL with BufferLength 8 and the
+	// ChangeStamp written, no data; TypeId NULL = STATUS_INVALID_PARAMETER, nothing written. Other states / scopes: stop.
+	reply kernel::svc_query_wnf_state_data( const call& c )
+	{
+		uint64_t name = 0, tid[ 2 ] = {};
+		uint32_t blen = 0;
+		std::string err;
+		if ( c.args[ 0 ] && user_buffer( c.args[ 0 ], 8, UC_PROT_READ ) ) e_.read( c.args[ 0 ], &name, 8, err );
+		if ( c.args[ 1 ] && user_buffer( c.args[ 1 ], 16, UC_PROT_READ ) ) e_.read( c.args[ 1 ], tid, 16, err );
+		if ( c.stack_args && c.args[ 5 ] && user_buffer( c.args[ 5 ], 4, UC_PROT_READ ) ) e_.read( c.args[ 5 ], &blen, 4, err );
+		const std::string what = "NtQueryWnfStateData( StateName " + hex( c.args[ 0 ] ) + " = " + hex( name ) + ", TypeId " + hex( c.args[ 1 ] ) +
+								 ( c.args[ 1 ] ? " = " + hex( tid[ 0 ] ) + " " + hex( tid[ 1 ] ) : std::string() ) + ", ExplicitScope " + hex( c.args[ 2 ] ) + ", ChangeStamp " + hex( c.args[ 3 ] ) +
+								 ", Buffer " + hex( c.stack_args ? c.args[ 4 ] : 0 ) + ", BufferLength " + hex( c.stack_args ? c.args[ 5 ] : 0 ) + " = " + hex( blen ) + " )";
+		if ( c.stack_args && ( name == 0x418A073AA3BC7C75ull || name == 0x418A073AA3BC88F5ull ) && !c.args[ 1 ] && !c.args[ 2 ] && c.args[ 3 ] && c.args[ 5 ] &&
+			 ( blen == 0 || blen == 0xC8 || blen == 0x1000 ) )
+		{
+			// the second / third state of kernelbase's start (traces c21, x1) - MEASURED (tm_nt wnf2.* / wnf3.*): no TypeId, Buffer NULL /
+			// BufferLength 0 (a size probe), C8H or 1000H = STATUS_SUCCESS, ChangeStamp 0, BufferLength 0, no data (the states hold none)
+			if ( !user_buffer( c.args[ 3 ], 4, UC_PROT_WRITE ) || !user_buffer( c.args[ 5 ], 4, UC_PROT_WRITE ) ) return done_( status::access_violation, what + ": an OUT buffer is not writable" );
+			const uint32_t zero = 0;
+			reply r2 = done_( status::success, what + ": no data - STATUS_SUCCESS, ChangeStamp 0, BufferLength 0 (measured: tm_nt wnf2.* / wnf3.*)" );
+			if ( !put( c.args[ 3 ], &zero, 4, r2 ) || !put( c.args[ 5 ], &zero, 4, r2 ) ) return stop_( "writing the result failed after the probe" );
+			return r2;
+		}
+		if ( c.stack_args && name == 0x418A073AA3BC1C75ull && !c.args[ 1 ] && !c.args[ 2 ] && c.args[ 3 ] && c.args[ 5 ] && ( blen == 0 || blen == 0x1000 ) )
+		{
+			// P41 (U2078): the fourth state (ExitProcess - WIL's feature-usage code, trace c37) - MEASURED (tm_nt wnf4.1000 / wnf4.0): no TypeId,
+			// a 1000H buffer = STATUS_SUCCESS, BufferLength = the state's size, its bytes, ChangeStamp written non-zero (placeholder 1);
+			// BufferLength 0 = STATUS_BUFFER_TOO_SMALL with the size and the ChangeStamp written. The state GROWS (a table the system extends as
+			// features are used: 44CH at the measurement 2026-10-26 07:4x, 450H an hour later), so the native reference checks its SHAPE (size
+			// > 400H, a multiple of 4, the 16-byte header) and the environment answers the 44CH SNAPSHOT of the measurement below (WIL
+			// feature-usage data of the guest system: no identity; tm_nt wnf6 log of P41)
+			static const uint8_t state4[ 0x44C ] = {
+			0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x04, 0x00, 0x01, 0x00, 0x02, 0x00, 0x01, 0x01, 0x00, 0x00, 0x8A, 0x83, 0x85, 0x00, 0xA5, 0xAD, 0xCF, 0x00,
+			0xCE, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x40, 0x27, 0x01, 0x02, 0x38, 0x8F, 0x02, 0x02, 0x99, 0x66, 0x00, 0x02, 0xE6, 0x38, 0x01, 0x03, 0xBB,
+			0x92, 0x03, 0x04, 0x69, 0xC2, 0x03, 0x05, 0x33, 0xC0, 0x03, 0x05, 0xD4, 0x7F, 0x00, 0x07, 0x00, 0x45, 0x03, 0x08, 0x6A, 0x67, 0x03, 0x09, 0x92,
+			0xF8, 0x00, 0x09, 0xA3, 0x36, 0x01, 0x0B, 0xAE, 0x92, 0x01, 0x0D, 0x30, 0x45, 0x03, 0x0D, 0xA1, 0x81, 0x00, 0x0D, 0xDB, 0x80, 0x01, 0x0F, 0x3A,
+			0xB4, 0x03, 0x0F, 0x54, 0xBE, 0x02, 0x10, 0xAF, 0xCA, 0x03, 0x11, 0x8A, 0xE6, 0x02, 0x11, 0xDC, 0xE4, 0x02, 0x12, 0x1F, 0xB8, 0x03, 0x12, 0xE5,
+			0xF8, 0x00, 0x13, 0xBE, 0xD0, 0x02, 0x17, 0x95, 0x35, 0x02, 0x17, 0xD9, 0xD4, 0x02, 0x1B, 0x42, 0x78, 0x00, 0x22, 0x57, 0x63, 0x03, 0x23, 0x11,
+			0xAF, 0x02, 0x23, 0x83, 0xE7, 0x01, 0x24, 0x6B, 0x46, 0x01, 0x24, 0xAC, 0xC7, 0x00, 0x24, 0xFF, 0xC3, 0x03, 0x26, 0x8B, 0x0A, 0x03, 0x26, 0x9F,
+			0x2D, 0x03, 0x28, 0x12, 0xEA, 0x02, 0x28, 0x58, 0xFF, 0x02, 0x29, 0x28, 0xC0, 0x03, 0x29, 0xB1, 0x60, 0x03, 0x2A, 0x02, 0x4A, 0x03, 0x2A, 0x0E,
+			0x39, 0x01, 0x2B, 0x9F, 0x5B, 0x02, 0x2C, 0xC9, 0xEE, 0x02, 0x2D, 0x21, 0x52, 0x03, 0x2E, 0x80, 0x1D, 0x01, 0x2F, 0xB6, 0xF6, 0x02, 0x30, 0x50,
+			0x25, 0x01, 0x31, 0x11, 0x60, 0x03, 0x31, 0x15, 0xE7, 0x02, 0x31, 0x48, 0x4F, 0x00, 0x31, 0xCF, 0x44, 0x02, 0x37, 0xE0, 0x9B, 0x03, 0x38, 0xAC,
+			0xC3, 0x03, 0x39, 0xDF, 0x94, 0x02, 0x3D, 0x73, 0xEB, 0x02, 0x3D, 0x7F, 0xE6, 0x00, 0x40, 0x56, 0xF1, 0x00, 0x42, 0x7B, 0xBA, 0x03, 0x47, 0xB1,
+			0x49, 0x03, 0x48, 0xD7, 0x70, 0x03, 0x48, 0xF9, 0xA6, 0x00, 0x4E, 0x12, 0x24, 0x01, 0x4E, 0xE7, 0xC1, 0x00, 0x4F, 0xC5, 0xB7, 0x03, 0x52, 0x32,
+			0x30, 0x02, 0x55, 0x5F, 0x2A, 0x01, 0x58, 0xFD, 0xFC, 0x00, 0x5C, 0x74, 0x65, 0x01, 0x5F, 0x77, 0xC1, 0x03, 0x60, 0xBA, 0x32, 0x02, 0x63, 0x96,
+			0x77, 0x00, 0x65, 0xC9, 0x76, 0x03, 0x66, 0xB3, 0xC1, 0x03, 0x67, 0x1C, 0x8A, 0x02, 0x6A, 0x49, 0xCB, 0x03, 0x6A, 0x74, 0x95, 0x03, 0x6A, 0xC5,
+			0x62, 0x02, 0x6B, 0x10, 0x60, 0x03, 0x6C, 0x28, 0x85, 0x02, 0x6E, 0x69, 0xC9, 0x03, 0x6F, 0x00, 0xBC, 0x02, 0x70, 0x1D, 0x8E, 0x03, 0x71, 0x40,
+			0xA3, 0x00, 0x71, 0x7B, 0xBA, 0x03, 0x71, 0x96, 0x58, 0x03, 0x72, 0xA2, 0x42, 0x01, 0x73, 0x55, 0xFD, 0x02, 0x76, 0x79, 0xE9, 0x02, 0x77, 0x41,
+			0xC7, 0x03, 0x79, 0x9C, 0x39, 0x00, 0x79, 0xCB, 0xA1, 0x03, 0x7A, 0x8B, 0x88, 0x03, 0x7B, 0x83, 0xA5, 0x03, 0x7B, 0x86, 0x3D, 0x02, 0x7B, 0xA8,
+			0xD1, 0x00, 0x7E, 0x10, 0x44, 0x01, 0x7F, 0xC1, 0xA8, 0x02, 0x80, 0x10, 0xB8, 0x03, 0x80, 0x4A, 0x71, 0x02, 0x83, 0x02, 0x3C, 0x03, 0x84, 0x50,
+			0xEB, 0x00, 0x86, 0x49, 0x1C, 0x01, 0x87, 0x6A, 0x49, 0x01, 0x87, 0xD7, 0x21, 0x01, 0x89, 0x2F, 0x83, 0x02, 0x8A, 0x1F, 0xB8, 0x03, 0x8A, 0x83,
+			0x85, 0x00, 0x8B, 0xEE, 0xF2, 0x00, 0x8C, 0xFF, 0xC0, 0x03, 0x8D, 0xBD, 0xA6, 0x03, 0x8E, 0xD6, 0xDC, 0x01, 0x8F, 0x92, 0xC4, 0x03, 0x90, 0xEE,
+			0x37, 0x01, 0x91, 0x1A, 0x9F, 0x03, 0x93, 0x86, 0x61, 0x00, 0x95, 0x0B, 0xFE, 0x00, 0x95, 0x9F, 0x33, 0x01, 0x96, 0x85, 0xB7, 0x03, 0x97, 0x01,
+			0xA8, 0x02, 0x97, 0xDE, 0x12, 0x03, 0x98, 0x7F, 0x5C, 0x03, 0x99, 0x50, 0xC5, 0x03, 0x9C, 0x1F, 0x4D, 0x03, 0x9C, 0x62, 0x3A, 0x01, 0x9C, 0xE0,
+			0xA8, 0x00, 0x9D, 0x9D, 0x92, 0x00, 0xA1, 0x43, 0xD3, 0x03, 0xA2, 0x58, 0x9C, 0x02, 0xA2, 0xBB, 0x1A, 0x03, 0xA3, 0x56, 0x88, 0x03, 0xA5, 0x59,
+			0xA7, 0x03, 0xA6, 0x1C, 0xA8, 0x02, 0xA7, 0x54, 0xA1, 0x02, 0xA9, 0x17, 0x06, 0x02, 0xAE, 0xC7, 0x8F, 0x02, 0xB0, 0x54, 0xA1, 0x02, 0xB0, 0xA0,
+			0x54, 0x03, 0xB0, 0xD6, 0x28, 0x01, 0xB0, 0xDC, 0xC9, 0x03, 0xB0, 0xF6, 0x2E, 0x03, 0xB3, 0x40, 0xC6, 0x03, 0xB4, 0x57, 0xCC, 0x03, 0xB5, 0x54,
+			0xA1, 0x02, 0xB5, 0x61, 0x0D, 0x01, 0xB8, 0x54, 0xA1, 0x02, 0xB8, 0x94, 0x76, 0x03, 0xB9, 0x71, 0xBC, 0x03, 0xB9, 0x9E, 0xC9, 0x01, 0xBA, 0x15,
+			0xC7, 0x03, 0xBB, 0x6A, 0x85, 0x02, 0xBC, 0x54, 0xA1, 0x02, 0xBC, 0xD2, 0x2A, 0x01, 0xBD, 0x44, 0x74, 0x03, 0xBE, 0x72, 0xBA, 0x03, 0xBE, 0x82,
+			0x72, 0x03, 0xBF, 0xA6, 0x6F, 0x03, 0xC0, 0x54, 0xA1, 0x02, 0xC0, 0xF9, 0xBA, 0x03, 0xC2, 0x0C, 0x5B, 0x02, 0xC3, 0x6D, 0x81, 0x00, 0xC3, 0x99,
+			0xF3, 0x00, 0xC3, 0xAE, 0xF1, 0x02, 0xC4, 0x27, 0x4E, 0x03, 0xC6, 0x16, 0xAF, 0x03, 0xCC, 0x49, 0x56, 0x00, 0xCE, 0xD6, 0x85, 0x03, 0xCF, 0x67,
+			0x69, 0x01, 0xD0, 0x17, 0x56, 0x00, 0xD1, 0x35, 0x9F, 0x03, 0xD4, 0x41, 0xBA, 0x03, 0xD4, 0xD1, 0x7A, 0x03, 0xD7, 0x3D, 0xEB, 0x02, 0xD7, 0x78,
+			0xBE, 0x03, 0xD7, 0xE5, 0xBA, 0x03, 0xD9, 0x07, 0x24, 0x01, 0xD9, 0xA2, 0x80, 0x03, 0xDA, 0x16, 0x3E, 0x02, 0xDA, 0x38, 0xC8, 0x01, 0xDA, 0x43,
+			0xC3, 0x03, 0xDD, 0x1B, 0x19, 0x01, 0xDF, 0xA8, 0xC6, 0x01, 0xE0, 0x61, 0xC3, 0x02, 0xE0, 0x94, 0x38, 0x02, 0xE1, 0xD9, 0xF5, 0x02, 0xE4, 0x69,
+			0xC9, 0x00, 0xE5, 0x81, 0xC3, 0x03, 0xE5, 0xCE, 0x9A, 0x02, 0xE5, 0xD9, 0x59, 0x03, 0xE6, 0x6C, 0x81, 0x00, 0xE9, 0x1B, 0xB3, 0x02, 0xE9, 0x93,
+			0xC4, 0x03, 0xEA, 0xC6, 0x6A, 0x03, 0xED, 0x3E, 0xDC, 0x02, 0xEE, 0x05, 0x17, 0x03, 0xEF, 0x26, 0x4D, 0x03, 0xEF, 0x79, 0x8B, 0x00, 0xF0, 0x1C,
+			0x3F, 0x03, 0xF0, 0xE0, 0xB6, 0x00, 0xF3, 0x08, 0xDB, 0x00, 0xF3, 0x28, 0x21, 0x01, 0xF3, 0xD5, 0x28, 0x02, 0xF4, 0xCC, 0x3E, 0x01, 0xF7, 0x12,
+			0x5E, 0x00, 0xF7, 0xED, 0x6A, 0x00, 0xF9, 0xAE, 0xBE, 0x03, 0xFD, 0x67, 0x64, 0x03, 0x01, 0x00, 0x02, 0x01, 0x00, 0x00, 0x8A, 0x83, 0x85, 0x00,
+			0x01, 0x00, 0x03, 0x01, 0x00, 0x00, 0x8A, 0x83, 0x85, 0x00, 0x2F, 0x00, 0x06, 0x00, 0x00, 0x00, 0x00, 0x47, 0xF1, 0x00, 0x01, 0x91, 0x40, 0x01,
+			0x02, 0x1C, 0x41, 0x01, 0x02, 0x35, 0x4F, 0x01, 0x02, 0xBD, 0x7E, 0x00, 0x04, 0x92, 0x1E, 0x01, 0x0A, 0xEF, 0x59, 0x02, 0x12, 0xB9, 0x5D, 0x03,
+			0x18, 0x1F, 0x1B, 0x01, 0x19, 0xC3, 0x98, 0x00, 0x1B, 0x77, 0x98, 0x01, 0x1E, 0x51, 0x3D, 0x03, 0x22, 0x7A, 0x4C, 0x03, 0x29, 0x00, 0xD8, 0x00,
+			0x29, 0x55, 0x63, 0x03, 0x2E, 0x53, 0x4C, 0x01, 0x42, 0x93, 0x80, 0x00, 0x4D, 0x86, 0x3E, 0x03, 0x4F, 0x6B, 0x68, 0x03, 0x60, 0xAA, 0x56, 0x01,
+			0x62, 0x8E, 0x74, 0x03, 0x63, 0x3E, 0x99, 0x00, 0x64, 0x47, 0xEF, 0x00, 0x65, 0x7A, 0x4C, 0x03, 0x70, 0x2C, 0x48, 0x03, 0x74, 0x85, 0xAD, 0x03,
+			0x75, 0x9F, 0xBE, 0x02, 0x79, 0xA8, 0x79, 0x03, 0x82, 0xE6, 0xF4, 0x00, 0x87, 0x27, 0x9C, 0x02, 0x8B, 0x52, 0xCB, 0x00, 0x9B, 0x56, 0xA4, 0x00,
+			0x9C, 0xA5, 0x53, 0x03, 0x9F, 0x60, 0xC3, 0x00, 0xA3, 0xB0, 0x6D, 0x03, 0xA7, 0xC2, 0x33, 0x01, 0xAA, 0x9F, 0xCE, 0x02, 0xAC, 0x84, 0x0E, 0x01,
+			0xAF, 0xEF, 0xC9, 0x00, 0xB4, 0x89, 0x22, 0x01, 0xB5, 0x7A, 0x48, 0x01, 0xB6, 0x51, 0x5D, 0x00, 0xCC, 0xE1, 0x17, 0x03, 0xDA, 0x19, 0xD7, 0x00,
+			0xE6, 0x19, 0x9B, 0x00, 0xE8, 0xA4, 0xC6, 0x01, 0xFC, 0xA5, 0x3B, 0x03, 0x04, 0x00, 0x40, 0x01, 0x00, 0x00, 0x4B, 0x11, 0xB4, 0x00, 0x7B, 0xA8,
+			0xD1, 0x00, 0x8A, 0x83, 0x85, 0x00, 0x9F, 0x27, 0xFF, 0x00, 0x01, 0x00, 0x43, 0x01, 0x00, 0x00, 0xC0, 0xEC, 0x7C, 0x00,
+			};
+			if ( !user_buffer( c.args[ 3 ], 4, UC_PROT_WRITE ) || !user_buffer( c.args[ 5 ], 4, UC_PROT_WRITE ) || ( blen && !user_buffer( c.args[ 4 ], sizeof( state4 ), UC_PROT_WRITE ) ) )
+				return done_( status::access_violation, what + ": an OUT buffer is not writable" );
+			const uint32_t one = 1, n4 = sizeof( state4 );
+			if ( !blen )
+			{
+				reply r0 = done_( status::buffer_too_small, what + ": STATUS_BUFFER_TOO_SMALL, BufferLength 44CH, ChangeStamp written (measured: tm_nt wnf4.0)" );
+				if ( !put( c.args[ 3 ], &one, 4, r0 ) || !put( c.args[ 5 ], &n4, 4, r0 ) ) return stop_( "writing the result failed after the probe" );
+				return r0;
+			}
+			reply r4 = done_( status::success, what + ": 44CH data bytes (the measured WIL feature configuration), BufferLength 44CH, ChangeStamp 1 (placeholder: non-zero) (measured: tm_nt wnf4.1000)" );
+			if ( !put( c.args[ 4 ], state4, sizeof( state4 ), r4 ) || !put( c.args[ 3 ], &one, 4, r4 ) || !put( c.args[ 5 ], &n4, 4, r4 ) ) return stop_( "writing the result failed after the probe" );
+			return r4;
+		}
+		if ( !c.stack_args || name != 0x0280032EA3BC0875ull || c.args[ 2 ] || !c.args[ 3 ] || !c.args[ 5 ] ) return stop_( what + " - not measured (tm_nt wnf*: the measured states, no scope)" );
+		if ( !c.args[ 1 ] ) return done_( status::invalid_parameter, what + ": TypeId NULL - STATUS_INVALID_PARAMETER (measured: tm_nt wnf.notype)" );
+		if ( tid[ 0 ] != 0x4E8552D648F96463ull || tid[ 1 ] != 0x4E26174EC1F2029Cull ) return stop_( what + " - another TypeId: not measured" );
+		if ( !user_buffer( c.args[ 3 ], 4, UC_PROT_WRITE ) || !user_buffer( c.args[ 5 ], 4, UC_PROT_WRITE ) || ( blen >= 8 && !user_buffer( c.args[ 4 ], 8, UC_PROT_WRITE ) ) )
+			return done_( status::access_violation, what + ": an OUT buffer is not writable" );
+		const uint32_t stamp = 1, eight = 8;
+		const uint8_t data[ 8 ] = { 1, 0, 0, 0, 0, 0, 0, 0 };
+		if ( blen < 8 )
+		{
+			reply rs = done_( status::buffer_too_small, what + ": STATUS_BUFFER_TOO_SMALL, BufferLength 8, ChangeStamp written (measured: tm_nt wnf.0)" );
+			if ( !put( c.args[ 3 ], &stamp, 4, rs ) || !put( c.args[ 5 ], &eight, 4, rs ) ) return stop_( "writing the result failed after the probe" );
+			return rs;
+		}
+		reply r = done_( status::success, what + ": 8 data bytes 01 00 00 00 00 00 00 00, BufferLength 8, ChangeStamp 1 (placeholder: non-zero) (measured: tm_nt wnf.1000)" );
+		if ( !put( c.args[ 4 ], data, 8, r ) || !put( c.args[ 3 ], &stamp, 4, r ) || !put( c.args[ 5 ], &eight, 4, r ) ) return stop_( "writing the result failed after the probe" );
+		return r;
+	}
+
+	// P41 (U2078): NtSetWnfProcessNotificationEvent( NotificationEvent ) - phnt ntexapi.h:2005-2007. MEASURED (tm_nt wnfe.*): in a process
+	// whose own start already set one, a new synchronization event = STATUS_ALREADY_REGISTERED (C0000718H), again the same; NULL =
+	// STATUS_INVALID_HANDLE. So the process' FIRST call (ntdll's, during kernelbase's start) succeeds - inferred, as for ETW 1BH. The event
+	// is never signaled here (no WNF state changes in the emulated environment).
+	// NtSubscribeWnfStateChange( StateName, ChangeStamp, EventMask, *SubscriptionId ) - phnt ntexapi.h:1946-1951 (below).
+	reply kernel::svc_wnf_more( const call& c )
+	{
+		if ( c.name == "NtSetWnfProcessNotificationEvent" )
+		{
+			const auto it = handles_.find( c.args[ 0 ] );
+			const std::string what = "NtSetWnfProcessNotificationEvent( " + hex( c.args[ 0 ] ) + ( it != handles_.end() ? " (" + it->second.kind + ")" : std::string() ) + " )";
+			if ( !c.args[ 0 ] ) return done_( status::invalid_handle, what + ": NULL - STATUS_INVALID_HANDLE (measured: tm_nt wnfe.null)" );
+			if ( it == handles_.end() || it->second.kind != "event (synchronization)" ) return stop_( what + " - not a synchronization event: not measured" );
+			if ( wnf_event_ ) return done_( 0xC0000718, what + ": already set (event " + hex( wnf_event_ ) + ") - STATUS_ALREADY_REGISTERED (measured: tm_nt wnfe.set / .again)" );
+			wnf_event_ = c.args[ 0 ];
+			return done_( status::success, what + ": the process' WNF notification event (first call: STATUS_SUCCESS - inferred from tm_nt wnfe.set: a later one is STATUS_ALREADY_REGISTERED); never signaled here" );
+		}
+		// NtSubscribeWnfStateChange - MEASURED (tm_nt wnfs.*): the state 0280032EA3BC0875H, EventMask 11H, the ChangeStamp of the query (or
+		// another) = STATUS_SUCCESS, SubscriptionId written non-zero, the SAME id for a second subscription of that state in the process.
+		// The id: placeholder 1 (the shape: non-zero, stable per state). Other states / masks: stop.
+		uint64_t name = 0;
+		std::string err;
+		if ( c.args[ 0 ] && user_buffer( c.args[ 0 ], 8, UC_PROT_READ ) ) e_.read( c.args[ 0 ], &name, 8, err );
+		const std::string what = "NtSubscribeWnfStateChange( StateName " + hex( c.args[ 0 ] ) + " = " + hex( name ) + ", ChangeStamp " + hex( uint32_t( c.args[ 1 ] ) ) + ", EventMask " +
+								 hex( uint32_t( c.args[ 2 ] ) ) + ", SubscriptionId " + hex( c.args[ 3 ] ) + " )";
+		// tm_nt wnfs.two / wnfs.three: the second / third state - STATUS_SUCCESS, an id of its own each
+		const uint64_t id = name == 0x0280032EA3BC0875ull ? 1 : name == 0x418A073AA3BC7C75ull ? 2 : name == 0x418A073AA3BC88F5ull ? 3 : 0;
+		if ( !id || uint32_t( c.args[ 2 ] ) != 0x11 || !c.args[ 3 ] )
+			return stop_( what + " - not measured (tm_nt wnfs: the states 0280032EA3BC0875H / 418A073AA3BC7C75H / 418A073AA3BC88F5H, 11H, an id pointer)" );
+		if ( !user_buffer( c.args[ 3 ], 8, UC_PROT_WRITE ) ) return done_( status::access_violation, what + ": SubscriptionId not writable" );
+		reply r = done_( status::success, what + ": subscribed, SubscriptionId " + std::to_string( id ) + " (placeholder: non-zero, stable per state, one per state; measured: tm_nt wnfs.*); "
+										  "no change is ever delivered here" );
+		if ( !put( c.args[ 3 ], &id, 8, r ) ) return stop_( "writing the result failed after the probe" );
+		return r;
+	}
+
+	// NtSetTimer2( TimerHandle, DueTime, Period, Parameters ) - phnt ntexapi.h:1470-1475 (T2_SET_PARAMETERS_V0 :1430-1450).
+	reply kernel::svc_set_timer2( const call& c )
+	{
+		const auto it = handles_.find( c.args[ 0 ] );
+		int64_t due = 0, period = 0;
+		uint8_t prm[ 16 ] = {};
+		std::string err, ph;
+		if ( c.args[ 1 ] && user_buffer( c.args[ 1 ], 8, UC_PROT_READ ) ) e_.read( c.args[ 1 ], &due, 8, err );
+		if ( c.args[ 2 ] && user_buffer( c.args[ 2 ], 8, UC_PROT_READ ) ) e_.read( c.args[ 2 ], &period, 8, err );
+		if ( c.args[ 3 ] && user_buffer( c.args[ 3 ], 16, UC_PROT_READ ) ) e_.read( c.args[ 3 ], prm, 16, err );
+		for ( int i = 0; i < 16; i++ ) { char b[ 4 ]; std::snprintf( b, sizeof( b ), "%02X", prm[ i ] ); ph += ( i ? " " : "" ) + std::string( b ); }
+		const std::string what = "NtSetTimer2( " + hex( c.args[ 0 ] ) + ( it != handles_.end() ? " (" + it->second.kind + ")" : std::string() ) + ", DueTime " + hex( c.args[ 1 ] ) + " = " +
+								 std::to_string( due ) + ", Period " + hex( c.args[ 2 ] ) + " = " + std::to_string( period ) + ", Parameters " + hex( c.args[ 3 ] ) + " [" + ph + "] )";
+		// P41 (U2079): MEASURED (tm_nt t2s.*): a timer2 of NtCreateTimer2 (Attributes 8), a RELATIVE DueTime (negative; the loader's
+		// 300 s relative, in 100-ns units), Period NULL, Parameters {Version 0, NoWakeTolerance 75 s} = STATUS_SUCCESS (again: STATUS_SUCCESS), the
+		// DueTime not written. The timer is armed but never expires here: expiry needs the virtual time base (milestone M6) and the emulated
+		// run waits on nothing that it would signal. Other shapes: stop.
+		uint32_t ver = 0;
+		std::memcpy( &ver, prm, 4 );
+		if ( it == handles_.end() || it->second.kind != "timer2" || !c.args[ 1 ] || due >= 0 || c.args[ 2 ] || !c.args[ 3 ] || ver != 0 )
+			return stop_( what + " - not measured (tm_nt t2s: a timer2, a relative DueTime, no Period, Parameters Version 0)" );
+		it->second.value = uint64_t( due );
+		return done_( status::success, what + ": armed (relative " + std::to_string( -due / 10000000 ) + " s; never expires in the emulated run - virtual time is M6) (measured: tm_nt t2s.set)" );
 	}
 }

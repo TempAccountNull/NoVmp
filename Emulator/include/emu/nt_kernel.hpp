@@ -277,5 +277,25 @@ namespace emu::nt
 		reply svc_initialize_nls_files( const call& c );
 		bool svc_create_file_measured( const call& c, reply& r );   // NtCreateFile: the console-driver frontier (false = not handled here)
 		uint64_t csr_port_ = 0;                                 // the API port handle of this process (0 = not connected)
+		// P41 (U2069-U2089): the model of a process started WITHOUT a console (a DETACHED_PROCESS start; tm_nt con.*)
+		bool console_host_set_ = false;                         // ProcessConsoleHostProcess (31H) set by the process (kernelbase)
+		uint64_t console_host_ = 0;                             // its value (measured: 1 in a detached process)
+		reply svc_write_file( const call& c );                  // NtWriteFile: the no-console standard handle 0 (tm_nt con.ntwf)
+		reply svc_open_process_token( const call& c );          // NtOpenProcessToken (tm_nt tok.open)
+		reply svc_query_information_token( const call& c );     // NtQueryInformationToken 0CH / 1DH / 2AH (tm_nt tok.*)
+		reply svc_access_check( const call& c );                // NtAccessCheck (P41)
+		reply svc_create_mutant( const call& c );               // NtCreateMutant (P41)
+		std::map<std::string, uint64_t> named_objects_;         // P41: named objects created in this environment (full name -> handle count)
+		std::map<std::string, int64_t> mutant_state_;           // P41: a mutant's signal state (1 = free; <= 0 = owned by the one thread)
+		reply svc_mutant_wait_release( const call& c );         // NtWaitForSingleObject on a mutant, NtReleaseMutant (tm_nt mut.*)
+		reply svc_named_decode( const call& c );                // P41: decode stop of a named-object service (OA = argument 2)
+		reply svc_wil_semaphore( const call& c );               // P41: the WIL staging semaphores (tm_nt wil.*)
+		reply svc_query_wnf_state_data( const call& c );        // P41: NtQueryWnfStateData
+		reply svc_wnf_more( const call& c );                    // P41: NtSetWnfProcessNotificationEvent, NtSubscribeWnfStateChange
+		reply svc_set_timer2( const call& c );                  // P41: NtSetTimer2
+		bool exit_status_set_ = false;                           // P41: the first NtTerminateProcess( NULL ) fixed the exit status
+		uint32_t exit_status_ = 0;
+		uint64_t wnf_event_ = 0;                                // P41: the process' WNF notification event (0 = none)
+		bool wil_name( const object_attributes& oa, std::string& full, std::string& why );   // P41: the measured WIL staging name shape
 	};
 }

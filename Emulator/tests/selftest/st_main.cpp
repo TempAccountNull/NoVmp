@@ -1936,7 +1936,8 @@ namespace
 		for ( uint64_t h : { N::current_process, N::current_thread, ~0ull - 5 } ) CHECK( w5_stop( w5_call( *p, "NtClose", { h } ) ), "NtClose of a pseudo handle: stop" );
 		auto r = w5_call( *p, "NtTerminateProcess", { N::current_process, 0x1234567800000077ull } );
 		CHECK( r.kind == N::reply_kind::terminated && r.exit_status == 0x77, "NtTerminateProcess( NtCurrentProcess() ): terminated, ExitStatus = the low 32 bits" );
-		CHECK( w5_stop( w5_call( *p, "NtTerminateProcess", { 0, 1 } ) ) && w5_stop( w5_call( *p, "NtTerminateProcess", { 0x40, 1 } ) ), "NtTerminateProcess of NULL / a handle: stop" );
+		CHECK( w5_ok( w5_call( *p, "NtTerminateProcess", { 0, 1 } ) ) && w5_stop( w5_call( *p, "NtTerminateProcess", { 0x40, 1 } ) ),
+			   "NtTerminateProcess of NULL: STATUS_SUCCESS (P41, measured tm_nt term.null) / of a handle: stop" );
 		r = w5_call( *p, "NtCreateFile", {} );
 		CHECK( w5_stop( r ) && r.text.find( "not implemented in milestone M5" ) != std::string::npos, "a known, unimplemented service: stop" );
 		emu::nt::call u;
@@ -2186,7 +2187,8 @@ namespace
 				if ( r.status == emu::nt::status::success )
 				{
 					ok++;
-					CHECK( !r.writes.empty() || c.name == std::string( "NtClose" ), "a STATUS_SUCCESS answer wrote its OUT parameters" );
+					CHECK( !r.writes.empty() || c.name == std::string( "NtClose" ) || c.name == std::string( "NtTestAlert" ) || ( c.name == std::string( "NtTerminateProcess" ) && c.args[ 0 ] == 0 ),
+						   "a STATUS_SUCCESS answer wrote its OUT parameters (P41: NtTestAlert and NtTerminateProcess( NULL ) have none): " + c.name );
 				}
 				else if ( !r.writes.empty() )
 				{
@@ -3120,6 +3122,183 @@ namespace
 		CHECK( w5_stop( r ) && r.text.find( "not implemented in milestone M5" ) != std::string::npos, "another NtCreateFile: the generic loud stop" );
 	}
 
+	// nt_measured_console (P41, U2068-U2082): the services of a process started WITHOUT a console (the model of a DETACHED_PROCESS start),
+	// as measured by tm_nt con / etwt / tok / acc / bno / mut / wil / wnf / wnfe / wnfs / t2s / hku / alert / term, and their refusals
+	void t_nt_measured_console()
+	{
+		std::string err;
+		auto p = w5_create( w5_build( { w5_trivial }, err ), emu::env_boundary::sys, err );
+		CHECK( p != nullptr, "process: " + err );
+		if ( !p ) return;
+		namespace N = emu::nt;
+		const uint64_t S = w5_scratch, cp = N::current_process;
+		auto rd = [ & ]( uint64_t va, int n ) { return w4_read( *p, va, n ); };
+		auto oa = [ & ]( uint64_t at, uint64_t root, const std::string& name, uint64_t attributes ) {
+			ms_ustr( *p, at + 0x30, at + 0x40, name );
+			w5_put( *p, at, 0x30 );
+			w5_put( *p, at + 8, root );
+			w5_put( *p, at + 0x10, at + 0x30 );
+			w5_put( *p, at + 0x18, attributes );
+			w5_put( *p, at + 0x20, 0 );
+			w5_put( *p, at + 0x28, 0 );
+		};
+		const uint64_t peb = p->peb(), params = rd( peb + 0x20, 8 );
+		// the process parameters of the model: ConsoleHandle -1 (RTL_USER_PROC_DETACHED_PROCESS), ConsoleFlags 0, no standard handles
+		CHECK( rd( params + 0x10, 8 ) == ~0ull && rd( params + 0x18, 4 ) == 0 && rd( params + 0x20, 8 ) == 0 && rd( params + 0x28, 8 ) == 0 && rd( params + 0x30, 8 ) == 0,
+			   "the process parameters: ConsoleHandle -1, ConsoleFlags 0, StandardInput / Output / Error 0 (a detached start)" );
+		// ProcessConsoleHostProcess (con.chp / con.chps)
+		CHECK( w5_stop( w5_call( *p, "NtQueryInformationProcess", { cp, 0x31, S, 8, S + 8 } ) ), "31H queried before the process set it: stop" );
+		w5_put( *p, S, 1 );
+		CHECK( w5_status( w5_call( *p, "NtSetInformationProcess", { cp, 0x31, S, 4 } ), N::status::info_length_mismatch ), "set 31H Length 4: STATUS_INFO_LENGTH_MISMATCH" );
+		w5_put( *p, S, 2 );
+		CHECK( w5_stop( w5_call( *p, "NtSetInformationProcess", { cp, 0x31, S, 8 } ) ), "set 31H value 2: not measured, stop" );
+		w5_put( *p, S, 1 );
+		CHECK( w5_ok( w5_call( *p, "NtSetInformationProcess", { cp, 0x31, S, 8 } ) ), "set 31H value 1 (kernelbase's): STATUS_SUCCESS" );
+		w5_put( *p, S, 0xCCCCCCCCCCCCCCCCull );
+		w5_put( *p, S + 8, 0xCCCCCCCCCCCCCCCCull );
+		CHECK( w5_ok( w5_call( *p, "NtQueryInformationProcess", { cp, 0x31, S, 8, S + 8 } ) ) && rd( S, 8 ) == 1 && rd( S + 8, 4 ) == 8, "query 31H: value 1, ReturnLength 8" );
+		w5_put( *p, S + 8, 0xCCCCCCCCCCCCCCCCull );
+		CHECK( w5_status( w5_call( *p, "NtQueryInformationProcess", { cp, 0x31, S, 4, S + 8 } ), N::status::info_length_mismatch ) && rd( S + 8, 4 ) == 0xCCCCCCCC,
+			   "query 31H Length 4: STATUS_INFO_LENGTH_MISMATCH, ReturnLength not written" );
+		// NtWriteFile on the no-console standard handle 0 (con.ntwf)
+		w5_put( *p, S + 0x10, 0xCCCCCCCCCCCCCCCCull );
+		CHECK( w5_status( w5_call( *p, "NtWriteFile", { 0, 0, 0, 0, S + 0x10, S + 0x100, 2, 0, 0 } ), N::status::invalid_handle ) && rd( S + 0x10, 8 ) == 0xCCCCCCCCCCCCCCCCull,
+			   "NtWriteFile( NULL ): STATUS_INVALID_HANDLE, IoStatusBlock not written" );
+		CHECK( w5_stop( w5_call( *p, "NtWriteFile", { 4, 0, 0, 0, S + 0x10, S + 0x100, 2, 0, 0 } ) ), "NtWriteFile on another handle: stop" );
+		// ETW: provider 4 and its traits (etw.reg4 / etwt), provider 5 enabled as in the guest (etw.reg5)
+		const uint64_t E = S + 0x200;
+		auto reg = [ & ]( const uint8_t* guid, uint8_t logger ) {
+			for ( int k = 0; k < 0xA0; k += 8 ) w5_put( *p, E + k, 0 );
+			std::string e2;
+			p->eng().write( E, guid, 16, e2 );
+			w5_put( *p, E + 0x10, ( uint64_t( logger ) << 32 ) | 3 );
+			w5_put( *p, E + 0x20, 0x7FFB20073000ull );   // a ReplyCallback (set)
+			return w5_call( *p, "NtTraceControl", { 0xF, E, 0xA0, E, 0xA0, S + 0x18 } );
+		};
+		static const uint8_t g4[ 16 ] = { 0xB9, 0xAF, 0x74, 0x3C, 0x82, 0x8D, 0xE3, 0x44, 0xB5, 0x2C, 0x36, 0x5D, 0xBF, 0x48, 0x38, 0x2A };
+		static const uint8_t g5[ 16 ] = { 0x0A, 0x27, 0xEF, 0xF1, 0x32, 0x0D, 0x52, 0x43, 0xBA, 0x52, 0xDB, 0xAB, 0x41, 0xE1, 0xD8, 0x59 };
+		static const uint8_t gx[ 16 ] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 };
+		CHECK( w5_stop( reg( gx, 4 ) ), "an unmeasured provider: stop" );
+		CHECK( w5_ok( reg( g4, 4 ) ) && rd( E + 0x18, 8 ) && rd( E + 0x70, 8 ) == 0, "provider 4 (etw.reg4): registered, not enabled" );
+		const uint64_t h4 = rd( E + 0x18, 8 );
+		w5_put( *p, S + 0x300, h4 );
+		w5_put( *p, S + 0x308, S + 0x400 );
+		w5_put( *p, S + 0x310, 0x33 );
+		w5_put( *p, S + 0x18, 0xCCCCCCCC );
+		CHECK( w5_ok( w5_call( *p, "NtTraceControl", { 0x1E, S + 0x300, 0x18, S + 0x500, 0x78, S + 0x18 } ) ) && rd( S + 0x18, 4 ) == 0, "1EH traits 33H (etwt.set): STATUS_SUCCESS, ReturnLength 0" );
+		w5_put( *p, S + 0x310, 0x25 );
+		CHECK( w5_stop( w5_call( *p, "NtTraceControl", { 0x1E, S + 0x300, 0x18, S + 0x500, 0x78, S + 0x18 } ) ), "1EH provider 4 with 25H traits: not measured, stop" );
+		CHECK( w5_ok( reg( g5, 5 ) ) && rd( E + 0x70, 8 ) == ( ( uint64_t( 0xFF ) << 32 ) | 1 ) && rd( E + 0x78, 8 ) == 0x41 && rd( E + 0x80, 8 ) == ( uint64_t( 0xA0 ) << 56 ) &&
+				   rd( E + 0x90, 8 ) == 8 && rd( E + 0x98, 4 ) == 1, "provider 5 (etw.reg5): ENABLED - the measured enable fields" );
+		// the process token (tok.*), the membership checks (acc.*)
+		w5_put( *p, S + 0x20, 0xCCCCCCCCCCCCCCCCull );
+		w5_put( *p, S + 0x28, 0xCCCCCCCCCCCCCCCCull );
+		CHECK( w5_ok( w5_call( *p, "NtQueryInformationToken", { ~0ull - 3, 0x1D, S + 0x20, 4, S + 0x28 } ) ) && rd( S + 0x20, 4 ) == 0 && rd( S + 0x28, 4 ) == 4, "TokenIsAppContainer 0" );
+		CHECK( w5_status( w5_call( *p, "NtQueryInformationToken", { ~0ull - 3, 0x1D, S + 0x20, 0, S + 0x28 } ), N::status::buffer_too_small ), "Length 0: STATUS_BUFFER_TOO_SMALL" );
+		CHECK( w5_ok( w5_call( *p, "NtOpenProcessToken", { cp, 8, S + 0x30 } ) ), "NtOpenProcessToken( 8 )" );
+		const uint64_t tok = rd( S + 0x30, 8 );
+		CHECK( w5_ok( w5_call( *p, "NtQueryInformationToken", { tok, 0xC, S + 0x20, 4, S + 0x28 } ) ) && rd( S + 0x20, 4 ) == rd( peb + 0x2C0, 4 ), "TokenSessionId = the PEB SessionId" );
+		for ( int k = 0; k < 0x120; k += 8 ) w5_put( *p, S + 0x600 + k, 0xCCCCCCCCCCCCCCCCull );
+		CHECK( w5_ok( w5_call( *p, "NtQueryInformationToken", { tok, 0x2C, S + 0x600, 0x120, S + 0x28 } ) ) && rd( S + 0x600, 8 ) == 0 && rd( S + 0x608, 1 ) == 0 &&
+				   rd( S + 0x609, 1 ) == 0xCC && rd( S + 0x28, 4 ) == 0x10, "TokenBnoIsolation: 9 bytes zero, ReturnLength 10H" );
+		CHECK( w5_ok( w5_call( *p, "NtQueryInformationToken", { ~0ull - 5, 1, S + 0x600, 0x58, S + 0x28 } ) ) && rd( S + 0x600, 8 ) == S + 0x610 && rd( S + 0x610, 2 ) == 0x501 &&
+				   rd( S + 0x618, 4 ) == 21 && rd( S + 0x628, 4 ) == 1001 && rd( S + 0x28, 4 ) == 0x2C, "TokenUser: the placeholder S-1-5-21-...-1001, ReturnLength 2CH" );
+		CHECK( w5_stop( w5_call( *p, "NtQueryInformationToken", { tok, 5, S + 0x600, 0x58, S + 0x28 } ) ), "another token class: stop" );
+		auto acc = [ & ]( const std::vector<uint32_t>& subs ) {
+			const uint64_t SD = S + 0x800, SID = S + 0x880, ACL = S + 0x8C0;
+			w5_put( *p, SD, ( uint64_t( 4 ) << 16 ) | 1 );   // Revision 1, Control 4
+			w5_put( *p, SD + 8, SID );
+			w5_put( *p, SD + 0x10, SID );
+			w5_put( *p, SD + 0x18, 0 );
+			w5_put( *p, SD + 0x20, ACL );
+			std::vector<uint8_t> sid = { 1, uint8_t( subs.size() ), 0, 0, 0, 0, 0, 5 };
+			for ( auto v : subs ) for ( int k = 0; k < 4; k++ ) sid.push_back( uint8_t( v >> ( 8 * k ) ) );
+			std::vector<uint8_t> acl( 0xEC, 0 );
+			acl[ 0 ] = 2; acl[ 2 ] = 0xEC; acl[ 4 ] = 1;
+			acl[ 10 ] = uint8_t( 16 + 4 * subs.size() ); acl[ 12 ] = 1;
+			std::copy( sid.begin(), sid.end(), acl.begin() + 16 );
+			std::string e2;
+			p->eng().write( SID, sid.data(), sid.size(), e2 );
+			p->eng().write( ACL, acl.data(), acl.size(), e2 );
+			w5_put( *p, S + 0x900, ( uint64_t( 0x20000 ) << 32 ) | 0x20001 );   // GenericMapping {20001H, 20000H,
+			w5_put( *p, S + 0x908, ( uint64_t( 0x1F0001 ) << 32 ) | 0x20000 );   //                 20000H, 1F0001H}
+			w5_put( *p, S + 0x910, 0x38 );
+			w5_put( *p, S + 0x918, 0xCCCCCCCCCCCCCCCCull );
+			w5_put( *p, S + 0x920, 0xCCCCCCCCCCCCCCCCull );
+			return w5_call( *p, "NtAccessCheck", { SD, ~0ull - 3, 1, S + 0x900, S + 0x940, S + 0x910, S + 0x918, S + 0x920 } );
+		};
+		CHECK( w5_ok( acc( { 32, 581 } ) ) && rd( S + 0x918, 4 ) == 0 && rd( S + 0x920, 4 ) == 0xC0000022 && rd( S + 0x940, 8 ) == 0,
+			   "NtAccessCheck S-1-5-32-581 (acc.2): not a member - GrantedAccess 0, AccessStatus STATUS_ACCESS_DENIED, PrivilegeSet {0, 0}" );
+		CHECK( w5_stop( acc( { 32, 544 } ) ), "NtAccessCheck of an unmeasured SID: stop" );
+		// the session's BaseNamedObjects (bno.*), the WIL staging mutant (mut.*) and semaphores (wil.*)
+		const std::string sid = std::to_string( rd( peb + 0x2C0, 4 ) ), pid = std::to_string( p->kern().facts().process_id );
+		const uint64_t O = S + 0xA00;
+		oa( O, 0, "\\Sessions\\" + sid + "\\BaseNamedObjects", 0x40 );
+		CHECK( w5_ok( w5_call( *p, "NtOpenDirectoryObject", { S + 0x38, 0xF, O } ) ), "the session's BaseNamedObjects (bno.f)" );
+		const uint64_t bno = rd( S + 0x38, 8 );
+		oa( O, 0, "\\Sessions\\" + std::to_string( rd( peb + 0x2C0, 4 ) + 7 ) + "\\BaseNamedObjects", 0x40 );
+		w5_put( *p, S + 0x40, 0xCCCCCCCCCCCCCCCCull );
+		CHECK( w5_status( w5_call( *p, "NtOpenDirectoryObject", { S + 0x40, 0xF, O } ), N::status::object_path_not_found ) && rd( S + 0x40, 8 ) == 0,
+			   "another session's directory (bno.other): STATUS_OBJECT_PATH_NOT_FOUND, handle NULL" );
+		oa( O, bno, "Local\\SM0:" + pid + ":304:WilStaging_02", 0x80 );
+		CHECK( w5_ok( w5_call( *p, "NtCreateMutant", { S + 0x48, 0x1F0001, O, 0 } ) ), "the staging mutant: created (mut.fresh)" );
+		const uint64_t mu = rd( S + 0x48, 8 );
+		CHECK( w5_status( w5_call( *p, "NtCreateMutant", { S + 0x50, 0x1F0001, O, 0 } ), 0x40000000 ), "again: STATUS_OBJECT_NAME_EXISTS (mut.loader)" );
+		CHECK( w5_ok( w5_call( *p, "NtWaitForSingleObject", { mu, 0, 0 } ) ), "wait: acquired" );
+		w5_put( *p, S + 0x58, 0xCCCCCCCC );
+		CHECK( w5_ok( w5_call( *p, "NtReleaseMutant", { mu, S + 0x58 } ) ) && rd( S + 0x58, 4 ) == 0, "release: PreviousCount 0" );
+		CHECK( w5_status( w5_call( *p, "NtReleaseMutant", { mu, S + 0x58 } ), 0xC0000046 ), "release when not owned: STATUS_MUTANT_NOT_OWNED" );
+		oa( O, bno, "Local\\SM0:" + pid + ":304:Other", 0x80 );
+		CHECK( w5_stop( w5_call( *p, "NtCreateMutant", { S + 0x48, 0x1F0001, O, 0 } ) ), "another mutant name: stop" );
+		oa( O, bno, "Local\\SM0:" + pid + ":304:WilStaging_02_p0", 0 );
+		w5_put( *p, S + 0x60, 0xCCCCCCCCCCCCCCCCull );
+		CHECK( w5_status( w5_call( *p, "NtOpenSemaphore", { S + 0x60, 0x1F0003, O } ), N::status::object_name_not_found ) && rd( S + 0x60, 8 ) == 0xCCCCCCCCCCCCCCCCull,
+			   "a missing semaphore (wil.open.fresh): STATUS_OBJECT_NAME_NOT_FOUND, handle not written" );
+		oa( O, bno, "Local\\SM0:" + pid + ":304:WilStaging_02_p0", 0x80 );
+		CHECK( w5_ok( w5_call( *p, "NtCreateSemaphore", { S + 0x60, 0x1F0003, O, 0x28CF0, 0x28CF0 } ) ), "NtCreateSemaphore (wil.create): created" );
+		CHECK( w5_status( w5_call( *p, "NtCreateSemaphore", { S + 0x68, 0x1F0003, O, 0x28CF0, 0x28CF0 } ), 0x40000000 ), "again: STATUS_OBJECT_NAME_EXISTS" );
+		oa( O, bno, "Local\\SM0:" + pid + ":304:WilStaging_02_p0", 0 );
+		CHECK( w5_ok( w5_call( *p, "NtOpenSemaphore", { S + 0x60, 0x1F0003, O } ) ), "an existing semaphore opens (wil.open.loader)" );
+		// WNF (wnf.* / wnfs.* / wnfe.*)
+		w5_put( *p, S + 0x70, 0x0280032EA3BC0875ull );
+		w5_put( *p, S + 0x78, 0x4E8552D648F96463ull );
+		w5_put( *p, S + 0x80, 0x4E26174EC1F2029Cull );
+		w5_put( *p, S + 0x88, 0x1000 );
+		CHECK( w5_ok( w5_call( *p, "NtQueryWnfStateData", { S + 0x70, S + 0x78, 0, S + 0x90, S + 0xC00, S + 0x88 } ) ) && rd( S + 0xC00, 8 ) == 1 && rd( S + 0x88, 4 ) == 8 && rd( S + 0x90, 4 ),
+			   "WNF 0280032EA3BC0875H: 8 data bytes 01 00 .., a non-zero stamp" );
+		CHECK( w5_status( w5_call( *p, "NtQueryWnfStateData", { S + 0x70, 0, 0, S + 0x90, S + 0xC00, S + 0x88 } ), N::status::invalid_parameter ), "TypeId NULL: STATUS_INVALID_PARAMETER" );
+		w5_put( *p, S + 0x70, 0x418A073AA3BC1C75ull );
+		w5_put( *p, S + 0x88, 0x1000 );
+		CHECK( w5_ok( w5_call( *p, "NtQueryWnfStateData", { S + 0x70, 0, 0, S + 0x90, S + 0xC00, S + 0x88 } ) ) && rd( S + 0x88, 4 ) == 0x44C, "WNF 418A073AA3BC1C75H: 44CH data bytes" );
+		w5_put( *p, S + 0x70, 0x1111111111111111ull );
+		CHECK( w5_stop( w5_call( *p, "NtQueryWnfStateData", { S + 0x70, 0, 0, S + 0x90, S + 0xC00, S + 0x88 } ) ), "an unmeasured WNF state: stop" );
+		w5_put( *p, S + 0x70, 0x418A073AA3BC7C75ull );
+		CHECK( w5_ok( w5_call( *p, "NtSubscribeWnfStateChange", { S + 0x70, 0, 0x11, S + 0x98 } ) ) && rd( S + 0x98, 8 ) == 2, "subscribed (wnfs.two): an id of its own" );
+		CHECK( w5_ok( w5_call( *p, "NtCreateEvent", { S + 0xA0, 0x1F0003, 0, 1, 0 } ) ), "a synchronization event" );
+		const uint64_t ev = rd( S + 0xA0, 8 );
+		CHECK( w5_ok( w5_call( *p, "NtSetWnfProcessNotificationEvent", { ev } ) ), "the process' WNF event: the first call succeeds" );
+		CHECK( w5_status( w5_call( *p, "NtSetWnfProcessNotificationEvent", { ev } ), 0xC0000718 ), "a second call: STATUS_ALREADY_REGISTERED (wnfe.set)" );
+		CHECK( w5_status( w5_call( *p, "NtSetWnfProcessNotificationEvent", { 0 } ), N::status::invalid_handle ), "NULL: STATUS_INVALID_HANDLE (wnfe.null)" );
+		// the thread pool timer (t2s.*), NtTestAlert (alert), the user's keys (hku.*), NtTerminateProcess( NULL ) (term.null)
+		CHECK( w5_ok( w5_call( *p, "NtCreateTimer2", { S + 0xA8, 0, 0, 8, 0x100002 } ) ), "a timer2" );
+		w5_put( *p, S + 0xB0, uint64_t( -300ll * 10000 * 1000 ) );   // relative 300 s (100-ns units)
+		w5_put( *p, S + 0xB8, 0 );
+		w5_put( *p, S + 0xC0, uint64_t( 75 ) * 10000 * 1000 );   // NoWakeTolerance 75 s
+		CHECK( w5_ok( w5_call( *p, "NtSetTimer2", { rd( S + 0xA8, 8 ), S + 0xB0, 0, S + 0xB8 } ) ), "NtSetTimer2, a relative DueTime: STATUS_SUCCESS (armed, never expires here)" );
+		w5_put( *p, S + 0xB0, 1000 );
+		CHECK( w5_stop( w5_call( *p, "NtSetTimer2", { rd( S + 0xA8, 8 ), S + 0xB0, 0, S + 0xB8 } ) ), "an absolute DueTime: not measured, stop" );
+		CHECK( w5_ok( w5_call( *p, "NtTestAlert", {} ) ), "NtTestAlert: STATUS_SUCCESS" );
+		oa( O, 0, "\\REGISTRY\\USER\\S-1-5-21-1000001-1000002-1000003-1001\\Software\\Policies\\Microsoft\\Windows\\Safer\\CodeIdentifiers", 0x40 );
+		w5_put( *p, S + 0xC8, 0xCCCCCCCCCCCCCCCCull );
+		CHECK( w5_status( w5_call( *p, "NtOpenKey", { S + 0xC8, 1, O } ), N::status::object_name_not_found ) && rd( S + 0xC8, 8 ) == 0,
+			   "the user's Safer key (hku.safer): absent, handle NULL" );
+		oa( O, 0, "\\REGISTRY\\USER\\S-1-5-21-1000001-1000002-1000003-1001\\Software\\Other", 0x40 );
+		CHECK( w5_stop( w5_call( *p, "NtOpenKey", { S + 0xC8, 1, O } ) ), "another key of the user's hive: stop" );
+		CHECK( w5_ok( w5_call( *p, "NtTerminateProcess", { 0, 0x2B } ) ), "NtTerminateProcess( NULL, 2BH ): STATUS_SUCCESS, the caller continues" );
+		const auto t = w5_call( *p, "NtTerminateProcess", { cp, 0 } );
+		CHECK( t.kind == N::reply_kind::terminated && t.exit_status == 0x2B, "then NtTerminateProcess( NtCurrentProcess(), 0 ): the exit status of the first call, 2BH (term.null)" );
+	}
+
 	struct test_case { const char* name; void ( *fn )(); };
 	const test_case cases[] = {
 		{ "options_oep_defaults", t_options_oep_defaults },
@@ -3179,6 +3358,7 @@ namespace
 		{ "nt_measured_pool", t_nt_measured_pool },
 		{ "nt_measured_loader", t_nt_measured_loader },
 		{ "nt_measured_csr", t_nt_measured_csr },
+		{ "nt_measured_console", t_nt_measured_console },
 	};
 }
 

@@ -15,11 +15,14 @@
  * include, MIT; reference only, cited per declaration); types from the Windows SDK (um\winnt.h, shared\ntdef.h). Linked against the
  * SDK's ntdll.lib (the import library only).
  *
- * usage: tm_nt.exe [CASE ...]   (no argument = every case, in table order); exit 0 = every case ran, 2 = unknown case */
+ * usage: tm_nt.exe [CASE ...]   (no argument = every case, in table order); exit 0 = every case ran, 2 = unknown case
+ *        tm_nt.exe run.detached IMAGE   (P41: our own test PE IMAGE started detached; prints its exit code) */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdarg.h>
+#include <stdlib.h>
 
 typedef LONG TM_NTSTATUS;
 typedef struct { USHORT Length; USHORT MaximumLength; PWSTR Buffer; } TM_USTR;   /* shared\ntdef.h UNICODE_STRING */
@@ -407,7 +410,10 @@ static void case_swf( void )
 	 * runs (our own, it returns at once) are counted after each call */
 	static const struct { ULONG cls, len; LONGLONG v; } sets[] = {
 		{ 5, 4, 0x300 }, { 5, 4, 0x200 }, { 5, 4, 1 }, { 5, 4, 0x10 }, { 4, 4, 0 }, { 4, 4, 1 }, { 3, 4, 1 }, { 6, 4, 0 }, { 9, 4, 0 }, { 10, 4, 0x100000 }, { 11, 4, 8 }, { 12, 4, 0 }, { 13, 4, 0 },
-		{ 14, 4, 0x180 }, { 14, 4, 0x200 }, { 0, 8, -10000000LL }, { 1, 8, -10000000LL }, { 2, 8, -600000000LL }, { 5, 8, 0x200 }, { 5, 0, 0x200 } };
+		{ 14, 4, 0x180 }, { 14, 4, 0x200 }, { 0, 8, -10000000LL }, { 1, 8, -10000000LL }, { 2, 8, -600000000LL }, { 5, 8, 0x200 }, { 5, 0, 0x200 },
+		/* P41 exploration x5 (system calls 183 / 190 / 191): the loader's second factory - class 13 = 1, class 2 = -300000000 (8 bytes),
+		 * class 5 = 3 */
+		{ 13, 4, 1 }, { 2, 8, -300000000LL }, { 5, 4, 3 } };
 	HANDLE io = NULL, h = NULL;
 	static ULONG param[ 16 ];
 	size_t i;
@@ -493,14 +499,22 @@ static void case_etw( void )
 		/* P39 trace x1 (system calls 53 / 54): two more providers of the loader - 305FC87B-002A-5E26-D297-60223012CA9C (RegType 3,
 		 * LoggerId 2, ReplyCallback = an ntdll function) and 901D2AFA-4FF6-46D7-8D0E-53645E1A47F5 (RegType 3, LoggerId 3, ReplyCallback = an
 		 * ntdll function); here the ReplyCallback is our own function tm_etw_cb (it returns 0; the kernel never calls user code) */
-		static const unsigned char guids[ 3 ][ 16 ] = {
+		/* P41 (trace c3, system call 105; a process started without a console): kernelbase's provider B9AF743C-828D-E344-B52C-365DBF48382A
+		 * (as bytes; RegType 3, LoggerId 4, ReplyCallback = a kernelbase function) - tag etw.reg4 */
+		/* P41 exploration x4 (system calls 137 / 139 / 143): three more providers of the start in a process without a console -
+		 * 0A27EFF1-..., FE5EF905-... (kernelbase) and 58446CE3-... (kernel32), RegType 3, LoggerId 5 / 6 / 7, ReplyCallback set */
+		static const unsigned char guids[ 7 ][ 16 ] = {
 			{ 0x5C, 0xAB, 0x95, 0x35, 0x2A, 0x04, 0x8E, 0x4C, 0xB9, 0x42, 0x2D, 0x05, 0x9B, 0xFE, 0xB1, 0xB1 },
 			{ 0x7B, 0xC8, 0x5F, 0x30, 0x2A, 0x00, 0x26, 0x5E, 0xD2, 0x97, 0x60, 0x22, 0x30, 0x12, 0xCA, 0x9C },
-			{ 0xFA, 0x2A, 0x1D, 0x90, 0xF6, 0x4F, 0xD7, 0x46, 0x8D, 0x0E, 0x53, 0x64, 0x5E, 0x1A, 0x47, 0xF5 } };
-		static const USHORT logger[ 3 ] = { 1, 2, 3 };
-		static const int with_cb[ 3 ] = { 0, 1, 1 };
+			{ 0xFA, 0x2A, 0x1D, 0x90, 0xF6, 0x4F, 0xD7, 0x46, 0x8D, 0x0E, 0x53, 0x64, 0x5E, 0x1A, 0x47, 0xF5 },
+			{ 0xB9, 0xAF, 0x74, 0x3C, 0x82, 0x8D, 0xE3, 0x44, 0xB5, 0x2C, 0x36, 0x5D, 0xBF, 0x48, 0x38, 0x2A },
+			{ 0x0A, 0x27, 0xEF, 0xF1, 0x32, 0x0D, 0x52, 0x43, 0xBA, 0x52, 0xDB, 0xAB, 0x41, 0xE1, 0xD8, 0x59 },
+			{ 0xFE, 0x5E, 0xF9, 0x05, 0x75, 0x7F, 0xC7, 0x49, 0xA9, 0x94, 0x60, 0xA5, 0x5C, 0xC0, 0x95, 0x71 },
+			{ 0x58, 0x44, 0x6C, 0xE3, 0x80, 0xED, 0xD7, 0x4A, 0xA8, 0xBE, 0x52, 0xDD, 0xA1, 0xEB, 0x5F, 0x1C } };
+		static const USHORT logger[ 7 ] = { 1, 2, 3, 4, 5, 6, 7 };
+		static const int with_cb[ 7 ] = { 0, 1, 1, 1, 1, 1, 1 };
 		int g;
-		for ( g = 0; g < 3; g++ )
+		for ( g = 0; g < 7; g++ )
 		{
 			unsigned char io[ 0xA0 ], in0[ 0xA0 ];
 			size_t k;
@@ -519,11 +533,23 @@ static void case_etw( void )
 			for ( k = 0; k < 0xA0; k++ )
 				if ( io[ k ] != in0[ k ] ) printf( " +%02zX", k );
 			printf( "; ReplyHandle (+18H) %s\n", tm_hshape( *(HANDLE*)( io + 0x18 ) ) );
-			printf( "tm_nt %s.fields: RegType %lu, LoggerId %u, Reserved0 %u, ReplyCallback %s, ReplyBufferSize %lXH, Reserved1 %lXH, EnableCallbackContext %llXH, EnableFilterDesc %llXH, "
-					"EnableCallback %llXH, EnableCallbackReserved %llXH, ProviderTraits %llXH, TraitsFlags %lXH, HasPayload %lXH\n",
-					tag, (unsigned long)*(ULONG*)( io + 0x10 ), *(USHORT*)( io + 0x14 ), *(USHORT*)( io + 0x16 ), *(void**)( io + 0x20 ) == *(void**)( in0 + 0x20 ) ? "unchanged" : "changed",
-					(unsigned long)*(ULONG*)( io + 0x28 ), (unsigned long)*(ULONG*)( io + 0x2C ), *(ULONGLONG*)( io + 0x70 ), *(ULONGLONG*)( io + 0x78 ), *(ULONGLONG*)( io + 0x80 ),
-					*(ULONGLONG*)( io + 0x88 ), *(ULONGLONG*)( io + 0x90 ), (unsigned long)*(ULONG*)( io + 0x98 ), (unsigned long)*(ULONG*)( io + 0x9C ) );
+			{
+				/* the 64-bit enable fields as hex when below 10000000H, else as their 8 bytes (P41: no long digit runs in the data file) */
+				char f[ 5 ][ 40 ];
+				int q2;
+				for ( q2 = 0; q2 < 5; q2++ )
+				{
+					const ULONGLONG v = *(ULONGLONG*)( io + 0x70 + 8 * q2 );
+					if ( v < 0x10000000ull ) snprintf( f[ q2 ], sizeof( f[ q2 ] ), "%llXH", v );
+					else snprintf( f[ q2 ], sizeof( f[ q2 ] ), "bytes %02X %02X %02X %02X %02X %02X %02X %02X", io[ 0x70 + 8 * q2 ], io[ 0x71 + 8 * q2 ], io[ 0x72 + 8 * q2 ],
+								   io[ 0x73 + 8 * q2 ], io[ 0x74 + 8 * q2 ], io[ 0x75 + 8 * q2 ], io[ 0x76 + 8 * q2 ], io[ 0x77 + 8 * q2 ] );
+				}
+				printf( "tm_nt %s.fields: RegType %lu, LoggerId %u, Reserved0 %u, ReplyCallback %s, ReplyBufferSize %lXH, Reserved1 %lXH, EnableCallbackContext %s, EnableFilterDesc %s, "
+						"EnableCallback %s, EnableCallbackReserved %s, ProviderTraits %s, TraitsFlags %lXH, HasPayload %lXH\n",
+						tag, (unsigned long)*(ULONG*)( io + 0x10 ), *(USHORT*)( io + 0x14 ), *(USHORT*)( io + 0x16 ), *(void**)( io + 0x20 ) == *(void**)( in0 + 0x20 ) ? "unchanged" : "changed",
+						(unsigned long)*(ULONG*)( io + 0x28 ), (unsigned long)*(ULONG*)( io + 0x2C ), f[ 0 ], f[ 1 ], f[ 2 ], f[ 3 ], f[ 4 ], (unsigned long)*(ULONG*)( io + 0x98 ),
+						(unsigned long)*(ULONG*)( io + 0x9C ) );
+			}
 			{
 				size_t nz = 0;
 				for ( k = 0x30; k < 0x70; k++ ) nz += io[ k ] != 0;
@@ -532,6 +558,75 @@ static void case_etw( void )
 			if ( st >= 0 && *(HANDLE*)( io + 0x18 ) ) printf( "tm_nt %s.close: NtClose(ReplyHandle) -> %08lXH\n", tag, (unsigned long)NtClose( *(HANDLE*)( io + 0x18 ) ) );
 		}
 	}
+}
+
+
+/* P41 (U2072): function 1EH EtwSetProviderTraitsCode (phnt ntwmi.h:6377, "in ETW_SET_PROVIDER_TRAITS_INFORMATION, out
+ * ETW_SET_PROVIDER_TRAITS_REPLY" - no layout in phnt) as kernelbase calls it right after registering its provider (etw.reg4) in a process
+ * started without a console (trace c4, system call 106): input 18H bytes {the provider's ReplyHandle, a pointer to kernelbase's traits
+ * blob (kernelbase+282EB6H in the capture's build), 33H, then the 6 bytes 06 00 FB 7F 00 00 the trace showed (uninitialised stack)},
+ * output 78H bytes, ReturnLength. Replayed with a fresh registration of the same provider and OUR process' kernelbase at the same RVA
+ * (valid for the capture's kernelbase build only, as csrc). Printed: status, ReturnLength, which output bytes changed and the reply's
+ * non-zero qwords as shapes (a handle / pointer is never printed). */
+static void tm_etwt( const char* pfx, const unsigned char* guid, USHORT loggerid, const wchar_t* module, ULONG rva, USHORT size, int trace_tail );
+static void case_etwt( void )
+{
+	/* P41 exploration x4: the traits of providers 5 / 6 (kernelbase+282E80H 25H, +282DEFH 39H) and 7 (kernel32+8C95CH 39H); their inputs'
+	 * 6 bytes after the size were not recorded (stack contents) - replayed as zero */
+	static const unsigned char g5[ 16 ] = { 0x0A, 0x27, 0xEF, 0xF1, 0x32, 0x0D, 0x52, 0x43, 0xBA, 0x52, 0xDB, 0xAB, 0x41, 0xE1, 0xD8, 0x59 };
+	static const unsigned char g6[ 16 ] = { 0xFE, 0x5E, 0xF9, 0x05, 0x75, 0x7F, 0xC7, 0x49, 0xA9, 0x94, 0x60, 0xA5, 0x5C, 0xC0, 0x95, 0x71 };
+	static const unsigned char g7[ 16 ] = { 0x58, 0x44, 0x6C, 0xE3, 0x80, 0xED, 0xD7, 0x4A, 0xA8, 0xBE, 0x52, 0xDD, 0xA1, 0xEB, 0x5F, 0x1C };
+	static const unsigned char g4[ 16 ] = { 0xB9, 0xAF, 0x74, 0x3C, 0x82, 0x8D, 0xE3, 0x44, 0xB5, 0x2C, 0x36, 0x5D, 0xBF, 0x48, 0x38, 0x2A };
+	tm_etwt( "etwt", g4, 4, L"kernelbase.dll", 0x282EB6, 0x33, 1 );
+	tm_etwt( "etwt5", g5, 5, L"kernelbase.dll", 0x282E80, 0x25, 0 );
+	tm_etwt( "etwt6", g6, 6, L"kernelbase.dll", 0x282DEF, 0x39, 0 );
+	tm_etwt( "etwt7", g7, 7, L"kernel32.dll", 0x8C95C, 0x39, 0 );
+}
+
+static void tm_etwt( const char* pfx, const unsigned char* guid, USHORT loggerid, const wchar_t* module, ULONG rva, USHORT size, int trace_tail )
+{
+	unsigned char io[ 0xA0 ], in[ 0x18 ], out[ 0x78 ];
+	unsigned char* kb = (unsigned char*)GetModuleHandleW( module );
+	ULONG ret;
+	TM_NTSTATUS st;
+	size_t k, ch = 0;
+	HANDLE h;
+	memset( io, 0, sizeof( io ) );
+	memcpy( io, guid, 16 );
+	*(ULONG*)( io + 0x10 ) = 3;
+	*(USHORT*)( io + 0x14 ) = loggerid;
+	*(void**)( io + 0x20 ) = (void*)tm_etw_cb;
+	st = NtTraceControl( 0xF, io, 0xA0, io, 0xA0, &ret );
+	h = *(HANDLE*)( io + 0x18 );
+	printf( "tm_nt %s.reg: NtTraceControl(0FH, provider %u as etw.reg%u) -> status %08lXH, ReplyHandle %s\n", pfx, loggerid, loggerid, (unsigned long)st, tm_hshape( h ) );
+	if ( st < 0 || !kb ) return;
+	{
+		static const unsigned char tail[ 6 ] = { 0x06, 0x00, 0xFB, 0x7F, 0x00, 0x00 };
+		unsigned char traits[ 0x40 ];
+		size_t nz = 0;
+		memcpy( traits, kb + rva, size );
+		for ( k = 0; k < size; k++ ) nz += traits[ k ] != 0;
+		printf( "tm_nt %s.blob: %S+%lXH, %XH bytes: first USHORT (the traits size) %XH, non-zero bytes %zu\n", pfx, module, (unsigned long)rva, size, *(USHORT*)traits, nz );
+		memset( in, 0, sizeof( in ) );
+		*(HANDLE*)in = h;
+		*(void**)( in + 8 ) = kb + rva;
+		*(USHORT*)( in + 0x10 ) = size;
+		if ( trace_tail ) memcpy( in + 0x12, tail, 6 );
+	}
+	memset( out, 0xCC, sizeof( out ) );
+	ret = 0xCCCCCCCC;
+	st = NtTraceControl( 0x1E, in, 0x18, out, 0x78, &ret );
+	printf( "tm_nt %s.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, %XH, %s}, 18H, out, 78H, &r) -> status %08lXH, ReturnLength %lXH; output bytes changed:",
+			pfx, size, trace_tail ? "the trace's 6 bytes" : "6 zero bytes", (unsigned long)st, (unsigned long)ret );
+	for ( k = 0; k < sizeof( out ); k++ )
+		if ( out[ k ] != 0xCC ) { printf( " +%02zX", k ); ch++; }
+	printf( " (%zu)\n", ch );
+	{
+		/* the input unchanged? */
+		printf( "tm_nt %s.in: input after the call: handle %s, blob pointer %s, size %XH\n", pfx, *(HANDLE*)in == h ? "unchanged" : "changed",
+				*(unsigned char**)( in + 8 ) == kb + rva ? "unchanged" : "changed", *(USHORT*)( in + 0x10 ) );
+	}
+	printf( "tm_nt %s.close: NtClose(ReplyHandle) -> %08lXH\n", pfx, (unsigned long)NtClose( h ) );
 }
 
 /* ------------------------------------------------------------------------------------------------ the KnownDlls object directory
@@ -868,7 +963,9 @@ static void case_tls( void )
 __declspec( dllimport ) TM_NTSTATUS NTAPI NtApphelpCacheControl( ULONG ServiceClass, PVOID ServiceContext );
 static void case_ahc( void )
 {
-	static const wchar_t* const names[] = { L"KERNELBASE.dll", L"KERNEL32.DLL", L"kernel32.dll", L"ntdll.dll", L"tm_nt_no_such.dll" };
+	/* P41 (exploration x5, system call 196): the test PEs' own image names (the loader's LookupCdb for the process image) */
+	static const wchar_t* const names[] = { L"KERNELBASE.dll", L"KERNEL32.DLL", L"kernel32.dll", L"ntdll.dll", L"tm_nt_no_such.dll", L"t2_import.exe", L"t3_tls.exe",
+											L"t3_tls.vmware_guest.exe" };
 	size_t q, k;
 	for ( q = 0; q < sizeof( names ) / sizeof( names[ 0 ] ); q++ )
 	{
@@ -1266,18 +1363,805 @@ static void case_nls( void )
 	}
 }
 
+/* ------------------------------------------------------------------------------------------------ a process started WITHOUT a console
+ * (P41, USER DECISION 2026-10-26 "started without a console"; ledger U2068): what a console-subsystem process sees when it is started
+ * DETACHED - CreateProcessW( this image, ..., bInheritHandles FALSE, DETACHED_PROCESS (8H, um\WinBase.h "Process Creation Flags": "For
+ * console processes, the new process does not inherit its parent's console (the default)"), environment / directory NULL, STARTUPINFOW
+ * {cb only: dwFlags 0, no STARTF_USESTDHANDLES} ). The child measures ONLY ITSELF (its own PEB / process parameters, its own process
+ * information, the console APIs on its own standard handles) and writes its lines into a file the parent names (the child has no
+ * console and no standard handles to print to); the parent prints them. Never another process opened, never a console host started
+ * (no AllocConsole / AttachConsole), nothing sent to csrss.
+ * Layout: RTL_USER_PROCESS_PARAMETERS (phnt ntrtl.h:4438-4486; offsets of emu::win's checked table win_fields.hpp: ConsoleHandle 10H,
+ * ConsoleFlags 18H, StandardInput 20H / StandardOutput 28H / StandardError 30H, WindowFlags A4H, ShowWindowFlags A8H); the console
+ * handle constants phnt ntrtl.h:4433-4435 (RTL_USER_PROC_DETACHED_PROCESS -1, _CREATE_NEW_CONSOLE -2, _CREATE_NO_WINDOW -3);
+ * ProcessConsoleHostProcess (31H) phnt ntpsapi.h:222 / :809-821 (PS_CONSOLE_HOST_PROCESS_MASK ~3, the low two bits flags).
+ * Placeholders: handle values as their shape ("<handle> (non-zero, multiple of 4)"), a process id inside the 31H value as "<pid>" (only
+ * its low two flag bits are printed); everything else printed is a constant of the start mode. */
+/* phnt ntioapi.h:2911-2921 */
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtWriteFile( HANDLE FileHandle, HANDLE Event, PVOID ApcRoutine, PVOID ApcContext, PVOID IoStatusBlock, PVOID Buffer, ULONG Length,
+													   PLARGE_INTEGER ByteOffset, PULONG Key );
+static char g_con[ 0x4000 ];
+static size_t g_con_n;
+
+static void tm_con_say( const char* fmt, ... )
+{
+	va_list ap;
+	int n;
+	va_start( ap, fmt );
+	n = vsnprintf( g_con + g_con_n, sizeof( g_con ) - g_con_n - 2, fmt, ap );
+	va_end( ap );
+	if ( n > 0 && g_con_n + (size_t)n < sizeof( g_con ) - 2 )
+	{
+		g_con_n += (size_t)n;
+		g_con[ g_con_n++ ] = '\n';
+		g_con[ g_con_n ] = 0;
+	}
+}
+
+static const char* tm_con_h( ULONG_PTR v )
+{
+	if ( v == 0 ) return "0";
+	if ( v == (ULONG_PTR)-1 ) return "-1 (RTL_USER_PROC_DETACHED_PROCESS)";
+	if ( v == (ULONG_PTR)-2 ) return "-2 (RTL_USER_PROC_CREATE_NEW_CONSOLE)";
+	if ( v == (ULONG_PTR)-3 ) return "-3 (RTL_USER_PROC_CREATE_NO_WINDOW)";
+	return ( v & 3 ) ? "<handle> (low bits set)" : "<handle> (non-zero, multiple of 4)";
+}
+
+static void tm_con_chp( const char* tag, ULONG len )
+{
+	ULONG_PTR v[ 3 ];
+	ULONG ret = 0xCCCCCCCC;
+	TM_NTSTATUS st;
+	char shape[ 96 ];
+	memset( v, 0xCC, sizeof( v ) );
+	st = NtQueryInformationProcess( (HANDLE)(LONG_PTR)-1, 0x31, v, len, &ret );
+	if ( st < 0 ) snprintf( shape, sizeof( shape ), "%s", v[ 0 ] == (ULONG_PTR)0xCCCCCCCCCCCCCCCCull ? "not written" : "written" );
+	else if ( v[ 0 ] < 4 ) snprintf( shape, sizeof( shape ), "value %zXH", (size_t)v[ 0 ] );
+	else snprintf( shape, sizeof( shape ), "value <pid> | %zXH (low two bits)", (size_t)( v[ 0 ] & 3 ) );
+	tm_con_say( "tm_nt %s: NtQueryInformationProcess(NtCurrentProcess(), 31H ProcessConsoleHostProcess, Length %lXH) -> status %08lXH, ReturnLength %lXH, %s", tag,
+				(unsigned long)len, (unsigned long)st, (unsigned long)ret, shape );
+}
+
+static void tm_con_child( const char* outfile, const char* parent_flags )
+{
+	unsigned char* peb = (unsigned char*)(ULONG_PTR)__readgsqword( 0x60 );
+	unsigned char* pp = *(unsigned char**)( peb + 0x20 );
+	HANDLE h[ 3 ], f;
+	static const DWORD std_ids[ 3 ] = { STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE };
+	static const char* const std_names[ 3 ] = { "STD_INPUT_HANDLE", "STD_OUTPUT_HANDLE", "STD_ERROR_HANDLE" };
+	DWORD e[ 3 ], n, mode, wr;
+	BOOL ok;
+	int i;
+	/* ConsoleFlags is the STARTING process' (measured: 0 from a parent whose ConsoleFlags is 0, 1 from one whose is 1) - printed as that
+	 * relation (the parent passes its own value) */
+	tm_con_say( "tm_nt con.pp: RTL_USER_PROCESS_PARAMETERS ConsoleHandle %s, ConsoleFlags = the starting process' ConsoleFlags %s, StandardInput %s, StandardOutput %s, StandardError %s, "
+				"WindowFlags %lXH, ShowWindowFlags %lXH",
+				tm_con_h( *(ULONG_PTR*)( pp + 0x10 ) ), strtoul( parent_flags, NULL, 16 ) == *(ULONG*)( pp + 0x18 ) ? "yes" : "no", tm_con_h( *(ULONG_PTR*)( pp + 0x20 ) ), tm_con_h( *(ULONG_PTR*)( pp + 0x28 ) ),
+				tm_con_h( *(ULONG_PTR*)( pp + 0x30 ) ), (unsigned long)*(ULONG*)( pp + 0xA4 ), (unsigned long)*(ULONG*)( pp + 0xA8 ) );
+	tm_con_chp( "con.chp.8", 8 );
+	tm_con_chp( "con.chp.4", 4 );
+	tm_con_chp( "con.chp.10", 0x10 );
+	{
+		/* kernelbase's own call in a process started detached (the emulated trace of T2 / T3, P41 run c1, system call 104):
+		 * NtSetInformationProcess( NtCurrentProcess(), 31H, &(ULONG_PTR)1, 8 ) - replayed here (kernelbase made it once before main);
+		 * then the neighbouring lengths 4 / 10H and the value read back */
+		ULONG_PTR one[ 2 ] = { 1, 0 };
+		TM_NTSTATUS st = NtSetInformationProcess( (HANDLE)(LONG_PTR)-1, 0x31, one, 8 );
+		tm_con_say( "tm_nt con.chps.8: NtSetInformationProcess(NtCurrentProcess(), 31H, value 1, Length 8H) -> status %08lXH", (unsigned long)st );
+		st = NtSetInformationProcess( (HANDLE)(LONG_PTR)-1, 0x31, one, 4 );
+		tm_con_say( "tm_nt con.chps.4: NtSetInformationProcess(NtCurrentProcess(), 31H, value 1, Length 4H) -> status %08lXH", (unsigned long)st );
+		st = NtSetInformationProcess( (HANDLE)(LONG_PTR)-1, 0x31, one, 0x10 );
+		tm_con_say( "tm_nt con.chps.10: NtSetInformationProcess(NtCurrentProcess(), 31H, value 1, Length 10H) -> status %08lXH", (unsigned long)st );
+		tm_con_chp( "con.chp.after", 8 );
+	}
+	/* the documented console APIs without a console (each with LastError pre-set to 12345678H to see whether the call sets it) */
+	for ( i = 0; i < 3; i++ )
+	{
+		SetLastError( 0x12345678 );
+		h[ i ] = GetStdHandle( std_ids[ i ] );
+		e[ i ] = GetLastError();
+		tm_con_say( "tm_nt con.std.%d: GetStdHandle(%s) -> %s, LastError %lXH", i, std_names[ i ], h[ i ] == INVALID_HANDLE_VALUE ? "INVALID_HANDLE_VALUE" : tm_con_h( (ULONG_PTR)h[ i ] ),
+					(unsigned long)e[ i ] );
+	}
+	SetLastError( 0x12345678 );
+	tm_con_say( "tm_nt con.api.window: GetConsoleWindow() -> %s, LastError %lXH", GetConsoleWindow() ? "<hwnd>" : "NULL", (unsigned long)GetLastError() );
+	SetLastError( 0x12345678 );
+	n = GetConsoleCP();
+	tm_con_say( "tm_nt con.api.cp: GetConsoleCP() -> %lXH, LastError %lXH", (unsigned long)n, (unsigned long)GetLastError() );
+	SetLastError( 0x12345678 );
+	n = GetConsoleOutputCP();
+	tm_con_say( "tm_nt con.api.ocp: GetConsoleOutputCP() -> %lXH, LastError %lXH", (unsigned long)n, (unsigned long)GetLastError() );
+	mode = 0xCCCCCCCC;
+	SetLastError( 0x12345678 );
+	ok = GetConsoleMode( h[ 1 ], &mode );
+	tm_con_say( "tm_nt con.api.mode: GetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), &mode) -> %d, LastError %lXH, mode %s", ok, (unsigned long)GetLastError(),
+				mode == 0xCCCCCCCC ? "not written" : "written" );
+	wr = 0xCCCCCCCC;
+	SetLastError( 0x12345678 );
+	ok = WriteConsoleW( h[ 1 ], L"tm", 2, &wr, NULL );
+	tm_con_say( "tm_nt con.api.wcon: WriteConsoleW(GetStdHandle(STD_OUTPUT_HANDLE), L\"tm\", 2, &written, NULL) -> %d, LastError %lXH, written %s", ok, (unsigned long)GetLastError(),
+				wr == 0xCCCCCCCC ? "not written" : ( wr ? "non-zero" : "0" ) );
+	wr = 0xCCCCCCCC;
+	SetLastError( 0x12345678 );
+	ok = WriteFile( h[ 1 ], "tm", 2, &wr, NULL );
+	tm_con_say( "tm_nt con.api.wfile: WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), \"tm\", 2, &written, NULL) -> %d, LastError %lXH, written %s", ok, (unsigned long)GetLastError(),
+				wr == 0xCCCCCCCC ? "not written" : ( wr ? "non-zero" : "0" ) );
+	SetLastError( 0x12345678 );
+	n = GetFileType( h[ 1 ] );
+	tm_con_say( "tm_nt con.api.ftype: GetFileType(GetStdHandle(STD_OUTPUT_HANDLE)) -> %lXH, LastError %lXH", (unsigned long)n, (unsigned long)GetLastError() );
+	{
+		/* the system service under WriteFile for the "no console" standard handle 0 (phnt ntioapi.h:2911-2921): IoStatusBlock pre-set CCH */
+		unsigned char iosb[ 16 ];
+		TM_NTSTATUS st;
+		memset( iosb, 0xCC, sizeof( iosb ) );
+		st = NtWriteFile( NULL, NULL, NULL, NULL, iosb, (PVOID) "tm", 2, NULL, NULL );
+		tm_con_say( "tm_nt con.ntwf: NtWriteFile(NULL, NULL, NULL, NULL, &iosb, \"tm\", 2, NULL, NULL) -> status %08lXH, IoStatusBlock %s", (unsigned long)st,
+					iosb[ 0 ] == 0xCC && iosb[ 8 ] == 0xCC ? "not written" : "written" );
+	}
+	tm_con_say( "tm_nt con.pp.after: ConsoleHandle %s, StandardOutput %s (after the API calls)", tm_con_h( *(ULONG_PTR*)( pp + 0x10 ) ), tm_con_h( *(ULONG_PTR*)( pp + 0x28 ) ) );
+	f = CreateFileA( outfile, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL );
+	if ( f != INVALID_HANDLE_VALUE )
+	{
+		WriteFile( f, g_con, (DWORD)g_con_n, &wr, NULL );
+		CloseHandle( f );
+	}
+}
+
+/* the launcher: start an image DETACHED (see above) and wait; returns the exit code, or -1 if the start / wait failed */
+static long long tm_detached( const wchar_t* image, wchar_t* cmdline, DWORD* how )
+{
+	STARTUPINFOW si;
+	PROCESS_INFORMATION pi;
+	DWORD code = 0xCCCCCCCC, w;
+	memset( &si, 0, sizeof( si ) );
+	si.cb = sizeof( si );
+	memset( &pi, 0, sizeof( pi ) );
+	if ( !CreateProcessW( image, cmdline, NULL, NULL, FALSE, DETACHED_PROCESS, NULL, NULL, &si, &pi ) )
+	{
+		*how = GetLastError();
+		return -1;
+	}
+	w = WaitForSingleObject( pi.hProcess, 60000 );
+	if ( w != WAIT_OBJECT_0 || !GetExitCodeProcess( pi.hProcess, &code ) ) code = 0xCCCCCCCC;
+	*how = w;
+	CloseHandle( pi.hThread );
+	CloseHandle( pi.hProcess );
+	return code == 0xCCCCCCCC ? -1 : (long long)code;
+}
+
+static void case_con( void )
+{
+	wchar_t self[ MAX_PATH ], tmp[ MAX_PATH ], cmd[ 2 * MAX_PATH + 64 ];
+	char outfile[ MAX_PATH ];
+	DWORD how = 0, got = 0;
+	long long code;
+	HANDLE f;
+	static char buf[ 0x4000 ];
+	char* line;
+	char* next;
+	GetModuleFileNameW( NULL, self, MAX_PATH );
+	GetTempPathW( MAX_PATH, tmp );
+	if ( !GetTempFileNameW( tmp, L"tmc", 0, tmp ) )
+	{
+		printf( "tm_nt con.start: no temporary file (GetTempFileNameW failed %lXH)\n", (unsigned long)GetLastError() );
+		return;
+	}
+	WideCharToMultiByte( CP_ACP, 0, tmp, -1, outfile, MAX_PATH, NULL, NULL );
+	swprintf_s( cmd, sizeof( cmd ) / sizeof( cmd[ 0 ] ), L"\"%s\" con.child \"%s\" %lX", self, tmp,
+				(unsigned long)*(ULONG*)( *(unsigned char**)( (unsigned char*)(ULONG_PTR)__readgsqword( 0x60 ) + 0x20 ) + 0x18 ) );   /* our own ConsoleFlags */
+	code = tm_detached( self, cmd, &how );
+	printf( "tm_nt con.start: CreateProcessW(this image, \"con.child <file>\", bInheritHandles FALSE, DETACHED_PROCESS 8H, STARTUPINFOW {cb only}) -> %s, wait %lXH, child exit code %s\n",
+			code < 0 && how != WAIT_OBJECT_0 && how != WAIT_TIMEOUT ? "failed" : "ok", (unsigned long)how, code < 0 ? "none" : ( code == 0 ? "0" : "non-zero" ) );
+	f = CreateFileW( tmp, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL );
+	if ( f != INVALID_HANDLE_VALUE )
+	{
+		if ( !ReadFile( f, buf, sizeof( buf ) - 1, &got, NULL ) ) got = 0;
+		CloseHandle( f );
+	}
+	DeleteFileW( tmp );   /* our own temporary file, one file */
+	buf[ got ] = 0;
+	for ( line = buf; *line; line = next )
+	{
+		next = strchr( line, '\n' );
+		if ( next ) *next++ = 0;
+		else next = line + strlen( line );
+		if ( *line ) printf( "%s\n", line );
+	}
+	if ( !got ) printf( "tm_nt con.child: no output\n" );
+}
+
+/* the detached NATIVE REFERENCE of the test PEs (P41): "tm_nt run.detached IMAGE" starts our own test PE IMAGE detached as above (no
+ * command-line arguments) and prints its exit code - the harness passes only its own test PEs (t2_import.exe, t3_tls.vmware_guest.exe) */
+static int tm_run_detached( const char* image )
+{
+	wchar_t w[ MAX_PATH ];
+	const char* base = strrchr( image, '\\' );
+	DWORD how = 0;
+	long long code;
+	MultiByteToWideChar( CP_ACP, 0, image, -1, w, MAX_PATH );
+	code = tm_detached( w, NULL, &how );
+	printf( "tm_nt run.detached: %s started with DETACHED_PROCESS -> %s, exit code %llXH\n", base ? base + 1 : image, code < 0 ? "failed" : "ok", code < 0 ? 0ull : (unsigned long long)code );
+	return code < 0 ? 3 : 0;
+}
+
+/* ------------------------------------------------------------------------------------------------ the process token (P41, U2073)
+ * kernelbase's start in a process without a console asks its token (the emulated trace, P41 run c5 and the P40 exploration e10):
+ * NtQueryInformationToken( NtCurrentProcessToken(), 1DH TokenIsAppContainer, 4 ), NtOpenProcessToken( NtCurrentProcess(), 8
+ * TOKEN_QUERY ), then on that handle 0CH TokenSessionId / 1DH / 2AH TokenPrivateNameSpace, each with 4 bytes and a ReturnLength.
+ * Prototypes phnt ntseapi.h:609-613 NtOpenProcessToken, :721-727 NtQueryInformationToken; classes ntseapi.h TOKEN_INFORMATION_CLASS
+ * (TokenSessionId 12, TokenIsAppContainer 29, TokenPrivateNameSpace 42, TokenBnoIsolation 44). Printed: status, ReturnLength, bytes written; the session id
+ * only as "= the PEB SessionId" yes / no (placeholder <the PEB SessionId>); the two flags (0 / 1: properties of a desktop process, no
+ * identity) as values. */
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtOpenProcessToken( HANDLE ProcessHandle, ACCESS_MASK DesiredAccess, PHANDLE TokenHandle );
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtQueryInformationToken( HANDLE TokenHandle, ULONG TokenInformationClass, PVOID TokenInformation, ULONG TokenInformationLength,
+																   PULONG ReturnLength );
+static void tm_qit( const char* tag, HANDLE h, const char* hname, ULONG cls, ULONG len )
+{
+	ULONG ret = 0xCCCCCCCC;
+	TM_NTSTATUS st;
+	size_t w;
+	const ULONG sid = *(ULONG*)( (unsigned char*)(ULONG_PTR)__readgsqword( 0x60 ) + 0x2C0 );
+	memset( g_buf, 0xCC, sizeof( g_buf ) );
+	st = NtQueryInformationToken( h, cls, len ? g_buf : NULL, len, &ret );
+	w = tm_written( 0x200 );
+	printf( "tm_nt %s: NtQueryInformationToken(%s, %lXH, Length %lXH) -> status %08lXH, ReturnLength %lXH, written %zXH", tag, hname, (unsigned long)cls, (unsigned long)len,
+			(unsigned long)st, (unsigned long)ret, w );
+	if ( st >= 0 && w >= 4 )
+	{
+		if ( cls == 0xC ) printf( "; value = the PEB SessionId %s", *(ULONG*)g_buf == sid ? "yes" : "no" );
+		else if ( cls == 1 )   /* TOKEN_USER {SID_AND_ATTRIBUTES {PSID Sid, ULONG Attributes}} + the SID (um\winnt.h): the SID as its shape only */
+		{
+			const unsigned char* s = *(const unsigned char**)g_buf;
+			char pv[ 64 ];
+			tm_ptr( pv, sizeof( pv ), s );
+			if ( s >= g_buf && s < g_buf + 0x100 )
+			{
+				const ULONG* sa = (const ULONG*)( s + 8 );
+				const int n = s[ 1 ];
+				printf( "; Sid %s, Attributes %lXH, SID Revision %u, SubAuthorityCount %d, IdentifierAuthority %u, SubAuthority[0] %lu, the RID (last) >= 1000 %s, "
+						"the S-1-5-21 + domain + RID shape %s", pv, (unsigned long)*(ULONG*)( g_buf + 8 ), s[ 0 ], n, s[ 7 ], (unsigned long)( n ? sa[ 0 ] : 0 ), n && sa[ n - 1 ] >= 1000 ? "yes" : "no",
+						n == 5 && s[ 7 ] == 5 && sa[ 0 ] == 21 ? "yes" : "no" );
+			}
+			else printf( "; Sid %s", pv );
+		}
+		else if ( cls == 0x2C )   /* TOKEN_BNO_ISOLATION_INFORMATION {PWSTR IsolationPrefix, BOOLEAN IsolationEnabled} (um\winnt.h) */
+		{
+			char pv[ 64 ];
+			tm_ptr( pv, sizeof( pv ), *(void**)g_buf );
+			printf( "; IsolationPrefix %s, IsolationEnabled %u, bytes +9..+FH %s", pv, g_buf[ 8 ], ( g_buf[ 9 ] == 0xCC && g_buf[ 15 ] == 0xCC ) ? "not written" : "written" );
+		}
+		else printf( "; value %lXH", (unsigned long)*(ULONG*)g_buf );
+	}
+	printf( "\n" );
+}
+
+static void case_tok( void )
+{
+	HANDLE t = (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull;
+	TM_NTSTATUS st;
+	tm_qit( "tok.pt.1d", TM_CURRENT_PROCESS_TOKEN, "NtCurrentProcessToken()", 0x1D, 4 );
+	tm_qit( "tok.pt.1d.0", TM_CURRENT_PROCESS_TOKEN, "NtCurrentProcessToken()", 0x1D, 0 );
+	tm_qit( "tok.pt.1d.8", TM_CURRENT_PROCESS_TOKEN, "NtCurrentProcessToken()", 0x1D, 8 );
+	st = NtOpenProcessToken( (HANDLE)(LONG_PTR)-1, 8, &t );
+	printf( "tm_nt tok.open: NtOpenProcessToken(NtCurrentProcess(), 8 TOKEN_QUERY, &h) -> status %08lXH, handle %s\n", (unsigned long)st, tm_hshape( t ) );
+	if ( st < 0 ) return;
+	tm_qit( "tok.h.c", t, "the token handle", 0xC, 4 );
+	tm_qit( "tok.h.1d", t, "the token handle", 0x1D, 4 );
+	tm_qit( "tok.h.2a", t, "the token handle", 0x2A, 4 );
+	tm_qit( "tok.h.c.0", t, "the token handle", 0xC, 0 );
+	tm_qit( "tok.h.2a.0", t, "the token handle", 0x2A, 0 );
+	tm_qit( "tok.h.2a.8", t, "the token handle", 0x2A, 8 );
+	tm_qit( "tok.pt.c", TM_CURRENT_PROCESS_TOKEN, "NtCurrentProcessToken()", 0xC, 4 );
+	/* trace c30, system call 172: TokenUser on NtCurrentThreadEffectiveToken() (-6, phnt ntpsapi.h:2491) with 58H; and 0 */
+	tm_qit( "tok.eff.1", (HANDLE)(LONG_PTR)-6, "NtCurrentThreadEffectiveToken()", 1, 0x58 );
+	tm_qit( "tok.eff.1.0", (HANDLE)(LONG_PTR)-6, "NtCurrentThreadEffectiveToken()", 1, 0 );
+	tm_qit( "tok.pt.2a", TM_CURRENT_PROCESS_TOKEN, "NtCurrentProcessToken()", 0x2A, 4 );
+	/* P41 (trace c10, system call 115): 2CH TokenBnoIsolation with a 120H buffer on the opened handle; and the neighbouring lengths */
+	tm_qit( "tok.h.2c", t, "the token handle", 0x2C, 0x120 );
+	tm_qit( "tok.h.2c.10", t, "the token handle", 0x2C, 0x10 );
+	tm_qit( "tok.h.2c.0", t, "the token handle", 0x2C, 0 );
+	tm_qit( "tok.h.2c.8", t, "the token handle", 0x2C, 8 );
+	printf( "tm_nt tok.close: NtClose(the token handle) -> %08lXH\n", (unsigned long)NtClose( t ) );
+	{
+		HANDLE t2 = (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull;
+		st = NtOpenProcessToken( (HANDLE)(LONG_PTR)-1, 0x20008, &t2 );
+		printf( "tm_nt tok.open.read: NtOpenProcessToken(NtCurrentProcess(), 20008H, &h) -> status %08lXH, handle %s\n", (unsigned long)st, tm_hshape( t2 ) );
+		if ( st >= 0 ) NtClose( t2 );
+	}
+}
+
+/* ------------------------------------------------------------------------------------------------ NtAccessCheck (P41, U2074)
+ * kernelbase's start asks whether the process token is a member of a group (the emulated trace, P41 run c7, system call 108: ntdll's
+ * membership check): NtAccessCheck( an ABSOLUTE security descriptor {Revision 1, Control 4 SE_DACL_PRESENT, Owner = Group = the SID, no
+ * SACL, a DACL {AclRevision 2, AclSize ECH, 1 ACE: ACCESS_ALLOWED type 0, flags 0, size 34H, mask 1, the SID}}, NtCurrentProcessToken(),
+ * DesiredAccess 1, GenericMapping {20001H, 20000H, 20000H, 1F0001H} (ntdll's), PrivilegeSet (38H bytes), &PrivilegeSetLength = 38H,
+ * &GrantedAccess, &AccessStatus ). The SID is S-1-5-32 followed by 8 sub-authorities - the shape of a capability GROUP SID derived from
+ * a capability name (a hash; the same on every machine - a constant of the system, no identity). Prototype phnt ntseapi.h:977-986;
+ * SECURITY_DESCRIPTOR / ACL / ACCESS_ALLOWED_ACE / SID: um\winnt.h. Replayed byte for byte (the SID's sub-authorities in tm_acc_sids);
+ * printed: status, GrantedAccess, AccessStatus, PrivilegeSetLength after the call, bytes of PrivilegeSet written (all pre-set CCH). */
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtAccessCheck( PVOID SecurityDescriptor, HANDLE ClientToken, ACCESS_MASK DesiredAccess, PVOID GenericMapping, PVOID PrivilegeSet,
+														 PULONG PrivilegeSetLength, PACCESS_MASK GrantedAccess, TM_NTSTATUS* AccessStatus );
+/* the second check (system call 109): S-1-5-32-581 (BUILTIN, alias RID 581, um\winnt.h DOMAIN_ALIAS_RID_DEFAULT_ACCOUNT: a well-known group) */
+static const ULONG tm_acc_sids[ 2 ][ 9 ] = { { 32, 1604681682u, 535129537u, 3273749797u, 3666938095u, 336295784u, 2177615760u, 2743807136u, 2867270584u }, { 32, 581 } };
+static const unsigned char tm_acc_counts[ 2 ] = { 9, 2 };
+
+static void tm_acc( const char* tag, int which, HANDLE token, const char* tname )
+{
+	static unsigned char sid[ 8 + 4 * 9 ], acl[ 0xEC ], ps[ 0x38 ];
+	struct { unsigned char Revision, Sbz1; USHORT Control; PVOID Owner, Group, Sacl, Dacl; } sd;   /* um\winnt.h SECURITY_DESCRIPTOR (absolute) */
+	static const ULONG gm[ 4 ] = { 0x20001, 0x20000, 0x20000, 0x1F0001 };
+	ULONG psl = 0x38, granted = 0xCCCCCCCC, n = 0;
+	TM_NTSTATUS ast = (TM_NTSTATUS)0xCCCCCCCC, st;
+	int i;
+	const ULONG* subs = tm_acc_sids[ which ];
+	const unsigned char cnt = tm_acc_counts[ which ];
+	memset( sid, 0, sizeof( sid ) );
+	sid[ 0 ] = 1;
+	sid[ 1 ] = cnt;
+	memset( sid + 2, 0, 6 );
+	sid[ 7 ] = 5;   /* SECURITY_NT_AUTHORITY {0,0,0,0,0,5} */
+	memcpy( sid + 8, subs, 4 * cnt );
+	memset( acl, 0, sizeof( acl ) );
+	acl[ 0 ] = 2;
+	*(USHORT*)( acl + 2 ) = 0xEC;
+	*(USHORT*)( acl + 4 ) = 1;
+	acl[ 8 ] = 0;      /* ACCESS_ALLOWED_ACE_TYPE */
+	acl[ 9 ] = 0;
+	*(USHORT*)( acl + 10 ) = (USHORT)( 8 + 8 + 4 * cnt );   /* 34H for 9 sub-authorities, 18H for 2 (the trace) */
+	*(ULONG*)( acl + 12 ) = 1;
+	memcpy( acl + 16, sid, 8 + 4 * cnt );
+	memset( &sd, 0, sizeof( sd ) );
+	sd.Revision = 1;
+	sd.Control = 4;
+	sd.Owner = sid;
+	sd.Group = sid;
+	sd.Dacl = acl;
+	memset( ps, 0xCC, sizeof( ps ) );
+	st = NtAccessCheck( &sd, token, 1, (PVOID)gm, ps, &psl, &granted, &ast );
+	for ( i = 0; i < (int)sizeof( ps ); i++ )
+		if ( ps[ i ] != 0xCC ) n = i + 1;
+	printf( "tm_nt %s: NtAccessCheck(the loader's absolute SD (SID %d), %s, 1, ntdll's mapping, PrivilegeSet 38H) -> status %08lXH, GrantedAccess %lXH, "
+			"AccessStatus %08lXH, PrivilegeSetLength %lXH, PrivilegeSet bytes written %lXH", tag, which + 1, tname, (unsigned long)st, (unsigned long)granted,
+			(unsigned long)ast, (unsigned long)psl, (unsigned long)n );
+	if ( n >= 8 ) printf( "; PrivilegeCount %lu, Control %lXH", (unsigned long)*(ULONG*)ps, (unsigned long)*(ULONG*)( ps + 4 ) );
+	printf( "\n" );
+}
+
+static void case_acc( void )
+{
+	tm_acc( "acc.1", 0, TM_CURRENT_PROCESS_TOKEN, "NtCurrentProcessToken()" );
+	tm_acc( "acc.2", 1, TM_CURRENT_PROCESS_TOKEN, "NtCurrentProcessToken()" );
+}
+
+/* ------------------------------------------------------------------------------------------------ the session's named-object directory
+ * (P41, U2075) kernelbase's start opens the session's BaseNamedObjects directory (the emulated trace, P41 run c9, system call 114):
+ * NtOpenDirectoryObject( &h, FH (DIRECTORY_QUERY | TRAVERSE | CREATE_OBJECT | CREATE_SUBDIRECTORY), {root NULL, "\Sessions\<the PEB
+ * SessionId>\BaseNamedObjects", OBJ_CASE_INSENSITIVE 40H} ). Prototype phnt ntobapi.h:548-552. The name is printed with the session
+ * number as the placeholder <the PEB SessionId> (the same string BASE_STATIC_SERVER_DATA +20H names, tm_nt csrc.str); printed: status,
+ * the handle's shape, its object type (NtQueryObject ObjectTypeInformation, a system type name). */
+static void tm_bno( const char* tag, ULONG access, int other_session )
+{
+	const ULONG sid = *(ULONG*)( (unsigned char*)(ULONG_PTR)__readgsqword( 0x60 ) + 0x2C0 );
+	wchar_t name[ 96 ];
+	TM_USTR u;
+	TM_OA oa;
+	HANDLE h = (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull;
+	TM_NTSTATUS st;
+	swprintf_s( name, 96, L"\\Sessions\\%lu\\BaseNamedObjects", (unsigned long)( other_session ? sid + 7 : sid ) );
+	tm_ustr( &u, name );
+	tm_oa( &oa, NULL, &u );
+	st = NtOpenDirectoryObject( &h, access, &oa );
+	printf( "tm_nt %s: NtOpenDirectoryObject(&h, %lXH, \"\\Sessions\\%s\\BaseNamedObjects\" OBJ_CASE_INSENSITIVE) -> status %08lXH, handle %s", tag, (unsigned long)access,
+			other_session ? "<another session number>" : "<the PEB SessionId>", (unsigned long)st, tm_hshape( h ) );
+	if ( st >= 0 )
+	{
+		ULONG rl = 0;
+		memset( g_buf, 0, 0x200 );
+		if ( NtQueryObject( h, 2, g_buf, 0x200, &rl ) >= 0 )
+		{
+			const TM_USTR* tn = (const TM_USTR*)g_buf;
+			char tnm[ 64 ];
+			int k;
+			for ( k = 0; k < tn->Length / 2 && k < 60; k++ ) tnm[ k ] = (char)tn->Buffer[ k ];
+			tnm[ k ] = 0;
+			printf( ", object type \"%s\"", tnm );
+		}
+		printf( "; NtClose -> %08lXH", (unsigned long)NtClose( h ) );
+	}
+	printf( "\n" );
+}
+
+static void case_bno( void )
+{
+	tm_bno( "bno.f", 0xF, 0 );
+	tm_bno( "bno.3", 3, 0 );
+	tm_bno( "bno.other", 0xF, 1 );
+}
+
+/* ------------------------------------------------------------------------------------------------ the WIL staging mutant (P41, U2076)
+ * kernelbase's start creates a named mutant in the session's named-object directory (the emulated trace, P41 run c12, system call 117):
+ * NtCreateMutant( &h, 1F0001H (MUTANT_ALL_ACCESS), {root = the "\Sessions\<the PEB SessionId>\BaseNamedObjects" handle, "Local\SM0:<the
+ * process id>:304:WilStaging_02", OBJ_OPENIF 80H}, InitialOwner FALSE ). The name carries the creating process' id (a placeholder
+ * "<the process id>" when printed). Prototype phnt ntexapi.h NtCreateMutant; OBJ_OPENIF shared\ntdef.h. In this process its own
+ * kernelbase made that call during its start; replayed here: the same name (expected: the existing mutant opened), and a name of the same
+ * shape no process uses ("...WilStaging_tm") for a first creation; printed: status, the handle shape, NtQueryMutant is not used. */
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtCreateMutant( PHANDLE MutantHandle, ACCESS_MASK DesiredAccess, TM_OA* ObjectAttributes, BOOLEAN InitialOwner );
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtReleaseMutant( HANDLE MutantHandle, PLONG PreviousCount );
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtWaitForSingleObject( HANDLE Handle, BOOLEAN Alertable, PLARGE_INTEGER Timeout );
+static void tm_mut( const char* tag, HANDLE root, const char* suffix, const char* shown )
+{
+	wchar_t name[ 96 ];
+	TM_USTR u;
+	TM_OA oa;
+	HANDLE h = (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull;
+	TM_NTSTATUS st;
+	swprintf_s( name, 96, L"Local\\SM0:%lu:304:%S", (unsigned long)GetCurrentProcessId(), suffix );
+	tm_ustr( &u, name );
+	tm_oa( &oa, root, &u );
+	oa.Attributes = 0x80;   /* OBJ_OPENIF, as the loader (no OBJ_CASE_INSENSITIVE) */
+	st = NtCreateMutant( &h, 0x1F0001, &oa, FALSE );
+	printf( "tm_nt %s: NtCreateMutant(&h, 1F0001H, {the BaseNamedObjects handle, \"Local\\SM0:<the process id>:304:%s\", OBJ_OPENIF}, FALSE) -> status %08lXH, handle %s",
+			tag, shown, (unsigned long)st, tm_hshape( h ) );
+	if ( st >= 0 ) printf( "; NtClose -> %08lXH", (unsigned long)NtClose( h ) );
+	printf( "\n" );
+}
+
+static void case_mut( void )
+{
+	const ULONG sid = *(ULONG*)( (unsigned char*)(ULONG_PTR)__readgsqword( 0x60 ) + 0x2C0 );
+	wchar_t name[ 96 ];
+	TM_USTR u;
+	TM_OA oa;
+	HANDLE d = NULL;
+	swprintf_s( name, 96, L"\\Sessions\\%lu\\BaseNamedObjects", (unsigned long)sid );
+	tm_ustr( &u, name );
+	tm_oa( &oa, NULL, &u );
+	if ( NtOpenDirectoryObject( &d, 0xF, &oa ) < 0 )
+	{
+		printf( "tm_nt mut: the BaseNamedObjects directory did not open\n" );
+		return;
+	}
+	tm_mut( "mut.loader", d, "WilStaging_02", "WilStaging_02" );
+	tm_mut( "mut.fresh", d, "WilStaging_tm", "WilStaging_tm" );
+	tm_mut( "mut.fresh2", d, "WilStaging_tm", "WilStaging_tm" );
+	{
+		/* the loader's next call (trace c13, system call 118): NtWaitForSingleObject( the mutant, FALSE, NULL ) - acquiring it; then
+		 * NtReleaseMutant( h, &PreviousCount ) (phnt ntexapi.h); waits / releases on a fresh mutant of the same shape, counts printed */
+		HANDLE h = NULL;
+		wchar_t wname[ 96 ];
+		LONG prev;
+		TM_NTSTATUS st;
+		int k;
+		swprintf_s( wname, 96, L"Local\\SM0:%lu:304:WilStaging_tw", (unsigned long)GetCurrentProcessId() );
+		tm_ustr( &u, wname );
+		tm_oa( &oa, d, &u );
+		oa.Attributes = 0x80;
+		st = NtCreateMutant( &h, 0x1F0001, &oa, FALSE );
+		printf( "tm_nt mut.wcreate: a fresh mutant of the loader's shape -> status %08lXH\n", (unsigned long)st );
+		for ( k = 0; k < 2; k++ )
+			printf( "tm_nt mut.wait%d: NtWaitForSingleObject(the mutant, FALSE, NULL) -> status %08lXH\n", k, (unsigned long)NtWaitForSingleObject( h, FALSE, NULL ) );
+		for ( k = 0; k < 3; k++ )
+		{
+			prev = (LONG)0xCCCCCCCC;
+			st = NtReleaseMutant( h, &prev );
+			printf( "tm_nt mut.rel%d: NtReleaseMutant(the mutant, &PreviousCount) -> status %08lXH, PreviousCount %s%lXH\n", k, (unsigned long)st, prev == (LONG)0xCCCCCCCC ? "not written " : "",
+					(unsigned long)prev );
+		}
+		NtClose( h );
+	}
+	NtClose( d );
+}
+
+/* ------------------------------------------------------------------------------------------------ the WIL staging objects (P41, U2077)
+ * After the staging mutant, kernelbase's start opens named semaphores beside it (the emulated trace, P41 run c15, system call 119):
+ * NtOpenSemaphore( &h, 1F0003H, {root = the BaseNamedObjects handle, "Local\SM0:<the process id>:304:WilStaging_02_p0", attributes 0} ).
+ * In this process its own kernelbase created those objects during its start, so the loader's own names exist here; the FIRST-time
+ * answers are measured with names of the same shape that no process uses ("...WilStaging_tm_p0"). Prototypes phnt ntexapi.h
+ * NtOpenSemaphore / NtCreateSemaphore. Printed: status, the handle shape (the handle written or not). */
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtOpenSemaphore( PHANDLE SemaphoreHandle, ACCESS_MASK DesiredAccess, TM_OA* ObjectAttributes );
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtCreateSemaphore( PHANDLE SemaphoreHandle, ACCESS_MASK DesiredAccess, TM_OA* ObjectAttributes, LONG InitialCount, LONG MaximumCount );
+static HANDLE g_wil_bno;
+
+static void tm_wil_open( const char* tag, const char* suffix, ULONG attributes )
+{
+	wchar_t wname[ 96 ];
+	TM_USTR u;
+	TM_OA oa;
+	HANDLE h = (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull;
+	TM_NTSTATUS st;
+	swprintf_s( wname, 96, L"Local\\SM0:%lu:304:%S", (unsigned long)GetCurrentProcessId(), suffix );
+	tm_ustr( &u, wname );
+	tm_oa( &oa, g_wil_bno, &u );
+	oa.Attributes = attributes;
+	st = NtOpenSemaphore( &h, 0x1F0003, &oa );
+	printf( "tm_nt %s: NtOpenSemaphore(&h, 1F0003H, {the BaseNamedObjects handle, \"Local\\SM0:<the process id>:304:%s\", attributes %lXH}) -> status %08lXH, handle %s", tag, suffix,
+			(unsigned long)attributes, (unsigned long)st, tm_hshape( h ) );
+	if ( st >= 0 ) printf( "; NtClose -> %08lXH", (unsigned long)NtClose( h ) );
+	printf( "\n" );
+}
+
+static void case_wil( void )
+{
+	const ULONG sid = *(ULONG*)( (unsigned char*)(ULONG_PTR)__readgsqword( 0x60 ) + 0x2C0 );
+	wchar_t wname[ 96 ];
+	TM_USTR u;
+	TM_OA oa;
+	swprintf_s( wname, 96, L"\\Sessions\\%lu\\BaseNamedObjects", (unsigned long)sid );
+	tm_ustr( &u, wname );
+	tm_oa( &oa, NULL, &u );
+	if ( NtOpenDirectoryObject( &g_wil_bno, 0xF, &oa ) < 0 )
+	{
+		printf( "tm_nt wil: the BaseNamedObjects directory did not open\n" );
+		return;
+	}
+	tm_wil_open( "wil.open.loader", "WilStaging_02_p0", 0 );
+	tm_wil_open( "wil.open.fresh", "WilStaging_tm_p0", 0 );
+	{
+		/* the loader's next call (trace c16, system call 120): NtCreateSemaphore( &h, 1F0003H, {the BaseNamedObjects handle, the same
+		 * "..._p0" name, OBJ_OPENIF 80H}, InitialCount 28CF0H, MaximumCount 28CF0H ); replayed with a fresh name (first creation), again
+		 * while the first handle is open, and with the loader's own name (it exists in this process) */
+		HANDLE h1 = (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull, h2 = (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull, h3 = (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull;
+		wchar_t wname2[ 96 ];
+		TM_USTR u2;
+		TM_OA oa2;
+		TM_NTSTATUS s1, s2, s3;
+		swprintf_s( wname2, 96, L"Local\\SM0:%lu:304:WilStaging_tm_p0", (unsigned long)GetCurrentProcessId() );
+		tm_ustr( &u2, wname2 );
+		tm_oa( &oa2, g_wil_bno, &u2 );
+		oa2.Attributes = 0x80;
+		s1 = NtCreateSemaphore( &h1, 0x1F0003, &oa2, 0x28CF0, 0x28CF0 );
+		s2 = NtCreateSemaphore( &h2, 0x1F0003, &oa2, 0x28CF0, 0x28CF0 );
+		swprintf_s( wname2, 96, L"Local\\SM0:%lu:304:WilStaging_02_p0", (unsigned long)GetCurrentProcessId() );
+		tm_ustr( &u2, wname2 );
+		s3 = NtCreateSemaphore( &h3, 0x1F0003, &oa2, 0x28CF0, 0x28CF0 );
+		printf( "tm_nt wil.create: NtCreateSemaphore(&h, 1F0003H, {the BaseNamedObjects handle, a fresh \"...WilStaging_tm_p0\", OBJ_OPENIF}, 28CF0H, 28CF0H) -> status %08lXH, handle %s; "
+				"again while open -> status %08lXH, handle %s; the loader's \"...WilStaging_02_p0\" -> status %08lXH, handle %s\n", (unsigned long)s1, tm_hshape( h1 ), (unsigned long)s2,
+				tm_hshape( h2 ), (unsigned long)s3, tm_hshape( h3 ) );
+		if ( s1 >= 0 ) NtClose( h1 );
+		if ( s2 >= 0 ) NtClose( h2 );
+		if ( s3 >= 0 ) NtClose( h3 );
+	}
+	NtClose( g_wil_bno );
+}
+
+/* ------------------------------------------------------------------------------------------------ a WNF state query (P41, U2078)
+ * kernelbase's start (after the WIL staging objects) queries a WNF state (the emulated trace, P41 run c18, system call 123):
+ * NtQueryWnfStateData( &StateName = 0280032EA3BC0875H, &TypeId = {48F96463H-52D6-4E85 ... as the two qwords 4E8552D648F96463H,
+ * 4E26174EC1F2029CH}, ExplicitScope NULL, &ChangeStamp, Buffer (1000H on the stack), &BufferLength = 1000H ). The state name and the
+ * type id are constants of the system DLL (no identity). Prototype phnt ntexapi.h:1902-1909. Printed: status, ChangeStamp (pre-set
+ * CCCCCCCCH: written / its value is a counter of the state's changes - printed as zero / non-zero only), BufferLength after the call,
+ * buffer bytes written, and the data's size / non-zero byte count (the data itself is not printed). */
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtQueryWnfStateData( const ULONGLONG* StateName, const void* TypeId, const void* ExplicitScope, PULONG ChangeStamp, PVOID Buffer, PULONG BufferLength );
+static void tm_wnf( const char* tag, ULONG len, int with_type )
+{
+	const ULONGLONG name = with_type == 4 ? 0x418A073AA3BC1C75ull : with_type == 3 ? 0x418A073AA3BC88F5ull : with_type == 2 ? 0x418A073AA3BC7C75ull :
+						   0x0280032EA3BC0875ull;   /* 2 / 3 / 4: the second / third / fourth state, no TypeId */
+	static const ULONGLONG type[ 2 ] = { 0x4E8552D648F96463ull, 0x4E26174EC1F2029Cull };
+	ULONG stamp = 0xCCCCCCCC, bl = len;
+	TM_NTSTATUS st;
+	size_t w, nz = 0, k;
+	memset( g_buf, 0xCC, sizeof( g_buf ) );
+	st = NtQueryWnfStateData( &name, with_type == 1 ? type : NULL, NULL, &stamp, len ? g_buf : NULL, &bl );
+	w = tm_written( 0x2000 );
+	for ( k = 0; k < w; k++ ) nz += g_buf[ k ] != 0;
+	if ( with_type == 4 )
+	{
+		/* the fourth state GROWS (a table the system extends as features are used: 44CH at the measurement, 450H an hour later) - its
+		 * SHAPE only: the size (> 400H, a multiple of 4), written = the size, the first 16 bytes (the table's header) */
+		printf( "tm_nt %s: NtQueryWnfStateData(&418A073AA3BC1C75H, NULL, NULL, &stamp, %s, &BufferLength = %lXH) -> status %08lXH, ChangeStamp %s, BufferLength > 400H %s, "
+				"a multiple of 4 %s, written = BufferLength %s", tag, len ? "buffer" : "NULL", (unsigned long)len, (unsigned long)st, stamp == 0xCCCCCCCC ? "not written" : ( stamp ? "non-zero" : "0" ),
+				bl > 0x400 ? "yes" : "no", bl % 4 ? "no" : "yes", w == ( st >= 0 ? bl : 0 ) ? "yes" : "no" );
+		if ( st >= 0 && w >= 16 )
+		{
+			printf( "; header" );
+			for ( k = 0; k < 16; k++ ) printf( " %02X", g_buf[ k ] );
+		}
+		putchar( 10 );
+		return;
+	}
+	printf( "tm_nt %s: NtQueryWnfStateData(&%s, %s, NULL, &stamp, %s, &BufferLength = %lXH) -> status %08lXH, ChangeStamp %s, BufferLength %lXH, written %zXH, "
+			"non-zero data bytes %zu\n", tag, with_type == 4 ? "418A073AA3BC1C75H" : with_type == 3 ? "418A073AA3BC88F5H" : with_type == 2 ? "418A073AA3BC7C75H" : "0280032EA3BC0875H", with_type == 1 ? "&the loader's TypeId" : "NULL", len ? "buffer" : "NULL",
+			(unsigned long)len, (unsigned long)st,
+			stamp == 0xCCCCCCCC ? "not written" : ( stamp ? "non-zero" : "0" ), (unsigned long)bl, w, nz );
+	if ( st >= 0 && w <= 16 )
+	{
+		/* the state's data bytes when they are this small (8 bytes: a configuration value of the system, printed byte by byte) */
+		printf( "tm_nt %s.data:", tag );
+		for ( k = 0; k < w; k++ ) printf( " %02X", g_buf[ k ] );
+		putchar( 10 );
+	}
+}
+
+static void case_wnf( void )
+{
+	tm_wnf( "wnf.1000", 0x1000, 1 );
+	tm_wnf( "wnf.0", 0, 1 );
+	tm_wnf( "wnf.notype", 0x1000, 0 );
+	/* P41 trace c21, system call 129: the state 418A073AA3BC7C75H, no TypeId, Buffer NULL, BufferLength 0 (a size probe); then 1000H */
+	tm_wnf( "wnf2.0", 0, 2 );
+	tm_wnf( "wnf2.1000", 0x1000, 2 );
+	/* exploration x1 (system calls 131 / 133): the third state 418A073AA3BC88F5H (size probe), the second state with C8H */
+	tm_wnf( "wnf2.c8", 0xC8, 2 );
+	tm_wnf( "wnf3.0", 0, 3 );
+	tm_wnf( "wnf3.c8", 0xC8, 3 );
+	tm_wnf( "wnf3.1000", 0x1000, 3 );
+	/* trace c37, system call 209 (ExitProcess): the fourth state 418A073AA3BC1C75H, 1000H; and the size probe */
+	tm_wnf( "wnf4.1000", 0x1000, 4 );
+	tm_wnf( "wnf4.0", 0, 4 );
+}
+
+/* ------------------------------------------------------------------------------------------------ the WNF notification event (P41, U2078)
+ * After the state query, ntdll's WNF subscription code (kernelbase's start) creates a synchronization event and a wait completion packet
+ * and calls NtSetWnfProcessNotificationEvent( the event ) (the emulated trace, P41 run c19, system call 126). Prototype phnt
+ * ntexapi.h:2005-2007. In this process its own start already did so; replayed: a new synchronization event (not signaled), again, and
+ * handle 0. Printed: status. */
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtSetWnfProcessNotificationEvent( HANDLE NotificationEvent );
+static void case_wnfe( void )
+{
+	HANDLE e = NULL;
+	TM_NTSTATUS st;
+	NtCreateEvent( &e, 0x1F0003, NULL, 1, FALSE );
+	st = NtSetWnfProcessNotificationEvent( e );
+	printf( "tm_nt wnfe.set: NtSetWnfProcessNotificationEvent(a new synchronization event) -> status %08lXH\n", (unsigned long)st );
+	st = NtSetWnfProcessNotificationEvent( e );
+	printf( "tm_nt wnfe.again: NtSetWnfProcessNotificationEvent(the same event) -> status %08lXH\n", (unsigned long)st );
+	st = NtSetWnfProcessNotificationEvent( NULL );
+	printf( "tm_nt wnfe.null: NtSetWnfProcessNotificationEvent(NULL) -> status %08lXH\n", (unsigned long)st );
+}
+
+/* ------------------------------------------------------------------------------------------------ the WNF subscription (P41, U2078)
+ * Then ntdll subscribes to the state it queried (the emulated trace, P41 run c20, system call 128): NtSubscribeWnfStateChange(
+ * &0280032EA3BC0875H, ChangeStamp = the stamp its query returned, EventMask 11H, &SubscriptionId ). Prototype phnt ntexapi.h:1946-1951.
+ * Replayed with the stamp of a fresh query of this process, and with the stamp 1 (the emulator's placeholder); printed: status, the
+ * SubscriptionId as zero / non-zero (an identifier of the kernel's subscription object - never printed), and whether two ids differ. */
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtSubscribeWnfStateChange( const ULONGLONG* StateName, ULONG ChangeStamp, ULONG EventMask, PULONGLONG SubscriptionId );
+static void case_wnfs( void )
+{
+	static const ULONGLONG name = 0x0280032EA3BC0875ull;
+	static const ULONGLONG type[ 2 ] = { 0x4E8552D648F96463ull, 0x4E26174EC1F2029Cull };
+	ULONG stamp = 0, bl = 0x1000;
+	ULONGLONG id1 = 0xCCCCCCCCCCCCCCCCull, id2 = 0xCCCCCCCCCCCCCCCCull;
+	TM_NTSTATUS st;
+	NtQueryWnfStateData( &name, type, NULL, &stamp, g_buf, &bl );
+	st = NtSubscribeWnfStateChange( &name, stamp, 0x11, &id1 );
+	printf( "tm_nt wnfs.stamp: NtSubscribeWnfStateChange(&0280032EA3BC0875H, the current ChangeStamp, 11H, &id) -> status %08lXH, SubscriptionId %s\n", (unsigned long)st,
+			id1 == 0xCCCCCCCCCCCCCCCCull ? "not written" : ( id1 ? "non-zero" : "0" ) );
+	st = NtSubscribeWnfStateChange( &name, 1, 0x11, &id2 );
+	printf( "tm_nt wnfs.one: NtSubscribeWnfStateChange(&0280032EA3BC0875H, 1, 11H, &id) -> status %08lXH, SubscriptionId %s, = the first %s\n", (unsigned long)st,
+			id2 == 0xCCCCCCCCCCCCCCCCull ? "not written" : ( id2 ? "non-zero" : "0" ), id1 == id2 ? "yes" : "no" );
+	{
+		/* trace c22, system call 130: the second state 418A073AA3BC7C75H, ChangeStamp 0, EventMask 11H */
+		static const ULONGLONG name2 = 0x418A073AA3BC7C75ull;
+		ULONGLONG id3 = 0xCCCCCCCCCCCCCCCCull;
+		st = NtSubscribeWnfStateChange( &name2, 0, 0x11, &id3 );
+		printf( "tm_nt wnfs.two: NtSubscribeWnfStateChange(&418A073AA3BC7C75H, 0, 11H, &id) -> status %08lXH, SubscriptionId %s, = the first state's %s\n", (unsigned long)st,
+				id3 == 0xCCCCCCCCCCCCCCCCull ? "not written" : ( id3 ? "non-zero" : "0" ), id3 == id1 ? "yes" : "no" );
+		{
+			/* exploration x1, system call 132: the third state 418A073AA3BC88F5H, ChangeStamp 0, EventMask 11H */
+			static const ULONGLONG name3 = 0x418A073AA3BC88F5ull;
+			ULONGLONG id4 = 0xCCCCCCCCCCCCCCCCull;
+			st = NtSubscribeWnfStateChange( &name3, 0, 0x11, &id4 );
+			printf( "tm_nt wnfs.three: NtSubscribeWnfStateChange(&418A073AA3BC88F5H, 0, 11H, &id) -> status %08lXH, SubscriptionId %s, = the first / second state's %s / %s\n", (unsigned long)st,
+					id4 == 0xCCCCCCCCCCCCCCCCull ? "not written" : ( id4 ? "non-zero" : "0" ), id4 == id1 ? "yes" : "no", id4 == id3 ? "yes" : "no" );
+		}
+	}
+}
+
+/* ------------------------------------------------------------------------------------------------ NtSetTimer2 (P41, U2079)
+ * The thread pool's timer is set during kernelbase's start (the emulated trace, P41 run c24, system call 135): NtSetTimer2( the timer2 of
+ * NtCreateTimer2 (tm_nt tmr2: Attributes 8, access 100002H), &DueTime = relative 300 s (100-ns units), Period NULL, &{Version 0, the
+ * 4 bytes 00 00 FB 7F (uninitialised), NoWakeTolerance 75 s} ). Prototype phnt ntexapi.h:1470-1475 (T2_SET_PARAMETERS_V0
+ * :1430-1450). Replayed on a fresh timer2, twice; printed: statuses, whether DueTime changed. */
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtSetTimer2( HANDLE TimerHandle, PLARGE_INTEGER DueTime, PLARGE_INTEGER Period, PVOID Parameters );
+static void case_t2s( void )
+{
+	HANDLE h = NULL;
+	TM_NTSTATUS st;
+	LARGE_INTEGER due;
+	unsigned char prm[ 16 ] = { 0, 0, 0, 0, 0x00, 0x00, 0xFB, 0x7F, 0x80, 0x17, 0xB4, 0x2C, 0, 0, 0, 0 };   /* NoWakeTolerance 75 s */
+	st = NtCreateTimer2( &h, NULL, NULL, 8, 0x100002 );
+	printf( "tm_nt t2s.create: NtCreateTimer2(&h, NULL, NULL, 8, 100002H) -> status %08lXH, handle %s\n", (unsigned long)st, tm_hshape( h ) );
+	if ( st < 0 ) return;
+	due.QuadPart = -300ll * 10000 * 1000;   /* relative 300 s */
+	st = NtSetTimer2( h, &due, NULL, prm );
+	printf( "tm_nt t2s.set: NtSetTimer2(the timer, &(relative 300 s), NULL, &{0, 00 00 FB 7F, 75 s}) -> status %08lXH, DueTime %s\n", (unsigned long)st,
+			due.QuadPart == -300ll * 10000 * 1000 ? "unchanged" : "changed" );
+	st = NtSetTimer2( h, &due, NULL, prm );
+	printf( "tm_nt t2s.again: NtSetTimer2(the same, again) -> status %08lXH\n", (unsigned long)st );
+	printf( "tm_nt t2s.close: NtClose -> %08lXH\n", (unsigned long)NtClose( h ) );
+}
+
+/* ------------------------------------------------------------------------------------------------ the user's policy keys (P41, U2073)
+ * After TokenUser, ntdll opens the USER's Safer policy key (the emulated trace, P41 run c31, system call 173): NtOpenKey( &h, 1
+ * (KEY_QUERY_VALUE), {"\REGISTRY\USER\<the user SID>\Software\Policies\Microsoft\Windows\Safer\CodeIdentifiers", OBJ_CASE_INSENSITIVE} ).
+ * The user SID is a real identifier: this process builds the path from its OWN token's SID in memory and prints it only as the
+ * placeholder <the user SID>; printed: status, the handle's shape. Prototype phnt ntregapi.h NtOpenKey. */
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtOpenKey( PHANDLE KeyHandle, ACCESS_MASK DesiredAccess, TM_OA* ObjectAttributes );
+static int tm_user_sid( wchar_t* out, size_t cap )
+{
+	ULONG rl = 0;
+	const unsigned char* s;
+	const ULONG* sa;
+	int n, k;
+	size_t used;
+	memset( g_buf, 0, 0x100 );
+	if ( NtQueryInformationToken( (HANDLE)(LONG_PTR)-6, 1, g_buf, 0x100, &rl ) < 0 ) return 0;
+	s = *(const unsigned char**)g_buf;
+	if ( s < g_buf || s >= g_buf + 0x80 ) return 0;
+	n = s[ 1 ];
+	sa = (const ULONG*)( s + 8 );
+	used = (size_t)swprintf_s( out, cap, L"S-%u-%u", s[ 0 ], s[ 7 ] );
+	for ( k = 0; k < n && used < cap; k++ ) used += (size_t)swprintf_s( out + used, cap - used, L"-%lu", (unsigned long)sa[ k ] );
+	return 1;
+}
+
+static void tm_hku( const char* tag, const wchar_t* rest, ACCESS_MASK access )
+{
+	wchar_t sid[ 128 ], path[ 512 ];
+	TM_USTR u;
+	TM_OA oa;
+	HANDLE h = (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull;
+	TM_NTSTATUS st;
+	if ( !tm_user_sid( sid, 128 ) )
+	{
+		printf( "tm_nt %s: the token's user SID could not be read\n", tag );
+		return;
+	}
+	swprintf_s( path, 512, L"\\REGISTRY\\USER\\%s%s", sid, rest );
+	tm_ustr( &u, path );
+	tm_oa( &oa, NULL, &u );
+	st = NtOpenKey( &h, access, &oa );
+	printf( "tm_nt %s: NtOpenKey(&h, %lXH, \"\\REGISTRY\\USER\\<the user SID>%S\" OBJ_CASE_INSENSITIVE) -> status %08lXH, handle %s\n", tag, (unsigned long)access, rest, (unsigned long)st,
+			tm_hshape( h ) );
+	if ( st >= 0 ) NtClose( h );
+}
+
+static void case_hku( void )
+{
+	tm_hku( "hku.safer", L"\\Software\\Policies\\Microsoft\\Windows\\Safer\\CodeIdentifiers", 1 );
+}
+
+/* ------------------------------------------------------------------------------------------------ NtTestAlert (P41, U2081)
+ * The end of the loader's process initialisation (the emulated trace, P41 run c35, system call 202 / 200): NtTestAlert() - prototype
+ * phnt ntpsapi.h NtTestAlert (no arguments). Measured in a process whose thread has no queued APC and was not alerted: status, twice. */
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtTestAlert( void );
+static void case_alert( void )
+{
+	TM_NTSTATUS a = NtTestAlert(), b = NtTestAlert();
+	printf( "tm_nt alert: NtTestAlert() -> status %08lXH; again -> status %08lXH\n", (unsigned long)a, (unsigned long)b );
+}
+
+/* ------------------------------------------------------------------------------------------------ NtTerminateProcess( NULL ) (P41, U2082)
+ * ExitProcess -> ntdll's RtlExitUserProcess first calls NtTerminateProcess( NULL, ExitStatus ) (the emulated trace, P41 run c36, system
+ * call 204: ProcessHandle 0, 2BH) - "terminate every OTHER thread of the process" - and continues (DLL detach, then NtTerminateProcess(
+ * NtCurrentProcess(), ...)). Prototype phnt ntpsapi.h NtTerminateProcess. Measured in this process (it has thread-pool threads of its
+ * own start): the status, and that the calling thread continues. Run LAST in a process (case table order; nt_measured runs one case per
+ * process). */
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtTerminateProcess( HANDLE ProcessHandle, TM_NTSTATUS ExitStatus );
+static void case_term( void )
+{
+	TM_NTSTATUS st = NtTerminateProcess( NULL, 0x2B );
+	printf( "tm_nt term.null: NtTerminateProcess(NULL, 2BH) -> status %08lXH; the calling thread continues: yes\n", (unsigned long)st );
+}
+
 struct tm_case
 {
 	const char* name;
 	void ( *fn )( void );
 };
-static const struct tm_case g_cases[] = { { "sat", case_sat }, { "qsi", case_qsi }, { "hvp", case_hvp }, { "qip", case_qip }, { "wcp", case_wcp }, { "qsix", case_qsix }, { "iocp", case_iocp }, { "wkf", case_wkf }, { "tmr2", case_tmr2 }, { "awcp", case_awcp }, { "swf", case_swf }, { "etw", case_etw }, { "kd", case_kd }, { "of", case_of }, { "tls", case_tls }, { "ahc", case_ahc }, { "vmi", case_vmi }, { "csr", case_csr }, { "sec", case_sec }, { "csrc", case_csrc }, { "nls", case_nls } };
+static const struct tm_case g_cases[] = { { "sat", case_sat }, { "qsi", case_qsi }, { "hvp", case_hvp }, { "qip", case_qip }, { "wcp", case_wcp }, { "qsix", case_qsix }, { "iocp", case_iocp }, { "wkf", case_wkf }, { "tmr2", case_tmr2 }, { "awcp", case_awcp }, { "swf", case_swf }, { "etw", case_etw }, { "kd", case_kd }, { "of", case_of }, { "tls", case_tls }, { "ahc", case_ahc }, { "vmi", case_vmi }, { "csr", case_csr }, { "sec", case_sec }, { "csrc", case_csrc }, { "nls", case_nls }, { "con", case_con }, { "etwt", case_etwt }, { "tok", case_tok }, { "acc", case_acc }, { "bno", case_bno }, { "mut", case_mut }, { "wil", case_wil }, { "wnf", case_wnf }, { "wnfe", case_wnfe }, { "wnfs", case_wnfs }, { "t2s", case_t2s }, { "hku", case_hku }, { "alert", case_alert }, { "term", case_term } };
 
 int main( int argc, char** argv )
 {
 	int i;
 	size_t k;
 	setvbuf( stdout, NULL, _IONBF, 0 );
+	if ( argc == 4 && !strcmp( argv[ 1 ], "con.child" ) )   /* P41: the detached child of case con (never run by itself) */
+	{
+		tm_con_child( argv[ 2 ], argv[ 3 ] );
+		return 0;
+	}
+	if ( argc == 3 && !strcmp( argv[ 1 ], "run.detached" ) ) return tm_run_detached( argv[ 2 ] );   /* P41: a test PE started detached */
 	if ( argc < 2 )
 	{
 		for ( k = 0; k < sizeof( g_cases ) / sizeof( g_cases[ 0 ] ); k++ ) g_cases[ k ].fn();

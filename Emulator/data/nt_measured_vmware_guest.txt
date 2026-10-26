@@ -12,6 +12,16 @@
 # nt_kernel_measured.cpp (+ nt_kernel_sys.cpp classes C0H / 22H / 24H; selftests nt_measured_*); an input not listed is a loud stop.
 # P40 (U2062): every case is run with the current directory on the system volume (<SystemRoot>): of.fsdev is the system volume's value.
 # P40 (U2064): cases csrc (what a process its own loader CONNECTED to the CSR server sees - only its own memory, never a message to csrss; addresses as offsets / relations, the strings compared, never printed) and nls.
+# P41 (U2068-U2082): the services of a process started WITHOUT a console (USER DECISION 2026-10-26; the emulated process is the model
+# of a DETACHED_PROCESS start): case con starts a copy of tm_nt with CreateProcessW( DETACHED_PROCESS, bInheritHandles FALSE, STARTUPINFOW
+# {cb only} ); the child measures only itself (its process parameters, ProcessConsoleHostProcess, the console APIs on its standard handles,
+# NtWriteFile( NULL )) and writes its lines to a temporary file its parent prints. Cases etwt, tok, acc, bno, mut, wil, wnf, wnfe, wnfs, t2s,
+# hku, alert, term replay the calls of kernelbase / ntdll in that start and at ExitProcess (the emulated trace, P41 runs c1-c38 / x1-x5).
+# Placeholders: the user SID only as its shape (the emulator answers S-1-5-21-1000001-1000002-1000003-1001), keys of the user
+# hive as \REGISTRY\USER\<the user SID>\..., the process id in the WIL staging names as <the process id>, WNF change stamps / subscription
+# ids as zero / non-zero; WNF state 418A073AA3BC1C75H (WIL feature usage, no identity) GROWS - recorded as its shape (size, header);
+# the emulator answers the 44CH snapshot of the measurement. ETW provider 0A27EFF1-... (etw.reg5) is ENABLED by a session of this guest: its enable fields are environment
+# state at the time of the measurement. Case term ends with the process exit code 2BH (NtTerminateProcess( NULL, 2BH ) fixes it).
 tm_nt sat.0: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 330H) -> status C0000225H, ReturnLength 0H, written 0H
 tm_nt sat.1: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 0H) -> status C0000225H, ReturnLength 0H, written 0H
 tm_nt sat.2: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 8H) -> status C0000225H, ReturnLength 0H, written 0H
@@ -115,6 +125,9 @@ tm_nt swf.1.8.ffffffffff676980: NtSetInformationWorkerFactory(factory, class 1, 
 tm_nt swf.2.8.ffffffffdc3cba00: NtSetInformationWorkerFactory(factory, class 2, value FFFFFFFFDC3CBA00H, Length 8) -> status 00000000H; the start routine has run: yes
 tm_nt swf.5.8.200: NtSetInformationWorkerFactory(factory, class 5, value 200H, Length 8) -> status C0000004H; the start routine has run: yes
 tm_nt swf.5.0.200: NtSetInformationWorkerFactory(factory, class 5, value 200H, Length 0) -> status C0000004H; the start routine has run: yes
+tm_nt swf.13.4.1: NtSetInformationWorkerFactory(factory, class 13, value 1H, Length 4) -> status 00000000H; the start routine has run: yes
+tm_nt swf.2.8.ffffffffee1e5d00: NtSetInformationWorkerFactory(factory, class 2, value FFFFFFFFEE1E5D00H, Length 8) -> status 00000000H; the start routine has run: yes
+tm_nt swf.5.4.3: NtSetInformationWorkerFactory(factory, class 5, value 3H, Length 4) -> status 00000000H; the start routine has run: yes
 tm_nt swf.loader.0: class 5 value 300H -> status 00000000H
 tm_nt swf.loader.1: class 14 value 180H -> status 00000000H
 tm_nt swf.loader.2: class 3 value 1H -> status 00000000H
@@ -134,6 +147,22 @@ tm_nt etw.reg3: NtTraceControl(0FH, the loader's A0H bytes (provider 3, LoggerId
 tm_nt etw.reg3.fields: RegType 3, LoggerId 3, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
 tm_nt etw.reg3.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
 tm_nt etw.reg3.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg4: NtTraceControl(0FH, the loader's A0H bytes (provider 4, LoggerId 4, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg4.fields: RegType 3, LoggerId 4, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg4.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg4.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg5: NtTraceControl(0FH, the loader's A0H bytes (provider 5, LoggerId 5, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C +70 +74 +78 +87 +90 +98; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg5.fields: RegType 3, LoggerId 5, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext bytes 01 00 00 00 FF 00 00 00, EnableFilterDesc 41H, EnableCallback bytes 00 00 00 00 00 00 00 A0, EnableCallbackReserved 0H, ProviderTraits 8H, TraitsFlags 1H, HasPayload 0H
+tm_nt etw.reg5.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg5.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg6: NtTraceControl(0FH, the loader's A0H bytes (provider 6, LoggerId 6, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg6.fields: RegType 3, LoggerId 6, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg6.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg6.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg7: NtTraceControl(0FH, the loader's A0H bytes (provider 7, LoggerId 7, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg7.fields: RegType 3, LoggerId 7, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg7.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg7.close: NtClose(ReplyHandle) -> 00000000H
 tm_nt kd.open: NtOpenDirectoryObject(&h, 3, "\KnownDlls" OBJ_CASE_INSENSITIVE) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
 tm_nt kd.list: kernel32.dll:Section ucrtbase.dll:Section WS2_32.dll:Section MSCTF.dll:Section SHLWAPI.dll:Section kernelbase.dll:Section wow64.dll:Section msvcp_win.dll:Section gdiplus.dll:Section KnownDllPath:SymbolicLink user32.dll:Section bcrypt.dll:Section COMCTL32.dll:Section cfgmgr32.dll:Section combase.dll:Section IMM32.dll:Section rpcrt4.dll:Section bcryptPrimitives.dll:Section ntdll.dll:Section coml2.dll:Section win32u.dll:Section wow64cpu.dll:Section COMDLG32.dll:Section gdi32full.dll:Section IMAGEHLP.dll:Section SHELL32.dll:Section sechost.dll:Section WINTRUST.dll:Section NORMALIZ.dll:Section difxapi.dll:Section Setupapi.dll:Section CRYPT32.dll:Section gdi32.dll:Section MSVCRT.dll:Section advapi32.dll:Section wow64win.dll:Section PSAPI.DLL:Section NSI.dll:Section WLDAP32.dll:Section OLEAUT32.dll:Section SHCORE.dll:Section ole32.dll:Section clbcatq.dll:Section; 43 entries, end status 8000001AH
 tm_nt kd.section.0: NtOpenSection(&s, 0DH, root \KnownDlls, "KERNEL32.DLL" OBJ_CASE_INSENSITIVE) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
@@ -161,6 +190,9 @@ tm_nt ahc.1: NtApphelpCacheControl(6 LookupCdb, Name "KERNEL32.DLL", ParamsOut 4
 tm_nt ahc.2: NtApphelpCacheControl(6 LookupCdb, Name "kernel32.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
 tm_nt ahc.3: NtApphelpCacheControl(6 LookupCdb, Name "ntdll.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
 tm_nt ahc.4: NtApphelpCacheControl(6 LookupCdb, Name "tm_nt_no_such.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.5: NtApphelpCacheControl(6 LookupCdb, Name "t2_import.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.6: NtApphelpCacheControl(6 LookupCdb, Name "t3_tls.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.7: NtApphelpCacheControl(6 LookupCdb, Name "t3_tls.vmware_guest.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
 tm_nt vmi.fresh: NtSetInformationVirtualMemory(-1, 4, 1, {a fresh image view's base, 1000H}, &1, 4) -> status C00000BBH
 tm_nt vmi.again: the same call again -> status C00000BBH
 tm_nt vmi.loaded: the same call on this process' kernelbase.dll base -> status C00000BBH
@@ -180,3 +212,113 @@ tm_nt csrc.ntdll: ntdll+16CC30H <non-zero>, = CsrGetProcessId() yes, multiple of
 tm_nt csrc.map5: NtMapViewOfSection(the section, -1, &base (0), 0, 0, NULL, &size (0), ViewUnmap 2, 500000H, PAGE_READONLY) -> status 00000000H, ViewSize 100000H, 64K-aligned yes, above the first view no, MBI AllocationProtect 2H State 1000H Protect 2H Type 40000H RegionSize 5000H; unmap -> 00000000H
 tm_nt nls.0: NtInitializeNlsFiles(&base, &lcid, NULL) -> status 00000000H, base 64K-aligned yes, MBI AllocationBase = base yes, AllocationProtect 2H, State 1000H, Protect 2H, Type 40000H, RegionSize C9000H; locale.nls C80E8H bytes (read yes), the view's first C80E8H bytes = the file yes; lcid = GetSystemDefaultLCID() yes, = GetUserDefaultLCID() yes; unmap -> 00000000H
 tm_nt nls.1: NtInitializeNlsFiles(&base, &lcid, NULL) -> status 00000000H, base 64K-aligned yes, MBI AllocationBase = base yes, AllocationProtect 2H, State 1000H, Protect 2H, Type 40000H, RegionSize C9000H; locale.nls C80E8H bytes (read yes), the view's first C80E8H bytes = the file yes; lcid = GetSystemDefaultLCID() yes, = GetUserDefaultLCID() yes; unmap -> 00000000H
+tm_nt con.start: CreateProcessW(this image, "con.child <file>", bInheritHandles FALSE, DETACHED_PROCESS 8H, STARTUPINFOW {cb only}) -> ok, wait 0H, child exit code 0
+tm_nt con.pp: RTL_USER_PROCESS_PARAMETERS ConsoleHandle 0, ConsoleFlags = the starting process' ConsoleFlags yes, StandardInput 0, StandardOutput 0, StandardError 0, WindowFlags 0H, ShowWindowFlags 0H
+tm_nt con.chp.8: NtQueryInformationProcess(NtCurrentProcess(), 31H ProcessConsoleHostProcess, Length 8H) -> status 00000000H, ReturnLength 8H, value 1H
+tm_nt con.chp.4: NtQueryInformationProcess(NtCurrentProcess(), 31H ProcessConsoleHostProcess, Length 4H) -> status C0000004H, ReturnLength CCCCCCCCH, not written
+tm_nt con.chp.10: NtQueryInformationProcess(NtCurrentProcess(), 31H ProcessConsoleHostProcess, Length 10H) -> status C0000004H, ReturnLength CCCCCCCCH, not written
+tm_nt con.chps.8: NtSetInformationProcess(NtCurrentProcess(), 31H, value 1, Length 8H) -> status 00000000H
+tm_nt con.chps.4: NtSetInformationProcess(NtCurrentProcess(), 31H, value 1, Length 4H) -> status C0000004H
+tm_nt con.chps.10: NtSetInformationProcess(NtCurrentProcess(), 31H, value 1, Length 10H) -> status C0000004H
+tm_nt con.chp.after: NtQueryInformationProcess(NtCurrentProcess(), 31H ProcessConsoleHostProcess, Length 8H) -> status 00000000H, ReturnLength 8H, value 1H
+tm_nt con.std.0: GetStdHandle(STD_INPUT_HANDLE) -> 0, LastError 12345678H
+tm_nt con.std.1: GetStdHandle(STD_OUTPUT_HANDLE) -> 0, LastError 12345678H
+tm_nt con.std.2: GetStdHandle(STD_ERROR_HANDLE) -> 0, LastError 12345678H
+tm_nt con.api.window: GetConsoleWindow() -> NULL, LastError 6H
+tm_nt con.api.cp: GetConsoleCP() -> 0H, LastError 6H
+tm_nt con.api.ocp: GetConsoleOutputCP() -> 0H, LastError 6H
+tm_nt con.api.mode: GetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), &mode) -> 0, LastError 6H, mode not written
+tm_nt con.api.wcon: WriteConsoleW(GetStdHandle(STD_OUTPUT_HANDLE), L"tm", 2, &written, NULL) -> 0, LastError 6H, written not written
+tm_nt con.api.wfile: WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), "tm", 2, &written, NULL) -> 0, LastError 6H, written 0
+tm_nt con.api.ftype: GetFileType(GetStdHandle(STD_OUTPUT_HANDLE)) -> 0H, LastError 6H
+tm_nt con.ntwf: NtWriteFile(NULL, NULL, NULL, NULL, &iosb, "tm", 2, NULL, NULL) -> status C0000008H, IoStatusBlock not written
+tm_nt con.pp.after: ConsoleHandle 0, StandardOutput 0 (after the API calls)
+tm_nt etwt.reg: NtTraceControl(0FH, provider 4 as etw.reg4) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt.blob: kernelbase.dll+282EB6H, 33H bytes: first USHORT (the traits size) 33H, non-zero bytes 48
+tm_nt etwt.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 33H, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt.in: input after the call: handle unchanged, blob pointer unchanged, size 33H
+tm_nt etwt.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt5.reg: NtTraceControl(0FH, provider 5 as etw.reg5) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt5.blob: kernelbase.dll+282E80H, 25H bytes: first USHORT (the traits size) 25H, non-zero bytes 35
+tm_nt etwt5.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 25H, 6 zero bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt5.in: input after the call: handle unchanged, blob pointer unchanged, size 25H
+tm_nt etwt5.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt6.reg: NtTraceControl(0FH, provider 6 as etw.reg6) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt6.blob: kernelbase.dll+282DEFH, 39H bytes: first USHORT (the traits size) 39H, non-zero bytes 54
+tm_nt etwt6.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 39H, 6 zero bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt6.in: input after the call: handle unchanged, blob pointer unchanged, size 39H
+tm_nt etwt6.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt7.reg: NtTraceControl(0FH, provider 7 as etw.reg7) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt7.blob: kernel32.dll+8C95CH, 39H bytes: first USHORT (the traits size) 39H, non-zero bytes 54
+tm_nt etwt7.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 39H, 6 zero bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt7.in: input after the call: handle unchanged, blob pointer unchanged, size 39H
+tm_nt etwt7.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt tok.pt.1d: NtQueryInformationToken(NtCurrentProcessToken(), 1DH, Length 4H) -> status 00000000H, ReturnLength 4H, written 4H; value 0H
+tm_nt tok.pt.1d.0: NtQueryInformationToken(NtCurrentProcessToken(), 1DH, Length 0H) -> status C0000023H, ReturnLength 4H, written 0H
+tm_nt tok.pt.1d.8: NtQueryInformationToken(NtCurrentProcessToken(), 1DH, Length 8H) -> status 00000000H, ReturnLength 4H, written 4H; value 0H
+tm_nt tok.open: NtOpenProcessToken(NtCurrentProcess(), 8 TOKEN_QUERY, &h) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt tok.h.c: NtQueryInformationToken(the token handle, CH, Length 4H) -> status 00000000H, ReturnLength 4H, written 4H; value = the PEB SessionId yes
+tm_nt tok.h.1d: NtQueryInformationToken(the token handle, 1DH, Length 4H) -> status 00000000H, ReturnLength 4H, written 4H; value 0H
+tm_nt tok.h.2a: NtQueryInformationToken(the token handle, 2AH, Length 4H) -> status 00000000H, ReturnLength 4H, written 4H; value 0H
+tm_nt tok.h.c.0: NtQueryInformationToken(the token handle, CH, Length 0H) -> status C0000023H, ReturnLength 4H, written 0H
+tm_nt tok.h.2a.0: NtQueryInformationToken(the token handle, 2AH, Length 0H) -> status C0000023H, ReturnLength 4H, written 0H
+tm_nt tok.h.2a.8: NtQueryInformationToken(the token handle, 2AH, Length 8H) -> status 00000000H, ReturnLength 4H, written 4H; value 0H
+tm_nt tok.pt.c: NtQueryInformationToken(NtCurrentProcessToken(), CH, Length 4H) -> status 00000000H, ReturnLength 4H, written 4H; value = the PEB SessionId yes
+tm_nt tok.eff.1: NtQueryInformationToken(NtCurrentThreadEffectiveToken(), 1H, Length 58H) -> status 00000000H, ReturnLength 2CH, written 2CH; Sid <ptr:+10H>, Attributes 0H, SID Revision 1, SubAuthorityCount 5, IdentifierAuthority 5, SubAuthority[0] 21, the RID (last) >= 1000 yes, the S-1-5-21 + domain + RID shape yes
+tm_nt tok.eff.1.0: NtQueryInformationToken(NtCurrentThreadEffectiveToken(), 1H, Length 0H) -> status C0000023H, ReturnLength 2CH, written 0H
+tm_nt tok.pt.2a: NtQueryInformationToken(NtCurrentProcessToken(), 2AH, Length 4H) -> status 00000000H, ReturnLength 4H, written 4H; value 0H
+tm_nt tok.h.2c: NtQueryInformationToken(the token handle, 2CH, Length 120H) -> status 00000000H, ReturnLength 10H, written 9H; IsolationPrefix NULL, IsolationEnabled 0, bytes +9..+FH not written
+tm_nt tok.h.2c.10: NtQueryInformationToken(the token handle, 2CH, Length 10H) -> status 00000000H, ReturnLength 10H, written 9H; IsolationPrefix NULL, IsolationEnabled 0, bytes +9..+FH not written
+tm_nt tok.h.2c.0: NtQueryInformationToken(the token handle, 2CH, Length 0H) -> status C0000023H, ReturnLength 10H, written 0H
+tm_nt tok.h.2c.8: NtQueryInformationToken(the token handle, 2CH, Length 8H) -> status C0000023H, ReturnLength 10H, written 0H
+tm_nt tok.close: NtClose(the token handle) -> 00000000H
+tm_nt tok.open.read: NtOpenProcessToken(NtCurrentProcess(), 20008H, &h) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt acc.1: NtAccessCheck(the loader's absolute SD (SID 1), NtCurrentProcessToken(), 1, ntdll's mapping, PrivilegeSet 38H) -> status 00000000H, GrantedAccess 0H, AccessStatus C0000022H, PrivilegeSetLength 38H, PrivilegeSet bytes written 8H; PrivilegeCount 0, Control 0H
+tm_nt acc.2: NtAccessCheck(the loader's absolute SD (SID 2), NtCurrentProcessToken(), 1, ntdll's mapping, PrivilegeSet 38H) -> status 00000000H, GrantedAccess 0H, AccessStatus C0000022H, PrivilegeSetLength 38H, PrivilegeSet bytes written 8H; PrivilegeCount 0, Control 0H
+tm_nt bno.f: NtOpenDirectoryObject(&h, FH, "\Sessions\<the PEB SessionId>\BaseNamedObjects" OBJ_CASE_INSENSITIVE) -> status 00000000H, handle <handle> (non-zero, multiple of 4), object type "Directory"; NtClose -> 00000000H
+tm_nt bno.3: NtOpenDirectoryObject(&h, 3H, "\Sessions\<the PEB SessionId>\BaseNamedObjects" OBJ_CASE_INSENSITIVE) -> status 00000000H, handle <handle> (non-zero, multiple of 4), object type "Directory"; NtClose -> 00000000H
+tm_nt bno.other: NtOpenDirectoryObject(&h, FH, "\Sessions\<another session number>\BaseNamedObjects" OBJ_CASE_INSENSITIVE) -> status C000003AH, handle NULL
+tm_nt mut.loader: NtCreateMutant(&h, 1F0001H, {the BaseNamedObjects handle, "Local\SM0:<the process id>:304:WilStaging_02", OBJ_OPENIF}, FALSE) -> status 40000000H, handle <handle> (non-zero, multiple of 4); NtClose -> 00000000H
+tm_nt mut.fresh: NtCreateMutant(&h, 1F0001H, {the BaseNamedObjects handle, "Local\SM0:<the process id>:304:WilStaging_tm", OBJ_OPENIF}, FALSE) -> status 00000000H, handle <handle> (non-zero, multiple of 4); NtClose -> 00000000H
+tm_nt mut.fresh2: NtCreateMutant(&h, 1F0001H, {the BaseNamedObjects handle, "Local\SM0:<the process id>:304:WilStaging_tm", OBJ_OPENIF}, FALSE) -> status 00000000H, handle <handle> (non-zero, multiple of 4); NtClose -> 00000000H
+tm_nt mut.wcreate: a fresh mutant of the loader's shape -> status 00000000H
+tm_nt mut.wait0: NtWaitForSingleObject(the mutant, FALSE, NULL) -> status 00000000H
+tm_nt mut.wait1: NtWaitForSingleObject(the mutant, FALSE, NULL) -> status 00000000H
+tm_nt mut.rel0: NtReleaseMutant(the mutant, &PreviousCount) -> status 00000000H, PreviousCount FFFFFFFFH
+tm_nt mut.rel1: NtReleaseMutant(the mutant, &PreviousCount) -> status 00000000H, PreviousCount 0H
+tm_nt mut.rel2: NtReleaseMutant(the mutant, &PreviousCount) -> status C0000046H, PreviousCount not written CCCCCCCCH
+tm_nt wil.open.loader: NtOpenSemaphore(&h, 1F0003H, {the BaseNamedObjects handle, "Local\SM0:<the process id>:304:WilStaging_02_p0", attributes 0H}) -> status 00000000H, handle <handle> (non-zero, multiple of 4); NtClose -> 00000000H
+tm_nt wil.open.fresh: NtOpenSemaphore(&h, 1F0003H, {the BaseNamedObjects handle, "Local\SM0:<the process id>:304:WilStaging_tm_p0", attributes 0H}) -> status C0000034H, handle not written
+tm_nt wil.create: NtCreateSemaphore(&h, 1F0003H, {the BaseNamedObjects handle, a fresh "...WilStaging_tm_p0", OBJ_OPENIF}, 28CF0H, 28CF0H) -> status 00000000H, handle <handle> (non-zero, multiple of 4); again while open -> status 40000000H, handle <handle> (non-zero, multiple of 4); the loader's "...WilStaging_02_p0" -> status 40000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt wnf.1000: NtQueryWnfStateData(&0280032EA3BC0875H, &the loader's TypeId, NULL, &stamp, buffer, &BufferLength = 1000H) -> status 00000000H, ChangeStamp non-zero, BufferLength 8H, written 8H, non-zero data bytes 1
+tm_nt wnf.1000.data: 01 00 00 00 00 00 00 00
+tm_nt wnf.0: NtQueryWnfStateData(&0280032EA3BC0875H, &the loader's TypeId, NULL, &stamp, NULL, &BufferLength = 0H) -> status C0000023H, ChangeStamp non-zero, BufferLength 8H, written 0H, non-zero data bytes 0
+tm_nt wnf.notype: NtQueryWnfStateData(&0280032EA3BC0875H, NULL, NULL, &stamp, buffer, &BufferLength = 1000H) -> status C000000DH, ChangeStamp not written, BufferLength 1000H, written 0H, non-zero data bytes 0
+tm_nt wnf2.0: NtQueryWnfStateData(&418A073AA3BC7C75H, NULL, NULL, &stamp, NULL, &BufferLength = 0H) -> status 00000000H, ChangeStamp 0, BufferLength 0H, written 0H, non-zero data bytes 0
+tm_nt wnf2.0.data:
+tm_nt wnf2.1000: NtQueryWnfStateData(&418A073AA3BC7C75H, NULL, NULL, &stamp, buffer, &BufferLength = 1000H) -> status 00000000H, ChangeStamp 0, BufferLength 0H, written 0H, non-zero data bytes 0
+tm_nt wnf2.1000.data:
+tm_nt wnf2.c8: NtQueryWnfStateData(&418A073AA3BC7C75H, NULL, NULL, &stamp, buffer, &BufferLength = C8H) -> status 00000000H, ChangeStamp 0, BufferLength 0H, written 0H, non-zero data bytes 0
+tm_nt wnf2.c8.data:
+tm_nt wnf3.0: NtQueryWnfStateData(&418A073AA3BC88F5H, NULL, NULL, &stamp, NULL, &BufferLength = 0H) -> status 00000000H, ChangeStamp 0, BufferLength 0H, written 0H, non-zero data bytes 0
+tm_nt wnf3.0.data:
+tm_nt wnf3.c8: NtQueryWnfStateData(&418A073AA3BC88F5H, NULL, NULL, &stamp, buffer, &BufferLength = C8H) -> status 00000000H, ChangeStamp 0, BufferLength 0H, written 0H, non-zero data bytes 0
+tm_nt wnf3.c8.data:
+tm_nt wnf3.1000: NtQueryWnfStateData(&418A073AA3BC88F5H, NULL, NULL, &stamp, buffer, &BufferLength = 1000H) -> status 00000000H, ChangeStamp 0, BufferLength 0H, written 0H, non-zero data bytes 0
+tm_nt wnf3.1000.data:
+tm_nt wnf4.1000: NtQueryWnfStateData(&418A073AA3BC1C75H, NULL, NULL, &stamp, buffer, &BufferLength = 1000H) -> status 00000000H, ChangeStamp non-zero, BufferLength > 400H yes, a multiple of 4 yes, written = BufferLength yes; header 00 00 00 00 04 00 04 00 01 00 02 00 01 01 00 00
+tm_nt wnf4.0: NtQueryWnfStateData(&418A073AA3BC1C75H, NULL, NULL, &stamp, NULL, &BufferLength = 0H) -> status C0000023H, ChangeStamp non-zero, BufferLength > 400H yes, a multiple of 4 yes, written = BufferLength yes
+tm_nt wnfe.set: NtSetWnfProcessNotificationEvent(a new synchronization event) -> status C0000718H
+tm_nt wnfe.again: NtSetWnfProcessNotificationEvent(the same event) -> status C0000718H
+tm_nt wnfe.null: NtSetWnfProcessNotificationEvent(NULL) -> status C0000008H
+tm_nt wnfs.stamp: NtSubscribeWnfStateChange(&0280032EA3BC0875H, the current ChangeStamp, 11H, &id) -> status 00000000H, SubscriptionId non-zero
+tm_nt wnfs.one: NtSubscribeWnfStateChange(&0280032EA3BC0875H, 1, 11H, &id) -> status 00000000H, SubscriptionId non-zero, = the first yes
+tm_nt wnfs.two: NtSubscribeWnfStateChange(&418A073AA3BC7C75H, 0, 11H, &id) -> status 00000000H, SubscriptionId non-zero, = the first state's no
+tm_nt wnfs.three: NtSubscribeWnfStateChange(&418A073AA3BC88F5H, 0, 11H, &id) -> status 00000000H, SubscriptionId non-zero, = the first / second state's no / no
+tm_nt t2s.create: NtCreateTimer2(&h, NULL, NULL, 8, 100002H) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt t2s.set: NtSetTimer2(the timer, &(relative 300 s), NULL, &{0, 00 00 FB 7F, 75 s}) -> status 00000000H, DueTime unchanged
+tm_nt t2s.again: NtSetTimer2(the same, again) -> status 00000000H
+tm_nt t2s.close: NtClose -> 00000000H
+tm_nt hku.safer: NtOpenKey(&h, 1H, "\REGISTRY\USER\<the user SID>\Software\Policies\Microsoft\Windows\Safer\CodeIdentifiers" OBJ_CASE_INSENSITIVE) -> status C0000034H, handle NULL
+tm_nt alert: NtTestAlert() -> status 00000000H; again -> status 00000000H
+tm_nt term.null: NtTerminateProcess(NULL, 2BH) -> status 00000000H; the calling thread continues: yes

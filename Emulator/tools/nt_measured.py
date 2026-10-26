@@ -14,7 +14,7 @@ Checked:
      is needed)
   3. tm_nt.exe is our own test PE: it is built into build\\x64\\<cfg>\\tests\\test_pe\\ and never run by the emulator
 The emulator side (the answers implemented from these lines) is checked by emu-selftest nt_measured_services / nt_measured_pool /
-nt_measured_loader / nt_measured_csr (P40) and by suite win_env_sys_loader. Exit 0 = PASS, 1 = FAIL, 2 = usage.
+nt_measured_loader / nt_measured_csr (P40) / nt_measured_console (P41) and by suite win_env_sys_loader. Exit 0 = PASS, 1 = FAIL, 2 = usage.
 usage: python -I nt_measured.py REPO_ROOT TESTS_DIR
 """
 import hashlib
@@ -26,9 +26,14 @@ import sys
 
 sys.dont_write_bytecode = True
 HERE = os.path.dirname(os.path.abspath(__file__))
-CASES = ['sat', 'qsi', 'hvp', 'qip', 'wcp', 'qsix', 'iocp', 'wkf', 'tmr2', 'awcp', 'swf', 'etw', 'kd', 'of', 'tls', 'ahc', 'vmi', 'csr', 'sec', 'csrc', 'nls']   # P40 (U2064): + csrc (what a connected CSR client sees), nls
+CASES = ['sat', 'qsi', 'hvp', 'qip', 'wcp', 'qsix', 'iocp', 'wkf', 'tmr2', 'awcp', 'swf', 'etw', 'kd', 'of', 'tls', 'ahc', 'vmi', 'csr', 'sec', 'csrc', 'nls',   # P40 (U2064): + csrc, nls
+         'con', 'etwt', 'tok', 'acc', 'bno', 'mut', 'wil', 'wnf', 'wnfe', 'wnfs', 't2s', 'hku', 'alert', 'term']   # P41 (U2068): a process started without a console
+# P41 (U2068): case term ends the process with exit code 2BH (its NtTerminateProcess( NULL, 2BH ) fixes the process' exit status)
+EXIT_CODE = {'term': 0x2B}
 # hex constants (9 .. 16 digits) that may appear: system constants and the pre-set fill pattern - never an address of the run
-ALLOWED_HEX = {'FFFF800000000000', 'FFFFFFFFFF676980', 'FFFFFFFFDC3CBA00', 'FFFFFFFFFF676980H', 'CCCCCCCCCCCCCCCC'}
+ALLOWED_HEX = {'FFFF800000000000', 'FFFFFFFFFF676980', 'FFFFFFFFDC3CBA00', 'FFFFFFFFFF676980H', 'CCCCCCCCCCCCCCCC',
+               # P41 (U2068): WNF state names of the system DLLs, a worker-factory idle timeout - constants
+               '0280032EA3BC0875', '418A073AA3BC7C75', '418A073AA3BC88F5', '418A073AA3BC1C75', 'FFFFFFFFEE1E5D00'}
 
 
 def load(name):
@@ -67,7 +72,7 @@ def main(argv):
     check(all(l.startswith('tm_nt ') for l in body), 'every data line is a tm_nt output line (%d lines)' % len(body))
     keys = [l.split(':', 1)[0] for l in body]
     check(len(keys) == len(set(keys)), 'no item twice')
-    by_case = {c: [l for l in body if re.match(r'tm_nt %s(\.|:)' % re.escape(c), l)] for c in CASES}
+    by_case = {c: [l for l in body if re.match(r'tm_nt %s\d*(\.|:)' % re.escape(c), l)] for c in CASES}   # P41: + a digit suffix (etwt5, wnf2 ...)
     check(all(by_case[c] for c in CASES) and sum(len(v) for v in by_case.values()) == len(body), 'every tm_nt case recorded (%s), no other line' % ', '.join(CASES))
     bad = []
     for l in body:
@@ -93,9 +98,9 @@ def main(argv):
         for c in CASES:
             r = subprocess.run([tm, c], capture_output=True, timeout=300, cwd=sysroot)
             got = [l for l in r.stdout.decode('ascii', 'replace').replace('\r\n', '\n').split('\n') if l.startswith('tm_nt ')]
-            if r.returncode != 0 or got != by_case[c]:
+            if r.returncode != EXIT_CODE.get(c, 0) or got != by_case[c]:
                 diffs.append('%s (exit %d, %d vs %d lines%s)' % (c, r.returncode, len(got), len(by_case[c]),
-                                                                ', first difference ' + next((g.split(':', 1)[0] for g, w in zip(got, by_case[c]) if g != w), '-') if r.returncode == 0 else ''))
+                                                                ', first difference ' + next((g.split(':', 1)[0] for g, w in zip(got, by_case[c]) if g != w), '-') if r.returncode == EXIT_CODE.get(c, 0) else ''))
         check(not diffs, 'NATIVE REFERENCE (labelled, decision 3.0.7: our own test PE in the VMware guest): tm_nt, one process per case, equals the recorded lines '
               '(%d cases%s)' % (len(CASES), ('; differing: ' + ', '.join(diffs)) if diffs else ''))
     else:
