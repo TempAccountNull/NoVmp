@@ -2783,6 +2783,102 @@ namespace
 		}
 	}
 
+	// nt_measured_pool (P39, U2054-U2056): the thread-pool and ETW services of the --Sys loader answer what tm_nt measured (wcp, iocp,
+	// wkf, swf, tmr2, awcp, etw) and stop for every input that was not measured
+	void t_nt_measured_pool()
+	{
+		std::string err;
+		auto p = w5_create( w5_build( { w5_trivial }, err ), emu::env_boundary::sys, err );
+		CHECK( p != nullptr, "process: " + err );
+		if ( !p ) return;
+		namespace N = emu::nt;
+		const uint64_t S = w5_scratch;
+		auto rd = [ & ]( uint64_t va, int n ) { return w4_read( *p, va, n ); };
+		auto handle_ok = [ & ]( uint64_t h ) { return h && h % 4 == 0; };
+		// 1. NtCreateWaitCompletionPacket (tm_nt wcp)
+		w5_put( *p, S, 0 );
+		auto r = w5_call( *p, "NtCreateWaitCompletionPacket", { S, 1, 0 } );
+		const uint64_t pk = rd( S, 8 );
+		CHECK( w5_ok( r ) && handle_ok( pk ), "wcp: DesiredAccess 1, OA NULL: a handle: " + r.text );
+		CHECK( w5_ok( w5_call( *p, "NtCreateWaitCompletionPacket", { S + 8, 0x1F0003, 0 } ) ) && handle_ok( rd( S + 8, 8 ) ), "wcp.all: 1F0003H" );
+		CHECK( w5_stop( w5_call( *p, "NtCreateWaitCompletionPacket", { S + 8, 2, 0 } ) ), "another access: not measured - stop" );
+		CHECK( w5_stop( w5_call( *p, "NtCreateWaitCompletionPacket", { S + 8, 1, S + 0x300 } ) ), "ObjectAttributes: not measured - stop" );
+		CHECK( w5_status( w5_call( *p, "NtCreateWaitCompletionPacket", { 0x10, 1, 0 } ), N::status::access_violation ), "an unwritable handle pointer: STATUS_ACCESS_VIOLATION" );
+		// 2. NtCreateIoCompletion (tm_nt iocp)
+		r = w5_call( *p, "NtCreateIoCompletion", { S + 0x10, 0x1F0003, 0, 9 } );
+		const uint64_t io = rd( S + 0x10, 8 );
+		CHECK( w5_ok( r ) && handle_ok( io ), "iocp.9: a handle: " + r.text );
+		CHECK( w5_stop( w5_call( *p, "NtCreateIoCompletion", { S + 0x18, 1, 0, 9 } ) ), "iocp: another access - stop" );
+		// 3. NtCreateWorkerFactory (tm_nt wkf)
+		const uint64_t cp = N::current_process;
+		r = w5_call( *p, "NtCreateWorkerFactory", { S + 0x20, 0xF00FF, 0, io, cp, 0x140001000, S + 0x400, 0x200, 0x100000, 0x1000 } );
+		const uint64_t wf = rd( S + 0x20, 8 );
+		CHECK( w5_ok( r ) && handle_ok( wf ) && r.text.find( "no worker thread" ) != std::string::npos, "wkf: the loader's arguments: a handle, no thread: " + r.text );
+		w5_put( *p, S + 0x28, 0xCCCCCCCCCCCCCCCCull );
+		CHECK( w5_status( w5_call( *p, "NtCreateWorkerFactory", { S + 0x28, 0xF00FF, 0, cp, cp, 0x140001000, S + 0x400, 0x200, 0x100000, 0x1000 } ), N::status::object_type_mismatch ) &&
+				   rd( S + 0x28, 8 ) == 0xCCCCCCCCCCCCCCCCull,
+			   "wkf.badport: the process as the port: STATUS_OBJECT_TYPE_MISMATCH, nothing written" );
+		CHECK( w5_status( w5_call( *p, "NtCreateWorkerFactory", { S + 0x28, 0xF00FF, 0, pk, cp, 0x140001000, S + 0x400, 0x200, 0x100000, 0x1000 } ), N::status::object_type_mismatch ),
+			   "a packet as the port: STATUS_OBJECT_TYPE_MISMATCH" );
+		CHECK( w5_stop( w5_call( *p, "NtCreateWorkerFactory", { S + 0x28, 0xF00FF, 0, io, cp, 0x140001000, S + 0x400, 0x100, 0x100000, 0x1000 } ) ), "another MaxThreadCount: stop" );
+		// 4. NtSetInformationWorkerFactory (tm_nt swf)
+		auto swf = [ & ]( uint32_t cls, uint64_t v, uint32_t len ) {
+			w5_put( *p, S + 0x30, v );
+			return w5_call( *p, "NtSetInformationWorkerFactory", { wf, cls, S + 0x30, len } );
+		};
+		CHECK( w5_ok( swf( 5, 0x300, 4 ) ) && w5_ok( swf( 14, 0x180, 4 ) ) && w5_ok( swf( 3, 1, 4 ) ), "swf: the loader's ThreadMaximum 300H, SoftMaximum 180H, BindingCount 1" );
+		CHECK( w5_ok( swf( 4, 0, 4 ) ) && w5_stop( swf( 4, 1, 4 ) ), "swf.4: ThreadMinimum 0 ok; 1 would start a worker thread natively - stop" );
+		CHECK( w5_status( swf( 6, 0, 4 ), N::status::not_implemented ) && w5_status( swf( 9, 0, 4 ), 0xC0000001 ) && w5_status( swf( 10, 0x100000, 4 ), N::status::info_length_mismatch ),
+			   "swf.6 / 9 / 10: NOT_IMPLEMENTED / UNSUCCESSFUL / INFO_LENGTH_MISMATCH" );
+		CHECK( w5_status( swf( 0, 0xFFFFFFFFFF676980ull, 8 ), N::status::invalid_info_class ) && w5_ok( swf( 2, 0xFFFFFFFFDC3CBA00ull, 8 ) ) &&
+				   w5_status( swf( 5, 0x200, 8 ), N::status::info_length_mismatch ),
+			   "swf.0 / 2 / 5.8: INVALID_INFO_CLASS / SUCCESS / INFO_LENGTH_MISMATCH" );
+		CHECK( w5_stop( swf( 5, 0x123, 4 ) ) && w5_stop( swf( 7, 0, 4 ) ), "unmeasured values / classes: stop" );
+		CHECK( w5_stop( w5_call( *p, "NtSetInformationWorkerFactory", { io, 5, S + 0x30, 4 } ) ), "not a worker factory: stop" );
+		// 5. NtCreateTimer2 (tm_nt tmr2) + NtAssociateWaitCompletionPacket (tm_nt awcp)
+		r = w5_call( *p, "NtCreateTimer2", { S + 0x40, 0, 0, 8, 0x100002 } );
+		const uint64_t tm = rd( S + 0x40, 8 );
+		CHECK( w5_ok( r ) && handle_ok( tm ), "tmr2: NO_WAKE, 100002H: a handle" );
+		CHECK( w5_stop( w5_call( *p, "NtCreateTimer2", { S + 0x48, 0, 0, 4, 0x100002 } ) ) && w5_stop( w5_call( *p, "NtCreateTimer2", { S + 0x48, S + 0x500, 0, 8, 0x100002 } ) ),
+			   "tmr2: other attributes / a TimerId: stop" );
+		w5_put( *p, S + 0x50, 0xCC );
+		r = w5_call( *p, "NtAssociateWaitCompletionPacket", { pk, io, tm, S + 0x600, S + 0x680, 0, 1, S + 0x50 } );
+		CHECK( w5_ok( r ) && rd( S + 0x50, 1 ) == 0, "awcp.timer.info1: a timer that is not set: AlreadySignaled FALSE: " + r.text );
+		CHECK( w5_ok( w5_call( *p, "NtAssociateWaitCompletionPacket", { pk, io, cp, S + 0x600, S + 0x680, 0, 0, 0 } ) ), "awcp.badtarget: the process: SUCCESS (AlreadySignaled NULL accepted)" );
+		w5_put( *p, S + 0x58, 0 );
+		CHECK( w5_ok( w5_call( *p, "NtCreateEvent", { S + 0x58, 0x1F0003, 0, 1, 1 } ) ), "a signaled synchronization event" );
+		const uint64_t ev = rd( S + 0x58, 8 );
+		CHECK( w5_stop( w5_call( *p, "NtAssociateWaitCompletionPacket", { pk, io, ev, S + 0x600, S + 0x680, 0, 0, S + 0x50 } ) ),
+			   "awcp.event1: a signaled event (measured AlreadySignaled TRUE, the packet queued) - the queue is not modelled: stop" );
+		CHECK( w5_stop( w5_call( *p, "NtAssociateWaitCompletionPacket", { io, io, tm, 0, 0, 0, 0, 0 } ) ), "a port as the packet: stop" );
+		// 6. NtTraceControl (tm_nt etw)
+		w5_put( *p, S + 0x60, 0 );
+		CHECK( w5_ok( w5_call( *p, "NtCreateEvent", { S + 0x60, 0x1F0003, 0, 1, 0 } ) ), "a non-signaled synchronization event" );
+		const uint64_t ne = rd( S + 0x60, 8 );
+		w5_put( *p, S + 0x68, ne );
+		w5_put( *p, S + 0x70, 0xCCCCCCCC );
+		CHECK( w5_ok( w5_call( *p, "NtTraceControl", { 0x1B, S + 0x68, 4, 0, 0, S + 0x70 } ) ) && rd( S + 0x70, 4 ) == 0xCCCCCCCC, "etw: the first notification event: SUCCESS, ReturnLength not written" );
+		CHECK( w5_status( w5_call( *p, "NtTraceControl", { 0x1B, S + 0x68, 4, 0, 0, S + 0x70 } ), 0xC0000718 ), "etw.event: a second one: STATUS_ALREADY_REGISTERED" );
+		w5_put( *p, S + 0x68, 0 );
+		CHECK( w5_status( w5_call( *p, "NtTraceControl", { 0x1B, S + 0x68, 4, 0, 0, S + 0x70 } ), N::status::invalid_parameter ), "etw.zero: STATUS_INVALID_PARAMETER" );
+		CHECK( w5_status( w5_call( *p, "NtTraceControl", { 0x1B, S + 0x68, 8, 0, 0, S + 0x70 } ), N::status::invalid_parameter ), "etw.event8: STATUS_INVALID_PARAMETER" );
+		// registration (function 0FH): provider 1 of the loader (RegType 3, LoggerId 1), in = out A0H
+		const uint64_t R = S + 0x800;
+		for ( uint64_t k = 0; k < 0xA0; k += 8 ) w5_put( *p, R + k, 0 );
+		w5_put( *p, R, 0x4C8E042A3595AB5Cull );
+		w5_put( *p, R + 8, 0xB1B1FE9B052D42B9ull );
+		w5_put( *p, R + 0x10, ( uint64_t( 1 ) << 32 ) | 3 );   // RegType 3, LoggerId 1
+		w5_put( *p, S + 0x78, 0 );
+		r = w5_call( *p, "NtTraceControl", { 0xF, R, 0xA0, R, 0xA0, S + 0x78 } );
+		CHECK( w5_ok( r ) && handle_ok( rd( R + 0x18, 8 ) ) && rd( R + 0x2C, 4 ) == 0xA0 && rd( S + 0x78, 4 ) == 0xA0 && rd( R + 0x70, 8 ) == 0 && rd( R + 0x20, 8 ) == 0,
+			   "etw.reg: ReplyHandle written, Reserved1 A0H, ReturnLength A0H, nothing else: " + r.text );
+		w5_put( *p, R, 0x4C8E042A3595AB5Dull );
+		w5_put( *p, R + 0x18, 0 );
+		w5_put( *p, R + 0x28, 0 );
+		CHECK( w5_stop( w5_call( *p, "NtTraceControl", { 0xF, R, 0xA0, R, 0xA0, S + 0x78 } ) ), "an unmeasured provider: stop" );
+		CHECK( w5_stop( w5_call( *p, "NtTraceControl", { 0x10, R, 0xA0, R, 0xA0, S + 0x78 } ) ), "another function code: stop" );
+	}
+
 	struct test_case { const char* name; void ( *fn )(); };
 	const test_case cases[] = {
 		{ "options_oep_defaults", t_options_oep_defaults },
@@ -2839,6 +2935,7 @@ namespace
 		{ "nt_kernel_sys_services", t_nt_kernel_sys_services },
 		{ "win_env_nt_continue", t_win_env_nt_continue },
 		{ "nt_measured_services", t_nt_measured_services },
+		{ "nt_measured_pool", t_nt_measured_pool },
 	};
 }
 

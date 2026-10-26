@@ -41,9 +41,11 @@ FRONTIER_PATH = (
     'NtQueryVirtualMemory NtProtectVirtualMemory NtOpenKey NtQueryValueKey NtClose NtOpenKey NtOpenKey NtOpenKey '
     'NtQueryInformationProcess NtQueryInformationProcess NtQuerySecurityAttributesToken NtQuerySecurityAttributesToken NtOpenKey NtQueryValueKey NtClose NtQueryInformationProcess '
     'NtQuerySystemInformation NtQuerySystemInformation NtAllocateVirtualMemoryEx NtAllocateVirtualMemoryEx NtAllocateVirtualMemoryEx NtQuerySystemInformation NtAllocateVirtualMemory NtFreeVirtualMemory '
-    'NtAllocateVirtualMemory NtQuerySystemInformation NtQuerySystemInformation NtCreateEvent '
+    'NtAllocateVirtualMemory NtQuerySystemInformation NtQuerySystemInformation NtCreateEvent NtCreateWaitCompletionPacket NtQuerySystemInformationEx NtCreateIoCompletion NtCreateWorkerFactory '
+    'NtCreateTimer2 NtCreateWaitCompletionPacket NtAssociateWaitCompletionPacket NtCreateTimer2 NtCreateWaitCompletionPacket NtAssociateWaitCompletionPacket NtSetInformationWorkerFactory NtSetInformationWorkerFactory '
+    'NtSetInformationWorkerFactory NtAssociateWaitCompletionPacket NtTraceControl NtTraceControl NtTraceControl NtTraceControl NtFreeVirtualMemory NtProtectVirtualMemory '
 ).split()
-FRONTIER = 'NtCreateWaitCompletionPacket'
+FRONTIER = 'NtOpenDirectoryObject'
 
 
 def say(msg):

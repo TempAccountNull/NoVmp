@@ -49,6 +49,7 @@
 #include <emu/engine.hpp>
 
 #include <array>
+#include <initializer_list>
 #include <cstdint>
 #include <map>
 #include <string>
@@ -244,7 +245,17 @@ namespace emu::nt
 		// (nt_kernel_measured.cpp; Emulator/data/nt_measured_vmware_guest.txt)
 		bool dispatch_measured( const call& c, reply& r );
 		reply svc_query_security_attributes_token( const call& c );
+		reply svc_create_wait_completion_packet( const call& c );
+		reply svc_query_system_information_ex( const call& c );
+		reply svc_create_io_completion( const call& c );
+		reply svc_create_worker_factory( const call& c );
+		reply svc_associate_wait_completion_packet( const call& c );
+		reply svc_set_information_worker_factory( const call& c );
+		reply svc_trace_control( const call& c );
+		reply create_measured_object( const call& c, uint64_t handle_ptr, uint32_t access, uint64_t object_attributes, const char* kind, uint64_t value,
+									 std::initializer_list<uint32_t> accesses, const char* measured );
 		bool query_system_measured( const call& c, reply& r );   // NtQuerySystemInformation classes C5H, 37H
+		uint64_t etw_notification_event_ = 0;                   // NtTraceControl 1BH: the registered event (0 = none)
 		uint64_t hv_page_ = 0;                                  // the hypervisor shared page (class C5H), mapped at the first query
 	};
 }
