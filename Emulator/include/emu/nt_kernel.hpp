@@ -105,6 +105,9 @@ namespace emu::nt
 	struct kernel_facts
 	{
 		const std::map<std::string, registry_key>* registry = nullptr;   // U2034
+		const std::map<std::string, std::vector<uint8_t>>* files = nullptr;   // P39 (U2057): the capture's system files (lower-case name -> bytes)
+		std::string image_dir;                                              // P39 (U2058): the image's directory (DOS path; the CurrentDirectory)
+		std::string system_root;                                            // P39 (U2057): the environment's SystemRoot (e.g. C:\Windows)
 		uint64_t min_app_address = 0, max_app_address = 0;
 		uint32_t page_size = 0x1000, allocation_granularity = 0x10000;
 		uint64_t active_processor_mask = 0;
@@ -252,6 +255,17 @@ namespace emu::nt
 		reply svc_associate_wait_completion_packet( const call& c );
 		reply svc_set_information_worker_factory( const call& c );
 		reply svc_trace_control( const call& c );
+		reply svc_open_namespace_object( const call& c );
+		reply svc_query_symbolic_link( const call& c );
+		reply svc_open_section( const call& c );
+		reply svc_open_file( const call& c );
+		reply svc_map_view_of_section( const call& c );
+		reply svc_set_information_process( const call& c );
+		reply svc_apphelp_cache_control( const call& c );
+		reply svc_set_information_virtual_memory( const call& c );
+		reply svc_create_section( const call& c );
+		reply svc_connect_port( const call& c );
+		reply svc_query_volume_information_file( const call& c );
 		reply create_measured_object( const call& c, uint64_t handle_ptr, uint32_t access, uint64_t object_attributes, const char* kind, uint64_t value,
 									 std::initializer_list<uint32_t> accesses, const char* measured );
 		bool query_system_measured( const call& c, reply& r );   // NtQuerySystemInformation classes C5H, 37H

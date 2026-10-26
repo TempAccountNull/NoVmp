@@ -2879,6 +2879,146 @@ namespace
 		CHECK( w5_stop( w5_call( *p, "NtTraceControl", { 0x10, R, 0xA0, R, 0xA0, S + 0x78 } ) ), "another function code: stop" );
 	}
 
+	// nt_measured_loader (P39, U2057-U2061): the object namespace (\KnownDlls, the CSR shared section), the image directory, the
+	// KnownDll image views, ProcessTlsInformation, the apphelp / hot-patch / range-start / page-file-section answers and the loud stops
+	// at the frontier (the CSR shared section's view, NtConnectPort) - as tm_nt measured them
+	void t_nt_measured_loader()
+	{
+		std::string err;
+		auto p = w5_create( w5_build( { w5_trivial }, err ), emu::env_boundary::sys, err );
+		CHECK( p != nullptr, "process: " + err );
+		if ( !p ) return;
+		namespace N = emu::nt;
+		const uint64_t S = w5_scratch, cp = N::current_process;
+		auto rd = [ & ]( uint64_t va, int n ) { return w4_read( *p, va, n ); };
+		auto handle_ok = [ & ]( uint64_t h ) { return h && h % 4 == 0; };
+		// OBJECT_ATTRIBUTES at AT {30H, root, &name (UNICODE_STRING at AT + 30H, characters at AT + 40H), OBJ_CASE_INSENSITIVE}
+		auto oa = [ & ]( uint64_t at, uint64_t root, const std::string& name ) {
+			ms_ustr( *p, at + 0x30, at + 0x40, name );
+			w5_put( *p, at, 0x30 );
+			w5_put( *p, at + 8, root );
+			w5_put( *p, at + 0x10, at + 0x30 );
+			w5_put( *p, at + 0x18, 0x40 );
+			w5_put( *p, at + 0x20, 0 );
+			w5_put( *p, at + 0x28, 0 );
+		};
+		const uint64_t O = S + 0x1000;
+		// 1. \KnownDlls (tm_nt kd.open / kd.link / kd.target / kd.section)
+		oa( O, 0, "\\KnownDlls" );
+		auto r = w5_call( *p, "NtOpenDirectoryObject", { S, 3, O } );
+		const uint64_t kd = rd( S, 8 );
+		CHECK( w5_ok( r ) && handle_ok( kd ), "kd.open: a directory handle: " + r.text );
+		oa( O, 0, "\\BaseNamedObjects" );
+		CHECK( w5_stop( w5_call( *p, "NtOpenDirectoryObject", { S + 8, 3, O } ) ), "another directory: stop" );
+		oa( O, kd, "KnownDllPath" );
+		r = w5_call( *p, "NtOpenSymbolicLinkObject", { S + 0x10, 1, O } );
+		const uint64_t ln = rd( S + 0x10, 8 );
+		CHECK( w5_ok( r ) && handle_ok( ln ), "kd.link: a link handle" );
+		w5_put( *p, S + 0x20, uint64_t( 0x400 ) << 16 );   // UNICODE_STRING {Length 0, MaximumLength 400H}, Buffer at +8
+		w5_put( *p, S + 0x28, S + 0x2000 );
+		w5_put( *p, S + 0x30, 0xCCCCCCCC );
+		r = w5_call( *p, "NtQuerySymbolicLinkObject", { ln, S + 0x20, S + 0x30 } );
+		const uint64_t tl = rd( S + 0x20, 2 );
+		CHECK( w5_ok( r ) && tl > 0 && rd( S + 0x22, 2 ) == 0x400 && rd( S + 0x30, 4 ) == tl + 2 && r.text.find( "\\System32" ) != std::string::npos,
+			   "kd.target: <SystemRoot>\\System32, MaximumLength unchanged, ReturnedLength = Length + 2: " + r.text );
+		oa( O, kd, "KERNEL32.DLL" );
+		r = w5_call( *p, "NtOpenSection", { S + 0x38, 0xD, O } );
+		const uint64_t sk = rd( S + 0x38, 8 );
+		CHECK( w5_ok( r ) && handle_ok( sk ), "kd.section.0: KERNEL32.DLL: a section handle: " + r.text );
+		oa( O, kd, "TM_NT_NO_SUCH.DLL" );
+		w5_put( *p, S + 0x40, 0xCCCCCCCCCCCCCCCCull );
+		CHECK( w5_status( w5_call( *p, "NtOpenSection", { S + 0x40, 0xD, O } ), N::status::object_name_not_found ) && rd( S + 0x40, 8 ) == 0,
+			   "kd.section.2: a missing name: STATUS_OBJECT_NAME_NOT_FOUND, the handle written NULL" );
+		oa( O, kd, "KERNEL32.DLL" );
+		CHECK( w5_stop( w5_call( *p, "NtOpenSection", { S + 0x40, 4, O } ) ), "another access: stop" );
+		// the image view: the test process' facts hold no capture files - the map stops loudly (the real view: suite win_env_sys_loader)
+		w5_put( *p, S + 0x48, 0 );
+		w5_put( *p, S + 0x50, 0 );
+		CHECK( w5_stop( w5_call( *p, "NtMapViewOfSection", { sk, cp, S + 0x48, 0, 0, 0, S + 0x50, 1, 0x800000, 0x80 } ) ), "kd.map: no capture file in this process' facts: stop" );
+		CHECK( w5_stop( w5_call( *p, "NtMapViewOfSection", { sk, cp, S + 0x48, 0, 0, 0, S + 0x50, 2, 0x800000, 0x80 } ) ), "kd.map: another disposition: stop" );
+		// 2. the image directory (tm_nt of.curdir / of.fsdev)
+		oa( O, 0, "\\??\\C:\\Users\\user\\Desktop\\" );
+		w5_put( *p, S + 0x60, 0xCCCCCCCCCCCCCCCCull );
+		w5_put( *p, S + 0x68, 0xCCCCCCCCCCCCCCCCull );
+		r = w5_call( *p, "NtOpenFile", { S + 0x58, 0x100020, O, S + 0x60, 3, 0x21 } );
+		const uint64_t fd = rd( S + 0x58, 8 );
+		CHECK( w5_ok( r ) && handle_ok( fd ) && rd( S + 0x60, 8 ) == 0 && rd( S + 0x68, 8 ) == 1, "of.curdir: the image directory: a handle, IoStatus {0, FILE_OPENED}: " + r.text );
+		oa( O, 0, "\\??\\C:\\Windows\\Temp\\" );
+		CHECK( w5_stop( w5_call( *p, "NtOpenFile", { S + 0x58, 0x100020, O, S + 0x60, 3, 0x21 } ) ), "a path outside the emulated file system: stop" );
+		w5_put( *p, S + 0x70, 0xCCCCCCCCCCCCCCCCull );
+		r = w5_call( *p, "NtQueryVolumeInformationFile", { fd, S + 0x60, S + 0x70, 8, 4 } );
+		CHECK( w5_ok( r ) && rd( S + 0x70, 4 ) == 7 && rd( S + 0x74, 4 ) == 0x60020 && rd( S + 0x68, 8 ) == 8, "of.fsdev: FILE_DEVICE_DISK, 60020H, Information 8" );
+		CHECK( w5_stop( w5_call( *p, "NtQueryVolumeInformationFile", { fd, S + 0x60, S + 0x70, 8, 1 } ) ), "another class: stop" );
+		// 3. ProcessTlsInformation (tm_nt tls.*, tls.idx*)
+		const uint64_t T = S + 0x3000, V1 = S + 0x3100, V2 = S + 0x3200;
+		const uint64_t teb = p->kern().facts().teb;
+		std::string e2;
+		uint64_t old_vec = 0;
+		p->eng().read( teb + 0x58, &old_vec, 8, e2 );
+		CHECK( p->eng().write( teb + 0x58, &V1, 8, e2 ), "the TEB's TLS vector = V1" );
+		w5_put( *p, V1 + 8, 0x1111 );
+		w5_put( *p, T, ( uint64_t( 1 ) << 32 ) );   // Flags 0, OperationType 1
+		w5_put( *p, T + 8, uint64_t( 1 ) );   // ThreadDataCount 1, 0
+		w5_put( *p, T + 0x10, 0 );
+		w5_put( *p, T + 0x18, V2 );
+		w5_put( *p, T + 0x20, 0xCCCCCCCCCCCCCCCCull );
+		r = w5_call( *p, "NtSetInformationProcess", { cp, 0x23, T, 0x28 } );
+		CHECK( w5_ok( r ) && rd( teb + 0x58, 8 ) == V2 && rd( T + 0x10, 4 ) == 2 && rd( T + 0x18, 8 ) == V1 && rd( T + 0x20, 8 ) == p->kern().facts().thread_id,
+			   "tls.swap: TEB vector := new, the entry {2, the old vector, the thread id}: " + r.text );
+		w5_put( *p, V2 + 8, 0x2222 );
+		w5_put( *p, T, 0 );                       // Flags 0, OperationType 0 (ReplaceIndex)
+		w5_put( *p, T + 8, ( ( uint64_t( 1 ) << 32 ) | 1 ) );   // ThreadDataCount 1, TlsIndex 1
+		w5_put( *p, T + 0x10, 0 );
+		w5_put( *p, T + 0x18, 0x3333 );
+		w5_put( *p, T + 0x20, 0xCCCCCCCCCCCCCCCCull );
+		r = w5_call( *p, "NtSetInformationProcess", { cp, 0x23, T, 0x28 } );
+		CHECK( w5_ok( r ) && rd( V2 + 8, 8 ) == 0x3333 && rd( T + 0x10, 4 ) == 2 && rd( T + 0x18, 8 ) == 0x2222 && rd( T + 0x20, 8 ) == 0xCCCCCCCCCCCCCCCCull,
+			   "tls.idx: slot [1] := new, the entry {2, the old value}, +20H not written: " + r.text );
+		w5_put( *p, T, ( uint64_t( 1 ) << 32 ) );
+		w5_put( *p, T + 8, 0 );
+		CHECK( w5_status( w5_call( *p, "NtSetInformationProcess", { cp, 0x23, T, 0x10 } ), N::status::info_length_mismatch ), "tls.zero: 0 entries, 10H: STATUS_INFO_LENGTH_MISMATCH" );
+		CHECK( w5_stop( w5_call( *p, "NtSetInformationProcess", { cp, 0x24, T, 4 } ) ), "another class: stop" );
+		p->eng().write( teb + 0x58, &old_vec, 8, e2 );
+		// 4. NtApphelpCacheControl 6 (tm_nt ahc), NtSetInformationVirtualMemory 4 (tm_nt vmi), class 32H (tm_nt qsi.32)
+		const uint64_t A = S + 0x4000;
+		for ( uint64_t k = 0; k < 0x180; k += 8 ) w5_put( *p, A + k, 0 );
+		ms_ustr( *p, A + 0xE8, A + 0x200, "KERNELBASE.dll" );
+		w5_put( *p, A + 0x168, S + 0x80 );
+		w5_put( *p, A + 0x170, 4 );
+		w5_put( *p, S + 0x80, 0xCCCCCCCC );
+		CHECK( w5_ok( w5_call( *p, "NtApphelpCacheControl", { 6, A } ) ) && rd( S + 0x80, 4 ) == 0, "ahc.0: KERNELBASE.dll: SUCCESS, ParamsOut 0" );
+		ms_ustr( *p, A + 0xE8, A + 0x200, "other.dll" );
+		CHECK( w5_stop( w5_call( *p, "NtApphelpCacheControl", { 6, A } ) ), "an unmeasured module name: stop" );
+		CHECK( w5_stop( w5_call( *p, "NtApphelpCacheControl", { 0, A } ) ), "another class: stop" );
+		w5_put( *p, S + 0x88, w5_base );
+		w5_put( *p, S + 0x90, 0x1000 );
+		w5_put( *p, S + 0x98, 1 );
+		r = w5_call( *p, "NtSetInformationVirtualMemory", { cp, 4, 1, S + 0x88, S + 0x98, 4 } );
+		CHECK( w5_status( r, N::status::not_supported ), "vmi: VmImageHotPatchInformation on an image base: STATUS_NOT_SUPPORTED: " + r.text );
+		CHECK( w5_stop( w5_call( *p, "NtSetInformationVirtualMemory", { cp, 0, 1, S + 0x88, S + 0x98, 4 } ) ), "vmi: another class: stop" );
+		w5_put( *p, S + 0xA0, 0 );
+		CHECK( w5_ok( w5_call( *p, "NtQuerySystemInformation", { 0x32, S + 0xA0, 8, 0 } ) ) && rd( S + 0xA0, 8 ) == 0xFFFF800000000000ull, "qsi.32: FFFF800000000000H" );
+		w5_put( *p, S + 0xA8, 0 );
+		CHECK( w5_status( w5_call( *p, "NtQuerySystemInformation", { 0x32, S + 0xA0, 4, S + 0xA8 } ), N::status::info_length_mismatch ) && rd( S + 0xA8, 4 ) == 8, "qsi.32.4: mismatch, ReturnLength 8" );
+		// 5. the page-file section (tm_nt sec) and the frontier stops (tm_nt csr.*)
+		w5_put( *p, S + 0xB0, 0x10000 );
+		r = w5_call( *p, "NtCreateSection", { S + 0xB8, 0xF001F, 0, S + 0xB0, 4, 0x8000000, 0 } );
+		CHECK( w5_ok( r ) && handle_ok( rd( S + 0xB8, 8 ) ) && rd( S + 0xB0, 8 ) == 0x10000, "sec.10000: a page-file section, MaximumSize unchanged: " + r.text );
+		w5_put( *p, S + 0xB0, 0x30000 );
+		CHECK( w5_stop( w5_call( *p, "NtCreateSection", { S + 0xB8, 0xF001F, 0, S + 0xB0, 4, 0x8000000, 0 } ) ), "an unmeasured size: stop" );
+		oa( O, 0, "\\Sessions\\1\\Windows\\SharedSection" );
+		r = w5_call( *p, "NtOpenSection", { S + 0xC0, 4, O } );
+		const uint64_t cs = rd( S + 0xC0, 8 );
+		CHECK( w5_ok( r ) && handle_ok( cs ), "csr.open: the CSR shared section of session 1 (the PEB SessionId): " + r.text );
+		w5_put( *p, S + 0xC8, 0 );
+		w5_put( *p, S + 0xD0, 0 );
+		r = w5_call( *p, "NtMapViewOfSection", { cs, cp, S + 0xC8, 0, 0, 0, S + 0xD0, 2, 0, 2 } );
+		CHECK( w5_stop( r ) && r.text.find( "P39 frontier" ) != std::string::npos, "csr.map: the shared section's contents - the P39 frontier: a loud stop" );
+		ms_ustr( *p, S + 0xE0, S + 0xF00, "\\Sessions\\1\\Windows\\ApiPort" );
+		r = w5_call( *p, "NtConnectPort", { S + 0xD8, S + 0xE0, 0, 0, 0, 0, 0, 0 } );
+		CHECK( w5_stop( r ) && r.text.find( "P39 frontier" ) != std::string::npos, "NtConnectPort to the CSR API port - the P39 frontier: a loud stop: " + r.text );
+	}
+
 	struct test_case { const char* name; void ( *fn )(); };
 	const test_case cases[] = {
 		{ "options_oep_defaults", t_options_oep_defaults },
@@ -2936,6 +3076,7 @@ namespace
 		{ "win_env_nt_continue", t_win_env_nt_continue },
 		{ "nt_measured_services", t_nt_measured_services },
 		{ "nt_measured_pool", t_nt_measured_pool },
+		{ "nt_measured_loader", t_nt_measured_loader },
 	};
 }
 

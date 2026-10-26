@@ -82,8 +82,16 @@ EXEMPT = {
     # environment block; and the selftest's expectation of one of them
     ('Emulator/src/win_process.cpp', 'pt_live_system_dir'): (4, 'guest-visible paths of the emulated environment (FullDllName <system root>\\System32\\..., '
                                                                 'ComSpec, Path) written into guest memory, never opened on the host (U2025-U2026)'),
-    ('Emulator/tests/selftest/st_main.cpp', 'pt_live_system_dir'): (2, 'win_env_process_state expects the guest-visible FullDllName C:\\Windows\\System32\\ntdll.dll '
-                                                                       '(a string compared in guest memory, U2027)'),
+    ('Emulator/tests/selftest/st_main.cpp', 'pt_live_system_dir'): (7, 'win_env_process_state expects the guest-visible FullDllName C:\\Windows\\System32\\ntdll.dll '
+                                                                       '(a string compared in guest memory, U2027); P39 (U2061) nt_measured_loader: the guest-visible '
+                                                                       'KnownDllPath target <system root>\\System32 (x2), the guest paths \\??\\C:\\Windows\\Temp\\ (a path '
+                                                                       'outside the emulated file system, expected to stop) and \\Sessions\\1\\Windows\\SharedSection / '
+                                                                       'ApiPort (the emulated namespace) written into guest memory (x3)'),
+    # P39 (U2057 / U2060): the EMULATED object namespace - the \KnownDlls\KnownDllPath link target built from the capture's system root,
+    # its text in the reply, the session's CSR shared-section name compared with a guest OBJECT_ATTRIBUTES name, the frontier text naming it
+    ('Emulator/src/nt_kernel_measured.cpp', 'pt_live_system_dir'): (4, 'the emulated namespace: the KnownDllPath target <system root>\\System32 (written into '
+                                                                       'guest memory), its reply text, the guest name \\Sessions\\<id>\\Windows\\SharedSection compared, '
+                                                                       'the frontier stop text - never opened on the host (P39)'),
 }
 
 

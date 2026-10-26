@@ -895,6 +895,9 @@ namespace emu::win
 		kf.processors = f.processors;
 		kf.rng_seed = rng_seed_;   // P39 (U2052): the seeded model's seed (decision D8) - the process cookie
 		kf.registry = facts_.registry.get();   // U2034 (facts_ owns it for the process' lifetime)
+		kf.files = facts_.files.get();         // P39 (U2057): KnownDlls sections map the captured images
+		kf.image_dir = make_identity( f, po.image_file_name ).image_dir;   // P39 (U2058): the emulated file system's one directory
+		kf.system_root = f.system_root;        // P39 (U2057): the KnownDllPath link target
 		kernel_ = std::make_unique<nt::kernel>( *e_, kf );
 		hle_ = std::make_unique<hle::module>();
 		start_va_ = map_.entry;

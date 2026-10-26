@@ -37,15 +37,23 @@ def load(name):
 
 T1H = load('win_env_t1')
 FRONTIER_PATH = (
-    'NtQueryPerformanceCounter NtProtectVirtualMemory NtProtectVirtualMemory NtCreateEvent NtQuerySystemInformation NtQueryInformationProcess NtQuerySystemInformation NtQueryVirtualMemory '
-    'NtQueryVirtualMemory NtProtectVirtualMemory NtOpenKey NtQueryValueKey NtClose NtOpenKey NtOpenKey NtOpenKey '
-    'NtQueryInformationProcess NtQueryInformationProcess NtQuerySecurityAttributesToken NtQuerySecurityAttributesToken NtOpenKey NtQueryValueKey NtClose NtQueryInformationProcess '
-    'NtQuerySystemInformation NtQuerySystemInformation NtAllocateVirtualMemoryEx NtAllocateVirtualMemoryEx NtAllocateVirtualMemoryEx NtQuerySystemInformation NtAllocateVirtualMemory NtFreeVirtualMemory '
-    'NtAllocateVirtualMemory NtQuerySystemInformation NtQuerySystemInformation NtCreateEvent NtCreateWaitCompletionPacket NtQuerySystemInformationEx NtCreateIoCompletion NtCreateWorkerFactory '
-    'NtCreateTimer2 NtCreateWaitCompletionPacket NtAssociateWaitCompletionPacket NtCreateTimer2 NtCreateWaitCompletionPacket NtAssociateWaitCompletionPacket NtSetInformationWorkerFactory NtSetInformationWorkerFactory '
-    'NtSetInformationWorkerFactory NtAssociateWaitCompletionPacket NtTraceControl NtTraceControl NtTraceControl NtTraceControl NtFreeVirtualMemory NtProtectVirtualMemory '
-).split()
-FRONTIER = 'NtOpenDirectoryObject'
+    'NtQueryPerformanceCounter NtProtectVirtualMemory NtProtectVirtualMemory NtCreateEvent NtQuerySystemInformation NtQueryInformationProcess '
+    'NtQuerySystemInformation NtQueryVirtualMemory NtQueryVirtualMemory NtProtectVirtualMemory NtOpenKey NtQueryValueKey NtClose NtOpenKey NtOpenKey '
+    'NtOpenKey NtQueryInformationProcess NtQueryInformationProcess NtQuerySecurityAttributesToken NtQuerySecurityAttributesToken NtOpenKey '
+    'NtQueryValueKey NtClose NtQueryInformationProcess NtQuerySystemInformation NtQuerySystemInformation NtAllocateVirtualMemoryEx '
+    'NtAllocateVirtualMemoryEx NtAllocateVirtualMemoryEx NtQuerySystemInformation NtAllocateVirtualMemory NtFreeVirtualMemory NtAllocateVirtualMemory '
+    'NtQuerySystemInformation NtQuerySystemInformation NtCreateEvent NtCreateWaitCompletionPacket NtQuerySystemInformationEx NtCreateIoCompletion '
+    'NtCreateWorkerFactory NtCreateTimer2 NtCreateWaitCompletionPacket NtAssociateWaitCompletionPacket NtCreateTimer2 NtCreateWaitCompletionPacket '
+    'NtAssociateWaitCompletionPacket NtSetInformationWorkerFactory NtSetInformationWorkerFactory NtSetInformationWorkerFactory '
+    'NtAssociateWaitCompletionPacket NtTraceControl NtTraceControl NtTraceControl NtTraceControl NtFreeVirtualMemory NtProtectVirtualMemory '
+    'NtOpenDirectoryObject NtProtectVirtualMemory NtOpenSymbolicLinkObject NtQuerySymbolicLinkObject NtClose NtProtectVirtualMemory '
+    'NtProtectVirtualMemory NtCreateEvent NtCreateEvent NtProtectVirtualMemory NtProtectVirtualMemory NtOpenFile NtQueryVolumeInformationFile '
+    'NtSetEvent NtAllocateVirtualMemory NtOpenSection NtMapViewOfSection NtQueryPerformanceCounter NtProtectVirtualMemory NtProtectVirtualMemory '
+    'NtProtectVirtualMemory NtProtectVirtualMemory NtOpenSection NtMapViewOfSection NtQueryPerformanceCounter NtProtectVirtualMemory '
+    'NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory NtClose NtProtectVirtualMemory NtClose NtProtectVirtualMemory '
+    'NtSetInformationProcess NtApphelpCacheControl NtApphelpCacheControl NtSetInformationVirtualMemory NtQuerySystemInformation '
+    'NtQuerySystemInformation NtOpenSection NtCreateSection').split()
+FRONTIER = 'NtConnectPort'
 
 
 def say(msg):
