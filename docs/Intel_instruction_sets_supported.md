@@ -1,7 +1,7 @@
 # Instruction sets supported (Intel + AMD/VIA)
 
-_Generated 2026-10-26 05:53 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `c405e951 Ledger: U2062-U2067 (agent/p3csr, P40 objects A + B - nt_measured on
-the system volume, the CSR client model), merged and verified`). Do not edit by hand._
+_Generated 2026-10-26 11:34 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `398d1a64 Ledger: U2068-U2089 (agent/p3con, P41 objects A + B - the model of a
+process started without a console, the console capture), merged and verified`). Do not edit by hand._
 
 Every instruction form (mnemonic + encoding) of the Intel SDM / XED list `Emulator/data/isa_manual_forms.tsv`, AMD and VIA forms included: **2912 forms, each
 listed exactly once**, in one of three tables by privilege class (`Emulator/data/isa_privilege.tsv`). Checked against an Intel i5-13600K (Raptor Lake) with
