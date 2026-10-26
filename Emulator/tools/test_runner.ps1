@@ -718,6 +718,12 @@ Add-Suite 'emu_snippet_options' 'emulator' 'exit' 'emu-snippet' @( '--hex', '48 
 # in Emulator\data\no_native_allowlist.tsv, PENDING until M8 / 3.C), S3 project graph, S4 imports of the built emu-* executables,
 # R emu-selftest no_native_runtime; in-memory negative controls; reads only.
 Add-Suite 'no_native_check' 'emulator safety tools' 'py' ( Join-Path $Root 'Emulator\tools\check_no_native.py' ) @( $Root, '--build', $T )
+# U2045-U2046 (agent sjaudit, notes\eread\P38_setjmp_audit.md; the bug class of U2043): setjmp_slots = Emulator\tools\
+# check_setjmp_slots.py - every function of the unicorn objects that calls _setjmp_wrapper (the opaque MSVC sigsetjmp) is
+# disassembled (dumpbin, read only); on the paths that run after siglongjmp no stack slot may be read at its setjmp-time
+# value when the first return can have rewritten it (MSVC reuses slots of locals dead in its single-return view); the
+# site set (cpu_exec, uc_invalidate_tb, setjmp_gen_code, disas_insn) is fixed; a built-in selftest of 9 synthetic listings first.
+Add-Suite 'setjmp_slots' 'emulator safety tools' 'py' ( Join-Path $Root 'Emulator\tools\check_setjmp_slots.py' ) @( ( Join-Path $Root "build\x64\$Config\obj\unicorn" ) )
 # U1975-U1978 (agent p3m3, plan 3.M3, notes\eread\P33_phase3_m3.md): emu-snippet v1. emu_snippet_options (above) now runs its snippet
 # (xor rax, rax; ret) and checks --expect rax=0; emu_snippet_expect_bad = the negative control: a wrong --expect must be a DIFF
 # (exit 1). The *-snip suites (Add-Snip) replay every expected-value file through emu-snippet. emu_snippet_hw_sample: a fixed
