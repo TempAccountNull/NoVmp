@@ -119,10 +119,25 @@ namespace emu::win
 
 	uint64_t system_image_slot( const std::string& n )
 	{
-		// fixed, chosen slots of 256 MiB each in the high user range below the emulator's HLE page (7FFA00000000H)
+		// fixed, chosen slots of 256 MiB each in the high user range above the emulator's HLE page (7FFA00000000H) (Windows: the
+		// boot-time ASLR base of each system image, the same in every process)
 		if ( n == "ntdll.dll" ) return 0x7FFB00000000ull;
 		if ( n == "kernel32.dll" ) return 0x7FFB10000000ull;
 		if ( n == "kernelbase.dll" ) return 0x7FFB20000000ull;
+		// U2105 (P43, sample run 8): every other section of the environment's \KnownDlls directory (the 42 names measured by tm_nt kd,
+		// nt_kernel_measured.cpp known_dll_sections, lower case) - slot = 7FFB30000000H + i * 10000000H, i = the position in this sorted
+		// table; the last slot ends at 7FFDA0000000H (below the top-down allocations from the user maximum and the CSR views)
+		static const char* const knowndll_others[] = {
+			"advapi32.dll", "bcrypt.dll", "bcryptprimitives.dll", "cfgmgr32.dll", "clbcatq.dll", "combase.dll",
+			"comctl32.dll", "comdlg32.dll", "coml2.dll", "crypt32.dll", "difxapi.dll", "gdi32.dll",
+			"gdi32full.dll", "gdiplus.dll", "imagehlp.dll", "imm32.dll", "msctf.dll", "msvcp_win.dll",
+			"msvcrt.dll", "normaliz.dll", "nsi.dll", "ole32.dll", "oleaut32.dll", "psapi.dll",
+			"rpcrt4.dll", "sechost.dll", "setupapi.dll", "shcore.dll", "shell32.dll", "shlwapi.dll",
+			"ucrtbase.dll", "user32.dll", "win32u.dll", "wintrust.dll", "wldap32.dll", "wow64.dll",
+			"wow64cpu.dll", "wow64win.dll", "ws2_32.dll",
+		};
+		for ( size_t i = 0; i < sizeof( knowndll_others ) / sizeof( knowndll_others[ 0 ] ); i++ )
+			if ( n == knowndll_others[ i ] ) return 0x7FFB30000000ull + uint64_t( i ) * system_image_slot_size;
 		return 0;
 	}
 

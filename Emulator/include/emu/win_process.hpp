@@ -50,6 +50,7 @@ namespace emu::win
 
 	// the fixed slot of a system DLL (chosen; Windows: ASLR) - 0 for an unknown name
 	uint64_t system_image_slot( const std::string& lower_name );
+	inline constexpr uint64_t system_image_slot_size = 0x10000000ull;   // U2105: 256 MiB per slot (an image larger than its slot is refused)
 	inline constexpr const char* system_images_order[] = { "ntdll.dll", "kernel32.dll", "kernelbase.dll" };   // load / memory order
 
 	// map the capture's system DLL images NAMES (those the capture holds; --HLE: system_images_order, --Sys loader start: ntdll.dll -

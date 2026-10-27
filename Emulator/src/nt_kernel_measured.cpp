@@ -8,6 +8,7 @@
 // time; an input combination that was not measured is a loud stop with the decoded arguments (never a guess).
 #include <emu/nt_kernel.hpp>
 #include <emu/pe_image.hpp>
+#include <emu/win_process.hpp>   // U2105: emu::win::system_image_slot (the KnownDlls slots)
 
 #include <cstdio>
 #include <cstring>
@@ -709,9 +710,10 @@ namespace emu::nt
 	// view's header ImageBase = the view's base (the section's image is relocated to it), MEMORY_BASIC_INFORMATION at the base:
 	// AllocationProtect 80H, MEM_COMMIT, PAGE_READONLY (the headers), MEM_IMAGE; a second view of an image the process already maps =
 	// STATUS_IMAGE_AT_DIFFERENT_BASE (40000036H) - not modelled (stop). The emulated view: the capture's file of the section mapped
-	// (emu::pe::map, relocated) at the environment's fixed slot of that DLL (kernel32 7FFB10000000H, kernelbase 7FFB20000000H - the
-	// --HLE layout; Windows: the boot-time ASLR base), the header's ImageBase set to that base, registered as a MEM_IMAGE view. Other
-	// sections / arguments / DLLs without a slot or capture file: stop.
+	// (emu::pe::map, relocated) at the environment's fixed slot of that DLL (emu::win::system_image_slot: kernel32 7FFB10000000H,
+	// kernelbase 7FFB20000000H - the --HLE layout; U2105 (P43): every other measured \KnownDlls section at 7FFB30000000H + i * 10000000H;
+	// Windows: the boot-time ASLR base), the header's ImageBase set to that base, registered as a MEM_IMAGE view. Other sections /
+	// arguments / DLLs without a slot or capture file, an image larger than its slot, a slot range that is not free: stop.
 	reply kernel::svc_map_view_of_section( const call& c )
 	{
 		if ( !c.stack_args ) return stop_( "NtMapViewOfSection: the stack arguments are not readable" );
@@ -735,9 +737,7 @@ namespace emu::nt
 		get64( psize, want_size );
 		if ( want_base || want_size ) return stop_( what + " - *BaseAddress / *ViewSize not 0: not measured" );
 		const std::string& file = it->second.target;
-		uint64_t slot = 0;
-		if ( file == "kernel32.dll" ) slot = 0x7FFB10000000ull;
-		else if ( file == "kernelbase.dll" ) slot = 0x7FFB20000000ull;
+		const uint64_t slot = file == "ntdll.dll" ? 0 : win::system_image_slot( file );   // U2105 (ntdll: the process' own, never a second view)
 		if ( !slot || !f_.files || !f_.files->count( file ) ) return stop_( what + " - " + file + " has no slot / is not in the environment's capture (capture_sysdlls.py --dll)" );
 		for ( const auto& [ vb, v ] : views_ )
 			if ( v.base == slot ) return stop_( what + " - a second view of " + file + " (measured: STATUS_IMAGE_AT_DIFFERENT_BASE) - not modelled" );
@@ -745,7 +745,14 @@ namespace emu::nt
 		pe::image img;
 		pe::mapping mp;
 		std::string err;
-		if ( !pe::parse( bytes, img, err ) || !pe::map( e_, bytes, img, slot, file, mp, err ) ) return stop_( what + " - mapping the capture's " + file + " failed: " + err );
+		if ( !pe::parse( bytes, img, err ) ) return stop_( what + " - mapping the capture's " + file + " failed: " + err );
+		// U2105: the image must fit its slot, and the slot range must be free (nothing mapped / reserved there)
+		uint64_t free_at = 0;
+		if ( !img.size_of_image || img.size_of_image > win::system_image_slot_size )
+			return stop_( what + " - " + file + " SizeOfImage " + hex( img.size_of_image ) + " does not fit its slot (" + hex( win::system_image_slot_size ) + ")" );
+		if ( !find_free( img.size_of_image, false, free_at, slot, slot + ( img.size_of_image - 1 ), 0x10000 ) || free_at != slot )
+			return stop_( what + " - the slot of " + file + " at " + hex( slot ) + " is not free" );
+		if ( !pe::map( e_, bytes, img, slot, file, mp, err ) ) return stop_( what + " - mapping the capture's " + file + " failed: " + err );
 		// the view's header ImageBase = the base (IMAGE_OPTIONAL_HEADER64.ImageBase at e_lfanew + 18H + 18H, um\winnt.h)
 		if ( !e_.write( slot + img.e_lfanew + 0x18 + 0x18, &slot, 8, err ) ) return stop_( what + " - writing the header ImageBase failed: " + err );
 		if ( !add_image_view( slot, mp.size, file, err ) ) return stop_( what + " - " + err );

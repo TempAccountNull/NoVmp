@@ -23,6 +23,7 @@
 #include <emu/hle.hpp>
 #include <emu/ctr_drbg.hpp>   // U2097 (plan 3.M6)
 #include <emu/vclock.hpp>
+#include <emu/win_process.hpp>   // U2105
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -3589,6 +3590,34 @@ namespace
 		CHECK( w5_stop( w5_call( *p, "NtWaitForSingleObject", { ev, 0, 0 } ) ), "NtWaitForSingleObject( event, no time-out ): a loud stop (deadlock)" );
 	}
 
+	// U2105 (P43): the KnownDlls slots - the three fixed ones unchanged, every other measured section name a distinct 64 KiB-aligned slot
+	// of system_image_slot_size, the ranges disjoint and between the HLE page and the top-down allocation area, other names no slot
+	void t_knowndll_slots()
+	{
+		CHECK( emu::win::system_image_slot( "ntdll.dll" ) == 0x7FFB00000000ull && emu::win::system_image_slot( "kernel32.dll" ) == 0x7FFB10000000ull &&
+				   emu::win::system_image_slot( "kernelbase.dll" ) == 0x7FFB20000000ull,
+			   "ntdll / kernel32 / kernelbase keep their slots" );
+		const char* const names[] = { "advapi32.dll", "bcrypt.dll", "bcryptprimitives.dll", "cfgmgr32.dll", "clbcatq.dll", "combase.dll", "comctl32.dll", "comdlg32.dll",
+									  "coml2.dll", "crypt32.dll", "difxapi.dll", "gdi32.dll", "gdi32full.dll", "gdiplus.dll", "imagehlp.dll", "imm32.dll", "msctf.dll",
+									  "msvcp_win.dll", "msvcrt.dll", "normaliz.dll", "nsi.dll", "ole32.dll", "oleaut32.dll", "psapi.dll", "rpcrt4.dll", "sechost.dll",
+									  "setupapi.dll", "shcore.dll", "shell32.dll", "shlwapi.dll", "ucrtbase.dll", "user32.dll", "win32u.dll", "wintrust.dll", "wldap32.dll",
+									  "wow64.dll", "wow64cpu.dll", "wow64win.dll", "ws2_32.dll" };
+		std::vector<uint64_t> s = { 0x7FFB00000000ull, 0x7FFB10000000ull, 0x7FFB20000000ull };
+		for ( const char* n : names )
+		{
+			const uint64_t b = emu::win::system_image_slot( n );
+			CHECK( b && !( b & 0xFFFF ) && b > emu::hle::module_va && b + emu::win::system_image_slot_size <= 0x7FFE00000000ull, std::string( n ) + ": a 64 KiB-aligned slot in range" );
+			s.push_back( b );
+		}
+		std::sort( s.begin(), s.end() );
+		bool disjoint = true;
+		for ( size_t i = 1; i < s.size(); i++ ) disjoint = disjoint && s[ i ] - s[ i - 1 ] >= emu::win::system_image_slot_size;
+		CHECK( s.size() == 42 && disjoint, "42 slots, pairwise at least one slot apart" );
+		CHECK( emu::win::system_image_slot( "user32.dll" ) == 0x7FFB30000000ull + 31 * 0x10000000ull, "user32.dll: position 31 of the sorted table" );
+		CHECK( !emu::win::system_image_slot( "USER32.dll" ) && !emu::win::system_image_slot( "notaknowndll.dll" ) && !emu::win::system_image_slot( "" ),
+			   "upper case / other names: no slot (callers pass lower-case names)" );
+	}
+
 	struct test_case { const char* name; void ( *fn )(); };
 	const test_case cases[] = {
 		{ "options_oep_defaults", t_options_oep_defaults },
@@ -3652,6 +3681,7 @@ namespace
 		{ "vclock_consistency", t_vclock_consistency },
 		{ "ctr_drbg_kat", t_ctr_drbg_kat },
 		{ "nt_time_services", t_nt_time_services },
+		{ "knowndll_slots", t_knowndll_slots },   // U2105
 	};
 }
 
