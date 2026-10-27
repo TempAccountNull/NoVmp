@@ -9,6 +9,7 @@
 #include <emu/nt_kernel.hpp>
 #include <emu/pe_image.hpp>
 #include <emu/win_process.hpp>   // U2105: emu::win::system_image_slot (the KnownDlls slots)
+#include <emu/vclock.hpp>        // U2107: the model's boot time (the file-time placeholder)
 
 #include <cstdio>
 #include <cstring>
@@ -219,6 +220,11 @@ namespace emu::nt
 		if ( c.name == "NtInitializeNlsFiles" )
 		{
 			r = svc_initialize_nls_files( c );
+			return true;
+		}
+		if ( c.name == "NtQueryAttributesFile" )
+		{
+			r = svc_query_attributes_file( c );   // P43 (U2107)
 			return true;
 		}
 		if ( c.name == "NtCreateFile" ) return svc_create_file_measured( c, r );
@@ -737,10 +743,16 @@ namespace emu::nt
 		get64( psize, want_size );
 		if ( want_base || want_size ) return stop_( what + " - *BaseAddress / *ViewSize not 0: not measured" );
 		const std::string& file = it->second.target;
-		const uint64_t slot = file == "ntdll.dll" ? 0 : win::system_image_slot( file );   // U2105 (ntdll: the process' own, never a second view)
-		if ( !slot || !f_.files || !f_.files->count( file ) ) return stop_( what + " - " + file + " has no slot / is not in the environment's capture (capture_sysdlls.py --dll)" );
+		// P43 (U2107): an image section of a captured System32 file that is NOT a KnownDll (the loader's path search) - MEASURED (tm_nt
+		// sp.*.map, the same arguments as kd.map): STATUS_SUCCESS, the base 64 KiB-aligned, ViewSize = SizeOfImage, the header's ImageBase
+		// = the base, MEMORY_BASIC_INFORMATION at the base AllocationProtect 80H, MEM_COMMIT, PAGE_READONLY, MEM_IMAGE (= kd.map). The
+		// emulated base: the highest free 64 KiB-aligned range (kernel::find_free top-down - the model's choice; Windows: an ASLR base)
+		const bool from_file = it->second.name.rfind( "\\KnownDlls\\", 0 ) != 0;
+		uint64_t slot = file == "ntdll.dll" ? 0 : win::system_image_slot( file );   // U2105 (ntdll: the process' own, never a second view)
+		if ( from_file && ( slot || file == "ntdll.dll" ) ) return stop_( what + " - a KnownDll / ntdll opened as a system-directory file: not measured" );
+		if ( ( !from_file && !slot ) || !f_.files || !f_.files->count( file ) ) return stop_( what + " - " + file + " has no slot / is not in the environment's capture (capture_sysdlls.py --dll)" );
 		for ( const auto& [ vb, v ] : views_ )
-			if ( v.base == slot ) return stop_( what + " - a second view of " + file + " (measured: STATUS_IMAGE_AT_DIFFERENT_BASE) - not modelled" );
+			if ( ( slot && v.base == slot ) || v.name == file ) return stop_( what + " - a second view of " + file + " (measured: STATUS_IMAGE_AT_DIFFERENT_BASE) - not modelled" );
 		const std::vector<uint8_t>& bytes = f_.files->at( file );
 		pe::image img;
 		pe::mapping mp;
@@ -748,16 +760,20 @@ namespace emu::nt
 		if ( !pe::parse( bytes, img, err ) ) return stop_( what + " - mapping the capture's " + file + " failed: " + err );
 		// U2105: the image must fit its slot, and the slot range must be free (nothing mapped / reserved there)
 		uint64_t free_at = 0;
-		if ( !img.size_of_image || img.size_of_image > win::system_image_slot_size )
+		if ( !img.size_of_image || ( !from_file && img.size_of_image > win::system_image_slot_size ) )
 			return stop_( what + " - " + file + " SizeOfImage " + hex( img.size_of_image ) + " does not fit its slot (" + hex( win::system_image_slot_size ) + ")" );
-		if ( !find_free( img.size_of_image, false, free_at, slot, slot + ( img.size_of_image - 1 ), 0x10000 ) || free_at != slot )
+		if ( from_file )
+		{
+			if ( !find_free( img.size_of_image, true, slot, 0, 0, 0x10000 ) ) return stop_( what + " - no free 64 KiB-aligned range for " + file );
+		}
+		else if ( !find_free( img.size_of_image, false, free_at, slot, slot + ( img.size_of_image - 1 ), 0x10000 ) || free_at != slot )
 			return stop_( what + " - the slot of " + file + " at " + hex( slot ) + " is not free" );
 		if ( !pe::map( e_, bytes, img, slot, file, mp, err ) ) return stop_( what + " - mapping the capture's " + file + " failed: " + err );
 		// the view's header ImageBase = the base (IMAGE_OPTIONAL_HEADER64.ImageBase at e_lfanew + 18H + 18H, um\winnt.h)
 		if ( !e_.write( slot + img.e_lfanew + 0x18 + 0x18, &slot, 8, err ) ) return stop_( what + " - writing the header ImageBase failed: " + err );
 		if ( !add_image_view( slot, mp.size, file, err ) ) return stop_( what + " - " + err );
 		reply rr = done_( status::success, what + ": " + file + " (the capture's file) mapped at " + hex( slot ) + ", ViewSize " + hex( img.size_of_image ) +
-											   ( mp.relocated ? ", relocated (" + std::to_string( mp.relocations ) + " fixups)" : "" ) + ", header ImageBase = the base (measured: tm_nt kd.map)" );
+											   ( mp.relocated ? ", relocated (" + std::to_string( mp.relocations ) + " fixups)" : "" ) + ", header ImageBase = the base (measured: tm_nt " + ( from_file ? "sp.map" : "kd.map" ) + ")" );
 		const uint64_t vs = img.size_of_image;
 		if ( !put( pbase, &slot, 8, rr ) || !put( psize, &vs, 8, rr ) ) return stop_( "writing the result failed after the probe" );
 		return rr;
@@ -785,7 +801,28 @@ namespace emu::nt
 		std::string want = lower( oa.name );
 		while ( !want.empty() && want.back() == '\\' ) want.pop_back();
 		const bool curdir = !oa.root && !dir.empty() && want == "\\??\\" + dir;
-		if ( !curdir ) return stop_( what + " - the path is not in the emulated file system (it holds the image's directory only) - not measured" );
+		// P43 (U2107): a system DLL that is not a KnownDll - the loader opens "\??\<SystemRoot>\SYSTEM32\<name>" with access 100021H
+		// (SYNCHRONIZE | FILE_EXECUTE | FILE_READ_DATA), OBJ_CASE_INSENSITIVE | OBJ_IGNORE_IMPERSONATED_DEVICEMAP (840H), ShareAccess 5,
+		// OpenOptions 60H (FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE). MEASURED (tm_nt sp.*.open, d3d11 / dxgi / dcomp / dwmapi /
+		// kernel.appcore): STATUS_SUCCESS, a handle (non-zero, multiple of 4), IoStatus {STATUS_SUCCESS, Information 1 = FILE_OPENED}. The
+		// emulated file system holds System32's CAPTURED files (the environment's capture); other files / arguments: stop.
+		std::string sysfile;
+		if ( sysdir_file( oa, sysfile ) )
+		{
+			if ( access != 0x100021 || share != 5 || options != 0x60 || oa.attributes != 0x840 )
+				return stop_( what + " - a captured system-directory file with other arguments: not measured (tm_nt sp.open: 100021H, 840H, 5, 60H)" );
+			if ( !user_buffer( ph, 8, UC_PROT_WRITE ) || !user_buffer( iosb, 16, UC_PROT_WRITE ) ) return done_( status::access_violation, what + ": FileHandle / IoStatusBlock not writable" );
+			object o;
+			o.kind = "file (system image)";
+			o.name = oa.name;
+			o.target = sysfile;
+			const uint64_t h = open_handle( o );
+			reply rs = done_( status::success, what + ": the captured system-directory file " + sysfile + ", handle " + hex( h ) + ", IoStatus FILE_OPENED (measured: tm_nt sp.open)" );
+			const uint64_t io[ 2 ] = { 0, 1 };
+			if ( !put( ph, &h, 8, rs ) || !put( iosb, io, 16, rs ) ) return stop_( "writing the result failed after the probe" );
+			return rs;
+		}
+		if ( !curdir ) return stop_( what + " - the path is not in the emulated file system (it holds the image's directory and the system directory's captured files only) - not measured" );
 		if ( access != 0x100020 || share != 3 || options != 0x21 || !( oa.attributes & 0x40 ) ) return stop_( what + " - the image directory with other arguments: not measured (tm_nt of.curdir)" );
 		if ( !user_buffer( ph, 8, UC_PROT_WRITE ) || !user_buffer( iosb, 16, UC_PROT_WRITE ) ) return done_( status::access_violation, what + ": FileHandle / IoStatusBlock not writable" );
 		object o;
@@ -921,12 +958,22 @@ namespace emu::nt
 		std::memcpy( &pout, d + 0x168, 8 );
 		if ( !layout || d[ 0x170 ] != 4 ) return stop_( what + " context bytes:" + hx + " - another layout: not measured" );
 		const std::string ln = lower( nm );
-		if ( ln != "kernelbase.dll" && ln != "kernel32.dll" && ln != "ntdll.dll" && ln != "t2_import.exe" && ln != "t3_tls.exe" && ln != "t3_tls.vmware_guest.exe" && ln != "t5_stdout.exe" )
-			return stop_( what + " - this module name is not measured (tm_nt ahc: kernelbase.dll, kernel32.dll, ntdll.dll, t2_import.exe, t3_tls.exe, t3_tls.vmware_guest.exe, t5_stdout.exe)" );
+		// P43 (U2108): the 24 names the loader asks after the sample's import processing (sample run 8, exploration x2 system calls 449-472;
+		// tm_nt ahc.9 .. ahc.32, the loader's spellings): STATUS_SUCCESS, no context byte changed, ParamsOut 80H for msvcrt.dll, OLEAUT32.dll,
+		// dwmapi.dll and SETUPAPI.dll (ahc.15 / .23 / .25 / .31 - the value the guest's database lookup returns; its meaning is not documented
+		// and not interpreted here), 0 for the others (incl. the sample's image name, ahc.32)
+		static const char* const measured0[] = { "kernelbase.dll", "kernel32.dll", "ntdll.dll", "t2_import.exe", "t3_tls.exe", "t3_tls.vmware_guest.exe", "t5_stdout.exe",
+												  "win32u.dll", "ucrtbase.dll", "msvcp_win.dll", "gdi32full.dll", "gdi32.dll", "user32.dll", "dxgi.dll", "d3d11.dll", "rpcrt4.dll",
+												  "combase.dll", "kernel.appcore.dll", "dcomp.dll", "ole32.dll", "shell32.dll", "ws2_32.dll", "bcrypt.dll", "sechost.dll",
+												  "advapi32.dll", "cfgmgr32.dll", "transparent_makimav2.exe" };
+		static const char* const measured80[] = { "msvcrt.dll", "oleaut32.dll", "dwmapi.dll", "setupapi.dll" };
+		uint32_t outv = 0xFFFFFFFF;
+		for ( const char* m : measured0 ) if ( ln == m ) outv = 0;
+		for ( const char* m : measured80 ) if ( ln == m ) outv = 0x80;
+		if ( outv == 0xFFFFFFFF ) return stop_( what + " - this module name is not measured (tm_nt ahc.0 .. ahc.32)" );
 		if ( !user_buffer( pout, 4, UC_PROT_WRITE ) ) return stop_( what + " - ParamsOut not writable: not measured" );
-		reply rr = done_( status::success, what + ": no compatibility-database entry - ParamsOut = 0 (measured: tm_nt ahc)" );
-		const uint32_t zero = 0;
-		if ( !put( pout, &zero, 4, rr ) ) return stop_( "writing ParamsOut failed after the probe" );
+		reply rr = done_( status::success, what + ": ParamsOut = " + hex( outv ) + ( outv ? " (as the guest's lookup answers this name)" : " (no compatibility-database entry)" ) + " (measured: tm_nt ahc)" );
+		if ( !put( pout, &outv, 4, rr ) ) return stop_( "writing ParamsOut failed after the probe" );
 		return rr;
 	}
 
@@ -965,6 +1012,59 @@ namespace emu::nt
 		return stop_( what + " - not measured" );
 	}
 
+	// P43 (U2107): "\??\<SystemRoot>\SYSTEM32\<name>" (case-insensitive, no root, no further backslash) with <name> a file of the
+	// environment's capture (its manifest's file_ lines)
+	bool kernel::sysdir_file( const object_attributes& oa, std::string& file ) const
+	{
+		const std::string n = lower( oa.name ), pre = "\\??\\" + lower( f_.system_root ) + "\\system32\\";
+		if ( oa.root || n.size() <= pre.size() || n.compare( 0, pre.size(), pre ) != 0 ) return false;
+		file = n.substr( pre.size() );
+		return file.find( '\\' ) == std::string::npos && f_.files && f_.files->count( file );
+	}
+
+	// NtQueryAttributesFile( ObjectAttributes, FileInformation ) - phnt ntioapi.h NtQueryAttributesFile; FILE_BASIC_INFORMATION {CreationTime,
+	// LastAccessTime, LastWriteTime, ChangeTime, FileAttributes} (WDK wdm.h; 28H bytes). P43 (U2107): the loader's DLL path search for a
+	// system DLL that is not a KnownDll (sample run 8: d3d11, dxgi, dcomp, dwmapi, kernel.appcore). MEASURED (tm_nt sp.*), attributes 840H
+	// (OBJ_CASE_INSENSITIVE | OBJ_IGNORE_IMPERSONATED_DEVICEMAP): a name in the image's directory that it does not hold =
+	// STATUS_OBJECT_NAME_NOT_FOUND with bytes 0..23H written zero (24H..27H untouched); "\??\<SystemRoot>\SYSTEM32\<name>" of an existing
+	// file = STATUS_SUCCESS, all 28H bytes: the four times non-zero, FileAttributes 20H (FILE_ATTRIBUTE_ARCHIVE), bytes 24H..27H 0. The
+	// emulated image directory holds only the image; System32 holds the capture's files; the times are a placeholder (non-zero: the
+	// model's boot time, emu::vclock - the capture records no file times). Other paths / attributes / the image's own name: stop.
+	reply kernel::svc_query_attributes_file( const call& c )
+	{
+		object_attributes oa;
+		std::string why;
+		if ( !guest_object_attributes( c.args[ 0 ], oa, why ) ) return done_( status::access_violation, why );
+		const uint64_t out = c.args[ 1 ];
+		const std::string what = "NtQueryAttributesFile( \"" + oa.name + "\", attributes " + hex( oa.attributes ) + ( oa.root ? ", root " + hex( oa.root ) : std::string() ) +
+								 ", FileInformation " + hex( out ) + " )";
+		if ( oa.attributes != 0x840 ) return stop_( what + " - other attributes: not measured (tm_nt sp: 840H)" );
+		std::string file;
+		if ( sysdir_file( oa, file ) )
+		{
+			if ( !user_buffer( out, 0x28, UC_PROT_WRITE ) ) return done_( status::access_violation, what + ": FileInformation not writable" );
+			uint8_t b[ 0x28 ] = {};
+			for ( int k = 0; k < 4; k++ ) std::memcpy( b + 8 * k, &vclock::system_time_at_interrupt_zero, 8 );
+			b[ 0x20 ] = 0x20;
+			reply rs = done_( status::success, what + ": the captured system-directory file " + file + " - FileAttributes 20H, times = the placeholder 2026-01-01T00:00:00Z (measured shape: tm_nt sp.sys)" );
+			if ( !put( out, b, 0x28, rs ) ) return stop_( "writing the result failed after the probe" );
+			return rs;
+		}
+		std::string dir = lower( f_.image_dir );
+		while ( !dir.empty() && dir.back() == '\\' ) dir.pop_back();
+		const std::string n = lower( oa.name ), pre = "\\??\\" + dir + "\\";
+		const std::string img = lower( f_.image_name );
+		if ( !oa.root && !dir.empty() && n.size() > pre.size() && n.compare( 0, pre.size(), pre ) == 0 && n.find( '\\', pre.size() ) == std::string::npos && n.substr( pre.size() ) != img )
+		{
+			if ( !user_buffer( out, 0x24, UC_PROT_WRITE ) ) return done_( status::access_violation, what + ": FileInformation not writable" );
+			const uint8_t z[ 0x24 ] = {};
+			reply rn = done_( status::object_name_not_found, what + ": the image's directory holds only the image - STATUS_OBJECT_NAME_NOT_FOUND, bytes 0..23H zero (measured: tm_nt sp.app)" );
+			if ( !put( out, z, 0x24, rn ) ) return stop_( "writing the result failed after the probe" );
+			return rn;
+		}
+		return stop_( what + " - the path is not answered by the emulated file system (the image's directory, the system directory's captured files) - not measured" );
+	}
+
 	// NtCreateSection( *SectionHandle, DesiredAccess, ObjectAttributes, MaximumSize, SectionPageProtection, AllocationAttributes, FileHandle )
 	// - phnt ntmmapi.h:1391-1399 (the WDK's ZwCreateSection)
 	reply kernel::svc_create_section( const call& c )
@@ -978,6 +1078,25 @@ namespace emu::nt
 		if ( c.args[ 3 ] && ( !user_buffer( c.args[ 3 ], 8, UC_PROT_READ ) || !get64( c.args[ 3 ], ms ) ) ) return done_( status::access_violation, "NtCreateSection: MaximumSize not readable" );
 		const std::string what = "NtCreateSection( " + hex( c.args[ 0 ] ) + ", access " + hex( uint32_t( c.args[ 1 ] ) ) + ", OA " + hex( c.args[ 2 ] ) + ", MaximumSize " + hex( ms ) +
 								 ", protection " + hex( uint32_t( c.args[ 4 ] ) ) + ", attributes " + hex( uint32_t( c.args[ 5 ] ) ) + ", FileHandle " + hex( c.args[ 6 ] ) + " )";
+		// P43 (U2107): the image section of a captured System32 file the loader opened (tm_nt sp.*.sec): access 0DH, ObjectAttributes NULL,
+		// MaximumSize NULL, PAGE_EXECUTE (10H), SEC_IMAGE (1000000H), the file handle = STATUS_SUCCESS, a handle (non-zero, multiple of 4).
+		// Its view: NtMapViewOfSection below (tm_nt sp.*.map).
+		if ( c.args[ 6 ] )
+		{
+			const auto fh = handles_.find( c.args[ 6 ] );
+			if ( fh == handles_.end() || fh->second.kind != "file (system image)" ) return stop_( what + " - FileHandle is not a captured system-directory file of this process: not measured" );
+			if ( uint32_t( c.args[ 1 ] ) != 0xD || c.args[ 2 ] || c.args[ 3 ] || uint32_t( c.args[ 4 ] ) != 0x10 || uint32_t( c.args[ 5 ] ) != 0x1000000 )
+				return stop_( what + " - other arguments: not measured (tm_nt sp.sec: 0DH, NULL, NULL, PAGE_EXECUTE, SEC_IMAGE)" );
+			if ( !user_buffer( c.args[ 0 ], 8, UC_PROT_WRITE ) ) return done_( status::access_violation, what + ": SectionHandle not writable" );
+			object o;
+			o.kind = "section (image)";
+			o.name = fh->second.name;   // the file's path (a KnownDlls section's name is "\KnownDlls\<name>")
+			o.target = fh->second.target;
+			const uint64_t h = open_handle( o );
+			reply rs = done_( status::success, what + ": an image section of the captured " + o.target + ", handle " + hex( h ) + " (measured: tm_nt sp.sec)" );
+			if ( !put( c.args[ 0 ], &h, 8, rs ) ) return stop_( "writing the handle failed after the probe" );
+			return rs;
+		}
 		if ( !c.args[ 3 ] || ( ms != 0x10000 && ms != 0x20000 ) || uint32_t( c.args[ 4 ] ) != page::readwrite || uint32_t( c.args[ 5 ] ) != 0x8000000 || c.args[ 6 ] )
 			return stop_( what + " - not measured (tm_nt sec: a page-file section of 10000H / 20000H, PAGE_READWRITE, SEC_COMMIT)" );
 		reply r = create_measured_object( c, c.args[ 0 ], uint32_t( c.args[ 1 ] ), c.args[ 2 ], "section (pagefile)", ms, { 0xF001Fu }, "tm_nt sec" );

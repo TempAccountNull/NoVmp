@@ -975,8 +975,14 @@ __declspec( dllimport ) TM_NTSTATUS NTAPI NtApphelpCacheControl( ULONG ServiceCl
 static void case_ahc( void )
 {
 	/* P41 (exploration x5, system call 196): the test PEs' own image names (the loader's LookupCdb for the process image) */
+	/* P43 (U2107; sample run 8, exploration x2 system calls 449-472): the 24 names the loader asks after the sample's import processing, in
+	 * its order and spelling (ahc.9 .. ahc.32; the last one is the sample's image NAME - only the string, the file is never touched) */
 	static const wchar_t* const names[] = { L"KERNELBASE.dll", L"KERNEL32.DLL", L"kernel32.dll", L"ntdll.dll", L"tm_nt_no_such.dll", L"t2_import.exe", L"t3_tls.exe",
-											L"t3_tls.vmware_guest.exe", L"t5_stdout.exe" };
+											L"t3_tls.vmware_guest.exe", L"t5_stdout.exe",
+											L"win32u.dll", L"ucrtbase.dll", L"msvcp_win.dll", L"gdi32full.dll", L"GDI32.dll", L"USER32.dll", L"msvcrt.dll", L"dxgi.dll",
+											L"d3d11.dll", L"RPCRT4.dll", L"combase.dll", L"kernel.appcore.dll", L"dcomp.dll", L"ole32.dll", L"OLEAUT32.dll", L"SHELL32.dll",
+											L"dwmapi.dll", L"WS2_32.dll", L"bcrypt.dll", L"sechost.dll", L"ADVAPI32.dll", L"cfgmgr32.dll", L"SETUPAPI.dll",
+											L"transparent_makimav2.exe" };
 	size_t q, k;
 	for ( q = 0; q < sizeof( names ) / sizeof( names[ 0 ] ); q++ )
 	{
@@ -2356,7 +2362,137 @@ struct tm_case
 	const char* name;
 	void ( *fn )( void );
 };
-static const struct tm_case g_cases[] = { { "sat", case_sat }, { "qsi", case_qsi }, { "hvp", case_hvp }, { "qip", case_qip }, { "wcp", case_wcp }, { "qsix", case_qsix }, { "iocp", case_iocp }, { "wkf", case_wkf }, { "tmr2", case_tmr2 }, { "awcp", case_awcp }, { "swf", case_swf }, { "etw", case_etw }, { "kd", case_kd }, { "of", case_of }, { "tls", case_tls }, { "ahc", case_ahc }, { "vmi", case_vmi }, { "csr", case_csr }, { "sec", case_sec }, { "csrc", case_csrc }, { "nls", case_nls }, { "con", case_con }, { "etwt", case_etwt }, { "tok", case_tok }, { "acc", case_acc }, { "bno", case_bno }, { "mut", case_mut }, { "wil", case_wil }, { "wnf", case_wnf }, { "wnfe", case_wnfe }, { "wnfs", case_wnfs }, { "t2s", case_t2s }, { "hku", case_hku }, { "alert", case_alert }, { "term", case_term }, { "time", case_time } };
+/* ------------------------------------------------------------------------------------------------ the DLL path search (P43, U2106)
+ * The loader maps a system DLL that is NOT a KnownDll (sample run 8: d3d11, dxgi, dcomp, dwmapi, kernel.appcore; exploration x1 system
+ * calls 360-372) with: NtQueryAttributesFile( "\??\<the image's directory>\<name>", attributes 840H (OBJ_CASE_INSENSITIVE |
+ * OBJ_IGNORE_IMPERSONATED_DEVICEMAP) ) - not there; NtQueryAttributesFile( "\??\<SystemRoot>\SYSTEM32\<name>", 840H ); NtOpenFile( &h,
+ * 100021H (SYNCHRONIZE | FILE_EXECUTE | FILE_READ_DATA), that path 840H, &iosb, ShareAccess 5 (READ | DELETE), OpenOptions 60H
+ * (FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE) ); NtCreateSection( &s, 0DH, NULL, NULL, PAGE_EXECUTE (10H), SEC_IMAGE
+ * (1000000H), h ); NtMapViewOfSection( s, NtCurrentProcess(), &base (0), 0, 0, NULL, &size (0), ViewShare, 800000H, 80H ); NtClose( s ),
+ * NtClose( h ). Prototypes: phnt ntioapi.h NtQueryAttributesFile / NtOpenFile, ntmmapi.h NtCreateSection / NtMapViewOfSection (the WDK's
+ * Zw* forms; FILE_BASIC_INFORMATION {CreationTime, LastAccessTime, LastWriteTime, ChangeTime, FileAttributes} - WDK wdm.h). Replayed here
+ * in this process with the same arguments for the same five DLLs (none of them loaded by this test PE; the image's directory = this test
+ * PE's own); printed: statuses, bytes written, the FileAttributes value, the four times only as zero / non-zero, handle shapes, the
+ * view's shape as in kd.map (addresses and paths never printed). */
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtQueryAttributesFile( TM_OA* ObjectAttributes, PVOID FileInformation );
+static void case_sp( void )
+{
+	static const wchar_t* const dll[] = { L"d3d11.dll", L"dxgi.dll", L"dcomp.dll", L"dwmapi.dll", L"kernel.appcore.dll" };
+	static wchar_t app[ 600 ], win[ 300 ], path[ 1000 ];
+	DWORD al = GetModuleFileNameW( NULL, app, 600 );
+	UINT wl = GetWindowsDirectoryW( win, 300 );
+	size_t q, k;
+	while ( al && app[ al - 1 ] != L'\\' ) app[ --al ] = 0;
+	if ( al ) app[ --al ] = 0;   /* the directory without its final backslash */
+	if ( !al || !wl ) { printf( "tm_nt sp: no directory\n" ); return; }
+	for ( q = 0; q < sizeof( dll ) / sizeof( dll[ 0 ] ); q++ )
+	{
+		TM_USTR n;
+		TM_OA oa;
+		unsigned char fi[ 0x40 ];
+		ULONG_PTR iosb[ 2 ];
+		HANDLE h = (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull, sct = (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull;
+		TM_NTSTATUS st;
+		size_t w;
+		/* 1. the image's directory */
+		wcscpy( path, L"\\??\\" );
+		wcscat( path, app );
+		wcscat( path, L"\\" );
+		wcscat( path, dll[ q ] );
+		tm_ustr( &n, path );
+		tm_oa( &oa, NULL, &n );
+		oa.Attributes = 0x840;
+		memset( fi, 0xCC, sizeof( fi ) );
+		st = NtQueryAttributesFile( &oa, fi );
+		for ( w = 0, k = 0; k < sizeof( fi ); k++ ) w += fi[ k ] != 0xCC;
+		printf( "tm_nt sp.%zu.app: NtQueryAttributesFile(\"\\??\\<the image's directory>\\", q );
+		tm_wprint( dll[ q ], wcslen( dll[ q ] ) );
+		{
+			size_t lo = sizeof( fi ), hi = 0, nz = 0;
+			for ( k = 0; k < sizeof( fi ); k++ )
+				if ( fi[ k ] != 0xCC ) { if ( k < lo ) lo = k; hi = k; nz += fi[ k ] != 0; }
+			printf( "\" 840H, buf) -> status %08lXH, bytes written %zu", (unsigned long)st, w );
+			if ( w ) printf( " (offsets %zXH..%zXH, non-zero %zu)", lo, hi, nz );
+			printf( "\n" );
+		}
+		/* 2. <SystemRoot>\SYSTEM32 */
+		wcscpy( path, L"\\??\\" );
+		wcscat( path, win );
+		wcscat( path, L"\\SYSTEM32\\" );
+		wcscat( path, dll[ q ] );
+		tm_ustr( &n, path );
+		memset( fi, 0xCC, sizeof( fi ) );
+		st = NtQueryAttributesFile( &oa, fi );
+		for ( w = 0, k = 0; k < sizeof( fi ); k++ ) w += fi[ k ] != 0xCC;
+		printf( "tm_nt sp.%zu.sys: NtQueryAttributesFile(\"\\??\\<SystemRoot>\\SYSTEM32\\", q );
+		tm_wprint( dll[ q ], wcslen( dll[ q ] ) );
+		printf( "\" 840H, buf) -> status %08lXH, bytes written %zu", (unsigned long)st, w );
+		if ( st >= 0 )
+			printf( "; CreationTime %s, LastAccessTime %s, LastWriteTime %s, ChangeTime %s, FileAttributes %lXH, bytes 24H..27H %02X %02X %02X %02X",
+					*(ULONGLONG*)( fi + 0 ) ? "non-zero" : "0", *(ULONGLONG*)( fi + 8 ) ? "non-zero" : "0", *(ULONGLONG*)( fi + 0x10 ) ? "non-zero" : "0",
+					*(ULONGLONG*)( fi + 0x18 ) ? "non-zero" : "0", (unsigned long)*(ULONG*)( fi + 0x20 ), fi[ 0x24 ], fi[ 0x25 ], fi[ 0x26 ], fi[ 0x27 ] );
+		printf( "\n" );
+		/* 3. the open, the image section, the view */
+		iosb[ 0 ] = iosb[ 1 ] = (ULONG_PTR)0xCCCCCCCCCCCCCCCCull;
+		st = NtOpenFile( &h, 0x100021, &oa, iosb, 5, 0x60 );
+		printf( "tm_nt sp.%zu.open: NtOpenFile(&h, 100021H, that path 840H, &iosb, 5, 60H) -> status %08lXH, handle %s, IoStatus.Status %08lXH, Information %llXH\n", q,
+				(unsigned long)st, tm_hshape( h ), (unsigned long)(ULONG)iosb[ 0 ], (unsigned long long)iosb[ 1 ] );
+		if ( st < 0 ) continue;
+		st = NtCreateSection( &sct, 0xD, NULL, NULL, 0x10, 0x1000000, h );
+		printf( "tm_nt sp.%zu.sec: NtCreateSection(&s, 0DH, NULL, NULL, 10H, 1000000H, the file) -> status %08lXH, handle %s\n", q, (unsigned long)st, tm_hshape( sct ) );
+		if ( st >= 0 )
+		{
+			PVOID base = NULL;
+			SIZE_T vs = 0, rl2 = 0;
+			MEMORY_BASIC_INFORMATION mbi;
+			st = NtMapViewOfSection( sct, (HANDLE)(LONG_PTR)-1, &base, 0, 0, NULL, &vs, 1, 0x800000, 0x80 );
+			printf( "tm_nt sp.%zu.map: NtMapViewOfSection(the section, -1, &base (0), 0, 0, NULL, &size (0), ViewShare, 800000H, 80H) -> status %08lXH", q, (unsigned long)st );
+			if ( st >= 0 && base )
+			{
+				const unsigned char* b = (const unsigned char*)base;
+				const LONG lfanew = *(const LONG*)( b + 0x3C );
+				const ULONGLONG hib = *(const ULONGLONG*)( b + lfanew + 0x18 + 0x18 );
+				const ULONG soi = *(const ULONG*)( b + lfanew + 0x18 + 0x38 );
+				printf( ", base <va> (64K-aligned %s), ViewSize %s SizeOfImage (%zXH vs %lXH), header ImageBase %s", ( (ULONG_PTR)base & 0xFFFF ) ? "no" : "yes", vs == soi ? "=" : "!=", vs,
+						(unsigned long)soi, hib == (ULONGLONG)(ULONG_PTR)base ? "= the base" : "!= the base" );
+				memset( &mbi, 0, sizeof( mbi ) );
+				NtQueryVirtualMemory( (HANDLE)(LONG_PTR)-1, base, 0, &mbi, sizeof( mbi ), &rl2 );
+				printf( "; MBI at the base: AllocationProtect %lXH, State %lXH, Protect %lXH, Type %lXH, RegionSize %zXH", (unsigned long)mbi.AllocationProtect, (unsigned long)mbi.State,
+						(unsigned long)mbi.Protect, (unsigned long)mbi.Type, mbi.RegionSize );
+				printf( "; NtUnmapViewOfSection -> %08lXH", (unsigned long)NtUnmapViewOfSection( (HANDLE)(LONG_PTR)-1, base ) );
+			}
+			printf( "\n" );
+			printf( "tm_nt sp.%zu.close: NtClose(the section) -> %08lXH", q, (unsigned long)NtClose( sct ) );
+		}
+		else
+			printf( "tm_nt sp.%zu.close:", q );
+		printf( ", NtClose(the file) -> %08lXH\n", (unsigned long)NtClose( h ) );
+	}
+}
+
+/* ------------------------------------------------------------------------------------------------ ProcessMitigationPolicy (P43, U2108)
+ * user32's start (sample run 8, exploration x6 system call 487) queries NtQueryInformationProcess( NtCurrentProcess(), 34H
+ * ProcessMitigationPolicy (phnt ntpsapi.h PROCESSINFOCLASS 52), {Policy 0BH, flags}, Length 8, ReturnLength NULL ) - Policy 0BH =
+ * ProcessSystemCallFilterPolicy (um\winnt.h PROCESS_MITIGATION_POLICY; PROCESS_MITIGATION_SYSTEM_CALL_FILTER_POLICY {DWORD Flags:
+ * FilterId 4 bits}); the documented user-mode form is GetProcessMitigationPolicy. Replayed for this process (an ordinary process, as the
+ * emulated one): Length 8 with ReturnLength NULL (the call's) and set; printed: status, the flags, the policy field after the call. */
+static void case_mit( void )
+{
+	ULONG b[ 4 ], rl;
+	TM_NTSTATUS st;
+	b[ 0 ] = 0xB; b[ 1 ] = 0xCCCCCCCC; b[ 2 ] = b[ 3 ] = 0xCCCCCCCC;
+	st = NtQueryInformationProcess( (HANDLE)(LONG_PTR)-1, 0x34, b, 8, NULL );
+	printf( "tm_nt mit.b: NtQueryInformationProcess(-1, 34H, {0BH ProcessSystemCallFilterPolicy, CCH}, 8, NULL) -> status %08lXH, Policy after %lXH, Flags %lXH, bytes 8.. %s\n",
+			(unsigned long)st, (unsigned long)b[ 0 ], (unsigned long)b[ 1 ], b[ 2 ] == 0xCCCCCCCC ? "untouched" : "written" );
+	b[ 0 ] = 0xB; b[ 1 ] = 0xCCCCCCCC; rl = 0xCCCCCCCC;
+	st = NtQueryInformationProcess( (HANDLE)(LONG_PTR)-1, 0x34, b, 8, &rl );
+	printf( "tm_nt mit.b.rl: the same with ReturnLength -> status %08lXH, Flags %lXH, ReturnLength %lXH\n", (unsigned long)st, (unsigned long)b[ 1 ], (unsigned long)rl );
+	b[ 0 ] = 0xB; b[ 1 ] = 0xCCCCCCCC;
+	st = NtQueryInformationProcess( (HANDLE)(LONG_PTR)-1, 0x34, b, 4, NULL );
+	printf( "tm_nt mit.b.4: Length 4 -> status %08lXH, Flags %s\n", (unsigned long)st, b[ 1 ] == 0xCCCCCCCC ? "not written" : "written" );
+}
+
+static const struct tm_case g_cases[] = { { "sat", case_sat }, { "qsi", case_qsi }, { "hvp", case_hvp }, { "qip", case_qip }, { "wcp", case_wcp }, { "qsix", case_qsix }, { "iocp", case_iocp }, { "wkf", case_wkf }, { "tmr2", case_tmr2 }, { "awcp", case_awcp }, { "swf", case_swf }, { "etw", case_etw }, { "kd", case_kd }, { "of", case_of }, { "tls", case_tls }, { "ahc", case_ahc }, { "vmi", case_vmi }, { "csr", case_csr }, { "sec", case_sec }, { "csrc", case_csrc }, { "nls", case_nls }, { "con", case_con }, { "etwt", case_etwt }, { "tok", case_tok }, { "acc", case_acc }, { "bno", case_bno }, { "mut", case_mut }, { "wil", case_wil }, { "wnf", case_wnf }, { "wnfe", case_wnfe }, { "wnfs", case_wnfs }, { "t2s", case_t2s }, { "hku", case_hku }, { "alert", case_alert }, { "term", case_term }, { "time", case_time }, { "sp", case_sp }, { "mit", case_mit } };
 
 int main( int argc, char** argv )
 {

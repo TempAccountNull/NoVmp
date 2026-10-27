@@ -377,6 +377,25 @@ namespace emu::nt
 		std::string what;
 		switch ( cls )
 		{
+			case 0x34:
+			{
+				// P43 (U2109): ProcessMitigationPolicy (phnt ntpsapi.h PROCESSINFOCLASS 52; PROCESS_MITIGATION_POLICY_INFORMATION {Policy,
+				// flags} - um\winnt.h PROCESS_MITIGATION_POLICY, GetProcessMitigationPolicy). user32's start asks policy 0BH
+				// ProcessSystemCallFilterPolicy (sample run 8, exploration x6 system call 487). MEASURED (tm_nt mit.*, an ordinary process): Length
+				// 8 = STATUS_SUCCESS, the flags (bytes 4..7) 0, the policy field unchanged, ReturnLength NOT written (also when given); Length 4 =
+				// STATUS_INFO_LENGTH_MISMATCH, nothing written. Other policies / lengths: stop.
+				uint32_t pol = 0xFFFFFFFF;
+				std::string err;
+				if ( len >= 4 && user_buffer( out, 4, UC_PROT_READ ) ) e_.read( out, &pol, 4, err );
+				const std::string w = "ProcessMitigationPolicy policy " + hex( pol ) + ", Length " + hex( len );
+				if ( pol != 0xB || ( len != 8 && len != 4 ) ) { r = stop_( w + ": not measured (tm_nt mit: policy 0BH, Length 8 / 4)" ); return true; }
+				if ( len == 4 ) { r = done_( status::info_length_mismatch, w + ": STATUS_INFO_LENGTH_MISMATCH (measured: tm_nt mit.b.4)" ); return true; }
+				if ( !user_buffer( out, 8, UC_PROT_WRITE ) ) { r = done_( status::access_violation, w + ": ProcessInformation not writable" ); return true; }
+				r = done_( status::success, w + ": ProcessSystemCallFilterPolicy flags 0, ReturnLength not written (measured: tm_nt mit.b / mit.b.rl)" );
+				const uint32_t zero = 0;
+				if ( !put( out + 4, &zero, 4, r ) ) r = stop_( "writing the result failed after the probe" );
+				return true;
+			}
 			case 0x22:
 			{
 				data.assign( 4, 0 );

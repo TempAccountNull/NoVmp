@@ -28,6 +28,10 @@
 # of QPC / InterruptTime / SystemTime / TickCount (signs, constancy - never a time value), NtQuerySystemTime, NtDelayExecution and
 # NtWaitForSingleObject time-outs, the TSC rate the hypervisor page states (to 0.1 MHz) and IA32_TSC_AUX. P42 (U2099, sample run 7):
 # wkf.800 = the loader's NtCreateWorkerFactory with the sample's own StackReserve 800000H.
+# P43 (U2106 / U2108 / U2109, sample run 8): case sp = the loader's path search + image section of a system DLL that is not a KnownDll
+# (d3d11, dxgi, dcomp, dwmapi, kernel.appcore; "<the image's directory>" = the test PE's own, "<SystemRoot>" = GetWindowsDirectoryW; file
+# times only as zero / non-zero); ahc.9 .. ahc.32 = the 24 LookupCdb names of the sample's import graph (the last one is the sample's image
+# NAME - only the string); case mit = ProcessMitigationPolicy policy 0BH ProcessSystemCallFilterPolicy.
 tm_nt sat.0: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 330H) -> status C0000225H, ReturnLength 0H, written 0H
 tm_nt sat.1: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 0H) -> status C0000225H, ReturnLength 0H, written 0H
 tm_nt sat.2: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 8H) -> status C0000225H, ReturnLength 0H, written 0H
@@ -201,6 +205,30 @@ tm_nt ahc.5: NtApphelpCacheControl(6 LookupCdb, Name "t2_import.exe", ParamsOut 
 tm_nt ahc.6: NtApphelpCacheControl(6 LookupCdb, Name "t3_tls.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
 tm_nt ahc.7: NtApphelpCacheControl(6 LookupCdb, Name "t3_tls.vmware_guest.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
 tm_nt ahc.8: NtApphelpCacheControl(6 LookupCdb, Name "t5_stdout.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.9: NtApphelpCacheControl(6 LookupCdb, Name "win32u.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.10: NtApphelpCacheControl(6 LookupCdb, Name "ucrtbase.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.11: NtApphelpCacheControl(6 LookupCdb, Name "msvcp_win.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.12: NtApphelpCacheControl(6 LookupCdb, Name "gdi32full.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.13: NtApphelpCacheControl(6 LookupCdb, Name "GDI32.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.14: NtApphelpCacheControl(6 LookupCdb, Name "USER32.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.15: NtApphelpCacheControl(6 LookupCdb, Name "msvcrt.dll", ParamsOut 4 bytes) -> status 00000000H, out 80H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.16: NtApphelpCacheControl(6 LookupCdb, Name "dxgi.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.17: NtApphelpCacheControl(6 LookupCdb, Name "d3d11.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.18: NtApphelpCacheControl(6 LookupCdb, Name "RPCRT4.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.19: NtApphelpCacheControl(6 LookupCdb, Name "combase.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.20: NtApphelpCacheControl(6 LookupCdb, Name "kernel.appcore.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.21: NtApphelpCacheControl(6 LookupCdb, Name "dcomp.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.22: NtApphelpCacheControl(6 LookupCdb, Name "ole32.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.23: NtApphelpCacheControl(6 LookupCdb, Name "OLEAUT32.dll", ParamsOut 4 bytes) -> status 00000000H, out 80H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.24: NtApphelpCacheControl(6 LookupCdb, Name "SHELL32.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.25: NtApphelpCacheControl(6 LookupCdb, Name "dwmapi.dll", ParamsOut 4 bytes) -> status 00000000H, out 80H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.26: NtApphelpCacheControl(6 LookupCdb, Name "WS2_32.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.27: NtApphelpCacheControl(6 LookupCdb, Name "bcrypt.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.28: NtApphelpCacheControl(6 LookupCdb, Name "sechost.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.29: NtApphelpCacheControl(6 LookupCdb, Name "ADVAPI32.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.30: NtApphelpCacheControl(6 LookupCdb, Name "cfgmgr32.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.31: NtApphelpCacheControl(6 LookupCdb, Name "SETUPAPI.dll", ParamsOut 4 bytes) -> status 00000000H, out 80H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.32: NtApphelpCacheControl(6 LookupCdb, Name "transparent_makimav2.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
 tm_nt vmi.fresh: NtSetInformationVirtualMemory(-1, 4, 1, {a fresh image view's base, 1000H}, &1, 4) -> status C00000BBH
 tm_nt vmi.again: the same call again -> status C00000BBH
 tm_nt vmi.loaded: the same call on this process' kernelbase.dll base -> status C00000BBH
@@ -351,3 +379,36 @@ tm_nt time.wait: NtWaitForSingleObject(a non-signaled notification event, FALSE,
 tm_nt time.wait.past: NtWaitForSingleObject(the event, FALSE, absolute 1) -> status 00000102H
 tm_nt time.tsc: hypervisor page QpcMultiplier non-zero, QpcBias 0; TSC frequency = QpcFrequency * 2^64 / QpcMultiplier = 3494.4 MHz (to 0.1 MHz); RDTSC / QPC over 100 ms agrees within 0.1% yes
 tm_nt time.tscaux: RDTSCP ECX (IA32_TSC_AUX) = GetCurrentProcessorNumber() yes, bits 31:12 0
+tm_nt sp.0.app: NtQueryAttributesFile("\??\<the image's directory>\d3d11.dll" 840H, buf) -> status C0000034H, bytes written 36 (offsets 0H..23H, non-zero 0)
+tm_nt sp.0.sys: NtQueryAttributesFile("\??\<SystemRoot>\SYSTEM32\d3d11.dll" 840H, buf) -> status 00000000H, bytes written 40; CreationTime non-zero, LastAccessTime non-zero, LastWriteTime non-zero, ChangeTime non-zero, FileAttributes 20H, bytes 24H..27H 00 00 00 00
+tm_nt sp.0.open: NtOpenFile(&h, 100021H, that path 840H, &iosb, 5, 60H) -> status 00000000H, handle <handle> (non-zero, multiple of 4), IoStatus.Status 00000000H, Information 1H
+tm_nt sp.0.sec: NtCreateSection(&s, 0DH, NULL, NULL, 10H, 1000000H, the file) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt sp.0.map: NtMapViewOfSection(the section, -1, &base (0), 0, 0, NULL, &size (0), ViewShare, 800000H, 80H) -> status 00000000H, base <va> (64K-aligned yes), ViewSize = SizeOfImage (264000H vs 264000H), header ImageBase = the base; MBI at the base: AllocationProtect 80H, State 1000H, Protect 2H, Type 1000000H, RegionSize 1000H; NtUnmapViewOfSection -> 00000000H
+tm_nt sp.0.close: NtClose(the section) -> 00000000H, NtClose(the file) -> 00000000H
+tm_nt sp.1.app: NtQueryAttributesFile("\??\<the image's directory>\dxgi.dll" 840H, buf) -> status C0000034H, bytes written 36 (offsets 0H..23H, non-zero 0)
+tm_nt sp.1.sys: NtQueryAttributesFile("\??\<SystemRoot>\SYSTEM32\dxgi.dll" 840H, buf) -> status 00000000H, bytes written 40; CreationTime non-zero, LastAccessTime non-zero, LastWriteTime non-zero, ChangeTime non-zero, FileAttributes 20H, bytes 24H..27H 00 00 00 00
+tm_nt sp.1.open: NtOpenFile(&h, 100021H, that path 840H, &iosb, 5, 60H) -> status 00000000H, handle <handle> (non-zero, multiple of 4), IoStatus.Status 00000000H, Information 1H
+tm_nt sp.1.sec: NtCreateSection(&s, 0DH, NULL, NULL, 10H, 1000000H, the file) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt sp.1.map: NtMapViewOfSection(the section, -1, &base (0), 0, 0, NULL, &size (0), ViewShare, 800000H, 80H) -> status 00000000H, base <va> (64K-aligned yes), ViewSize = SizeOfImage (F6000H vs F6000H), header ImageBase = the base; MBI at the base: AllocationProtect 80H, State 1000H, Protect 2H, Type 1000000H, RegionSize 1000H; NtUnmapViewOfSection -> 00000000H
+tm_nt sp.1.close: NtClose(the section) -> 00000000H, NtClose(the file) -> 00000000H
+tm_nt sp.2.app: NtQueryAttributesFile("\??\<the image's directory>\dcomp.dll" 840H, buf) -> status C0000034H, bytes written 36 (offsets 0H..23H, non-zero 0)
+tm_nt sp.2.sys: NtQueryAttributesFile("\??\<SystemRoot>\SYSTEM32\dcomp.dll" 840H, buf) -> status 00000000H, bytes written 40; CreationTime non-zero, LastAccessTime non-zero, LastWriteTime non-zero, ChangeTime non-zero, FileAttributes 20H, bytes 24H..27H 00 00 00 00
+tm_nt sp.2.open: NtOpenFile(&h, 100021H, that path 840H, &iosb, 5, 60H) -> status 00000000H, handle <handle> (non-zero, multiple of 4), IoStatus.Status 00000000H, Information 1H
+tm_nt sp.2.sec: NtCreateSection(&s, 0DH, NULL, NULL, 10H, 1000000H, the file) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt sp.2.map: NtMapViewOfSection(the section, -1, &base (0), 0, 0, NULL, &size (0), ViewShare, 800000H, 80H) -> status 00000000H, base <va> (64K-aligned yes), ViewSize = SizeOfImage (1E5000H vs 1E5000H), header ImageBase = the base; MBI at the base: AllocationProtect 80H, State 1000H, Protect 2H, Type 1000000H, RegionSize 1000H; NtUnmapViewOfSection -> 00000000H
+tm_nt sp.2.close: NtClose(the section) -> 00000000H, NtClose(the file) -> 00000000H
+tm_nt sp.3.app: NtQueryAttributesFile("\??\<the image's directory>\dwmapi.dll" 840H, buf) -> status C0000034H, bytes written 36 (offsets 0H..23H, non-zero 0)
+tm_nt sp.3.sys: NtQueryAttributesFile("\??\<SystemRoot>\SYSTEM32\dwmapi.dll" 840H, buf) -> status 00000000H, bytes written 40; CreationTime non-zero, LastAccessTime non-zero, LastWriteTime non-zero, ChangeTime non-zero, FileAttributes 20H, bytes 24H..27H 00 00 00 00
+tm_nt sp.3.open: NtOpenFile(&h, 100021H, that path 840H, &iosb, 5, 60H) -> status 00000000H, handle <handle> (non-zero, multiple of 4), IoStatus.Status 00000000H, Information 1H
+tm_nt sp.3.sec: NtCreateSection(&s, 0DH, NULL, NULL, 10H, 1000000H, the file) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt sp.3.map: NtMapViewOfSection(the section, -1, &base (0), 0, 0, NULL, &size (0), ViewShare, 800000H, 80H) -> status 00000000H, base <va> (64K-aligned yes), ViewSize = SizeOfImage (2E000H vs 2E000H), header ImageBase = the base; MBI at the base: AllocationProtect 80H, State 1000H, Protect 2H, Type 1000000H, RegionSize 1000H; NtUnmapViewOfSection -> 00000000H
+tm_nt sp.3.close: NtClose(the section) -> 00000000H, NtClose(the file) -> 00000000H
+tm_nt sp.4.app: NtQueryAttributesFile("\??\<the image's directory>\kernel.appcore.dll" 840H, buf) -> status C0000034H, bytes written 36 (offsets 0H..23H, non-zero 0)
+tm_nt sp.4.sys: NtQueryAttributesFile("\??\<SystemRoot>\SYSTEM32\kernel.appcore.dll" 840H, buf) -> status 00000000H, bytes written 40; CreationTime non-zero, LastAccessTime non-zero, LastWriteTime non-zero, ChangeTime non-zero, FileAttributes 20H, bytes 24H..27H 00 00 00 00
+tm_nt sp.4.open: NtOpenFile(&h, 100021H, that path 840H, &iosb, 5, 60H) -> status 00000000H, handle <handle> (non-zero, multiple of 4), IoStatus.Status 00000000H, Information 1H
+tm_nt sp.4.sec: NtCreateSection(&s, 0DH, NULL, NULL, 10H, 1000000H, the file) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt sp.4.map: NtMapViewOfSection(the section, -1, &base (0), 0, 0, NULL, &size (0), ViewShare, 800000H, 80H) -> status 00000000H, base <va> (64K-aligned yes), ViewSize = SizeOfImage (12000H vs 12000H), header ImageBase = the base; MBI at the base: AllocationProtect 80H, State 1000H, Protect 2H, Type 1000000H, RegionSize 1000H; NtUnmapViewOfSection -> 00000000H
+tm_nt sp.4.close: NtClose(the section) -> 00000000H, NtClose(the file) -> 00000000H
+tm_nt mit.b: NtQueryInformationProcess(-1, 34H, {0BH ProcessSystemCallFilterPolicy, CCH}, 8, NULL) -> status 00000000H, Policy after BH, Flags 0H, bytes 8.. untouched
+tm_nt mit.b.rl: the same with ReturnLength -> status 00000000H, Flags 0H, ReturnLength CCCCCCCCH
+tm_nt mit.b.4: Length 4 -> status C0000004H, Flags not written

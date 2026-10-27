@@ -3618,6 +3618,135 @@ namespace
 			   "upper case / other names: no slot (callers pass lower-case names)" );
 	}
 
+	// P43 (U2110): nt_measured_dllsearch - the DLL path search for a captured System32 DLL that is not a KnownDll (tm_nt sp.*), the
+	// KnownDlls slot of a further KnownDll (U2105), the LookupCdb names of the sample's import graph (tm_nt ahc.9 .. ahc.32) and
+	// ProcessMitigationPolicy 0BH (tm_nt mit.*) - in a process whose facts hold two synthetic DLL images (d3d11.dll, user32.dll)
+	std::vector<uint8_t> ds_dll()
+	{
+		w4_pe p;
+		p.image_base = 0x180000000ull;
+		p.file_characteristics = 0x2022;   // EXECUTABLE_IMAGE | LARGE_ADDRESS_AWARE | DLL (winnt.h)
+		std::vector<uint8_t> rel( 8, 0 );
+		rel[ 1 ] = 0x10;   // IMAGE_BASE_RELOCATION VirtualAddress 1000H
+		rel[ 4 ] = 8;      // SizeOfBlock 8: no fixups (the image maps at any base)
+		p.sections = { { ".text", 0x1000, std::vector<uint8_t>{ 0xC3 }, w4_scn_text }, { ".reloc", 0x2000, rel, w4_scn_reloc } };
+		p.dirs[ 5 ] = { 0x2000, 8 };
+		return w4_build( p );
+	}
+	void t_nt_measured_dllsearch()
+	{
+		std::string err;
+		emu::engine_config ec;
+		ec.profile = emu::cpu_profile_choice::guest;
+		emu::win::process_options po;
+		po.boundary = emu::env_boundary::sys;
+		po.max_insns = 200000;
+		po.image_name = "w5";
+		po.image_file_name = "w5.exe";
+		auto f = w5_facts();
+		auto files = std::make_shared<std::map<std::string, std::vector<uint8_t>>>();
+		( *files )[ "d3d11.dll" ] = ds_dll();
+		( *files )[ "user32.dll" ] = ds_dll();
+		f.files = files;
+		std::vector<std::string> log;
+		auto p = emu::win::process::create( ec, f, po, w5_build( { w5_trivial }, err ), log, err );
+		CHECK( p != nullptr, "process: " + err );
+		if ( !p ) return;
+		namespace N = emu::nt;
+		const uint64_t S = w5_scratch, cp = N::current_process, O = S + 0x1000;
+		auto rd = [ & ]( uint64_t va, int n ) { return w4_read( *p, va, n ); };
+		auto oa = [ & ]( uint64_t at, uint64_t root, const std::string& name, uint64_t attributes ) {
+			ms_ustr( *p, at + 0x30, at + 0x40, name );
+			w5_put( *p, at, 0x30 );
+			w5_put( *p, at + 8, root );
+			w5_put( *p, at + 0x10, at + 0x30 );
+			w5_put( *p, at + 0x18, attributes );
+			w5_put( *p, at + 0x20, 0 );
+			w5_put( *p, at + 0x28, 0 );
+		};
+		auto fill = [ & ]( uint64_t at, int n ) { for ( int k = 0; k < n; k += 8 ) w5_put( *p, at + k, 0xCCCCCCCCCCCCCCCCull ); };
+		const uint64_t F = S + 0x100;
+		// 1. NtQueryAttributesFile (tm_nt sp.*.app / sp.*.sys)
+		oa( O, 0, "\\??\\C:\\Users\\user\\Desktop\\d3d11.dll", 0x840 );
+		fill( F, 0x30 );
+		auto r = w5_call( *p, "NtQueryAttributesFile", { O, F } );
+		CHECK( w5_status( r, N::status::object_name_not_found ) && rd( F, 8 ) == 0 && rd( F + 0x18, 8 ) == 0 && rd( F + 0x20, 4 ) == 0 && rd( F + 0x24, 4 ) == 0xCCCCCCCC,
+			   "sp.app: not in the image's directory - STATUS_OBJECT_NAME_NOT_FOUND, bytes 0..23H zero, 24H.. untouched: " + r.text );
+		oa( O, 0, "\\??\\C:\\Users\\user\\Desktop\\w5.exe", 0x840 );
+		CHECK( w5_stop( w5_call( *p, "NtQueryAttributesFile", { O, F } ) ), "the image's own name: not measured, stop" );
+		oa( O, 0, "\\??\\C:\\Windows\\SYSTEM32\\d3d11.dll", 0x840 );
+		fill( F, 0x30 );
+		r = w5_call( *p, "NtQueryAttributesFile", { O, F } );
+		CHECK( w5_ok( r ) && rd( F, 8 ) == emu::vclock::system_time_at_interrupt_zero && rd( F + 0x18, 8 ) == emu::vclock::system_time_at_interrupt_zero && rd( F + 0x20, 4 ) == 0x20 &&
+				   rd( F + 0x24, 4 ) == 0 && rd( F + 0x28, 8 ) == 0xCCCCCCCCCCCCCCCCull,
+			   "sp.sys: a captured system-directory file - STATUS_SUCCESS, 28H bytes, FileAttributes 20H, times non-zero (the placeholder): " + r.text );
+		oa( O, 0, "\\??\\C:\\Windows\\SYSTEM32\\d3d11.dll", 0x40 );
+		CHECK( w5_stop( w5_call( *p, "NtQueryAttributesFile", { O, F } ) ), "other attributes: stop" );
+		oa( O, 0, "\\??\\C:\\Windows\\SYSTEM32\\notcaptured.dll", 0x840 );
+		CHECK( w5_stop( w5_call( *p, "NtQueryAttributesFile", { O, F } ) ), "a system-directory file the capture does not hold: stop" );
+		// 2. open, image section, view (tm_nt sp.*.open / .sec / .map)
+		oa( O, 0, "\\??\\C:\\Windows\\SYSTEM32\\d3d11.dll", 0x840 );
+		CHECK( w5_stop( w5_call( *p, "NtOpenFile", { S + 0x58, 0x100021, O, S + 0x60, 5, 0x21 } ) ), "sp.open with other options: stop" );
+		fill( S + 0x60, 0x10 );
+		r = w5_call( *p, "NtOpenFile", { S + 0x58, 0x100021, O, S + 0x60, 5, 0x60 } );
+		const uint64_t fh = rd( S + 0x58, 8 );
+		CHECK( w5_ok( r ) && fh && fh % 4 == 0 && rd( S + 0x60, 8 ) == 0 && rd( S + 0x68, 8 ) == 1, "sp.open: a handle, IoStatus {0, FILE_OPENED}: " + r.text );
+		CHECK( w5_stop( w5_call( *p, "NtCreateSection", { S + 0x70, 0xF001F, 0, 0, 0x10, 0x1000000, fh } ) ), "sp.sec with another access: stop" );
+		r = w5_call( *p, "NtCreateSection", { S + 0x70, 0xD, 0, 0, 0x10, 0x1000000, fh } );
+		const uint64_t sh = rd( S + 0x70, 8 );
+		CHECK( w5_ok( r ) && sh && sh % 4 == 0 && sh != fh, "sp.sec: an image section handle: " + r.text );
+		w5_put( *p, S + 0x80, 0 );
+		w5_put( *p, S + 0x88, 0 );
+		r = w5_call( *p, "NtMapViewOfSection", { sh, cp, S + 0x80, 0, 0, 0, S + 0x88, 1, 0x800000, 0x80 } );
+		const uint64_t vb = rd( S + 0x80, 8 );
+		CHECK( w5_ok( r ) && vb && !( vb & 0xFFFF ) && rd( S + 0x88, 8 ) == 0x3000 && rd( vb + 0x80 + 0x18 + 0x18, 8 ) == vb &&
+				   !( vb >= 0x7FFB00000000ull && vb < 0x7FFDA0000000ull ),
+			   "sp.map: STATUS_SUCCESS, a 64 KiB-aligned base outside the KnownDlls slots, ViewSize = SizeOfImage 3000H, header ImageBase = the base: " + r.text );
+		emu::nt::reply rq;
+		const w5_mbi m = w5_query( *p, vb, rq );
+		CHECK( w5_ok( rq ) && m.alloc_protect == 0x80 && m.state == N::mem::commit && m.protect == N::page::readonly && m.type == 0x1000000, "sp.map: MBI 80H, MEM_COMMIT, PAGE_READONLY, MEM_IMAGE" );
+		w5_put( *p, S + 0x80, 0 );
+		w5_put( *p, S + 0x88, 0 );
+		CHECK( w5_stop( w5_call( *p, "NtMapViewOfSection", { sh, cp, S + 0x80, 0, 0, 0, S + 0x88, 1, 0x800000, 0x80 } ) ), "a second view of the same image: stop" );
+		CHECK( w5_ok( w5_call( *p, "NtClose", { sh } ) ) && w5_ok( w5_call( *p, "NtClose", { fh } ) ), "sp.close: section and file closed" );
+		// 3. a further KnownDll at its slot (U2105, tm_nt kd.map)
+		oa( O, 0, "\\KnownDlls", 0x40 );
+		r = w5_call( *p, "NtOpenDirectoryObject", { S, 3, O } );
+		const uint64_t kd = rd( S, 8 );
+		oa( O, kd, "USER32.dll", 0x40 );
+		r = w5_call( *p, "NtOpenSection", { S + 8, 0xD, O } );
+		const uint64_t us = rd( S + 8, 8 );
+		w5_put( *p, S + 0x80, 0 );
+		w5_put( *p, S + 0x88, 0 );
+		r = w5_call( *p, "NtMapViewOfSection", { us, cp, S + 0x80, 0, 0, 0, S + 0x88, 1, 0x800000, 0x80 } );
+		CHECK( w5_ok( r ) && rd( S + 0x80, 8 ) == emu::win::system_image_slot( "user32.dll" ), "kd.map: user32.dll at its slot (U2105): " + r.text );
+		// 4. LookupCdb (tm_nt ahc.9 .. ahc.32)
+		auto ahc = [ & ]( const std::string& name, uint32_t& out ) {
+			for ( int k = 0; k < 0x178; k += 8 ) w5_put( *p, S + 0x400 + k, 0 );
+			ms_ustr( *p, S + 0x400 + 0xE8, S + 0x600, name );
+			w5_put( *p, S + 0x400 + 0x168, S + 0x700 );
+			w5_put( *p, S + 0x400 + 0x170, 4 );
+			w5_put( *p, S + 0x700, 0xCCCCCCCC );
+			auto rr = w5_call( *p, "NtApphelpCacheControl", { 6, S + 0x400 } );
+			out = uint32_t( rd( S + 0x700, 4 ) );
+			return rr;
+		};
+		uint32_t o1 = 0, o2 = 0, o3 = 0;
+		CHECK( w5_ok( ahc( "msvcrt.dll", o1 ) ) && o1 == 0x80 && w5_ok( ahc( "SETUPAPI.dll", o2 ) ) && o2 == 0x80, "ahc.15 / .31: ParamsOut 80H" );
+		CHECK( w5_ok( ahc( "win32u.dll", o1 ) ) && o1 == 0 && w5_ok( ahc( "transparent_makimav2.exe", o3 ) ) && o3 == 0, "ahc.9 / .32: ParamsOut 0" );
+		CHECK( w5_stop( ahc( "notmeasured.dll", o1 ) ), "an unmeasured name: stop" );
+		// 5. ProcessMitigationPolicy (tm_nt mit.*)
+		w5_put( *p, S + 0x800, 0xCCCCCCCC0000000Bull );
+		w5_put( *p, S + 0x808, 0xCCCCCCCCCCCCCCCCull );
+		r = w5_call( *p, "NtQueryInformationProcess", { cp, 0x34, S + 0x800, 8, S + 0x808 } );
+		CHECK( w5_ok( r ) && rd( S + 0x800, 8 ) == 0xB && rd( S + 0x808, 8 ) == 0xCCCCCCCCCCCCCCCCull, "mit.b / mit.b.rl: flags 0, ReturnLength not written: " + r.text );
+		w5_put( *p, S + 0x800, 0xCCCCCCCC0000000Bull );
+		CHECK( w5_status( w5_call( *p, "NtQueryInformationProcess", { cp, 0x34, S + 0x800, 4, 0 } ), N::status::info_length_mismatch ) && rd( S + 0x804, 4 ) == 0xCCCCCCCC,
+			   "mit.b.4: Length 4 - STATUS_INFO_LENGTH_MISMATCH, nothing written" );
+		w5_put( *p, S + 0x800, 0xCCCCCCCC00000002ull );
+		CHECK( w5_stop( w5_call( *p, "NtQueryInformationProcess", { cp, 0x34, S + 0x800, 8, 0 } ) ), "another policy: stop" );
+	}
+
 	struct test_case { const char* name; void ( *fn )(); };
 	const test_case cases[] = {
 		{ "options_oep_defaults", t_options_oep_defaults },
@@ -3682,6 +3811,7 @@ namespace
 		{ "ctr_drbg_kat", t_ctr_drbg_kat },
 		{ "nt_time_services", t_nt_time_services },
 		{ "knowndll_slots", t_knowndll_slots },   // U2105
+		{ "nt_measured_dllsearch", t_nt_measured_dllsearch },   // U2110
 	};
 }
 

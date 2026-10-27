@@ -28,7 +28,8 @@ sys.dont_write_bytecode = True
 HERE = os.path.dirname(os.path.abspath(__file__))
 CASES = ['sat', 'qsi', 'hvp', 'qip', 'wcp', 'qsix', 'iocp', 'wkf', 'tmr2', 'awcp', 'swf', 'etw', 'kd', 'of', 'tls', 'ahc', 'vmi', 'csr', 'sec', 'csrc', 'nls',   # P40 (U2064): + csrc, nls
          'con', 'etwt', 'tok', 'acc', 'bno', 'mut', 'wil', 'wnf', 'wnfe', 'wnfs', 't2s', 'hku', 'alert', 'term',   # P41 (U2068): a process started without a console
-         'time']   # P42 (U2102, plan 3.M6): the time sources of a process
+         'time',   # P42 (U2102, plan 3.M6): the time sources of a process
+         'sp', 'mit']   # P43 (U2106 / U2109, sample run 8): the DLL path search, ProcessMitigationPolicy
 # P41 (U2068): case term ends the process with exit code 2BH (its NtTerminateProcess( NULL, 2BH ) fixes the process' exit status)
 EXIT_CODE = {'term': 0x2B}
 # hex constants (9 .. 16 digits) that may appear: system constants and the pre-set fill pattern - never an address of the run

@@ -108,6 +108,7 @@ namespace emu::nt
 		const std::map<std::string, registry_key>* registry = nullptr;   // U2034
 		const std::map<std::string, std::vector<uint8_t>>* files = nullptr;   // P39 (U2057): the capture's system files (lower-case name -> bytes)
 		std::string image_dir;                                              // P39 (U2058): the image's directory (DOS path; the CurrentDirectory)
+		std::string image_name;                                             // P43 (U2107): the image's file name (the one file of that directory)
 		std::string system_root;                                            // P39 (U2057): the environment's SystemRoot (e.g. C:\Windows)
 		uint64_t min_app_address = 0, max_app_address = 0;
 		uint32_t page_size = 0x1000, allocation_granularity = 0x10000;
@@ -266,6 +267,8 @@ namespace emu::nt
 		reply svc_apphelp_cache_control( const call& c );
 		reply svc_set_information_virtual_memory( const call& c );
 		reply svc_create_section( const call& c );
+		reply svc_query_attributes_file( const call& c );                              // P43 (U2107)
+		bool sysdir_file( const object_attributes& oa, std::string& file ) const;     // P43 (U2107): a captured file of the emulated system directory
 		reply svc_connect_port( const call& c );
 		reply svc_query_volume_information_file( const call& c );
 		reply create_measured_object( const call& c, uint64_t handle_ptr, uint32_t access, uint64_t object_attributes, const char* kind, uint64_t value,
