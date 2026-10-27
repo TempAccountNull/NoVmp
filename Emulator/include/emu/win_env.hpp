@@ -128,6 +128,7 @@ namespace emu::win
 		uint32_t page_size = 0x1000, allocation_granularity = 0x10000;   // U2011
 		uint64_t active_processor_mask = 0;
 		syscall_table syscalls;
+		syscall_table win32k_syscalls;   // P44 (U2117): the capture's win32u.dll stubs (empty without win32u.dll in the capture)
 		std::string capture_dir, platform_source;   // where they came from (for the log)
 		// U2024 (plan 3.M5 part 2): the capture's manifest and its further files (lower-case name -> bytes), read as data once;
 		// the system DLL images and NLS tables of the environment (empty for a capture made before M5 part 2 / synthetic facts)
@@ -283,6 +284,7 @@ namespace emu::win
 		uint64_t user_rsp() const { return user_rsp_; }
 		const pe::image& img() const { return img_; }
 		const syscall_table& syscalls() const { return facts_.syscalls; }
+		const syscall_table& win32k_syscalls() const { return facts_.win32k_syscalls; }   // P44 (U2117)
 		nt::kernel& kern() { return *kernel_; }                       // U2012: the one kernel layer
 		hle::module& hle() { return *hle_; }
 		uint64_t start_va() const { return start_va_; }               // the entry, or the TLS start trampoline (--HLE)
@@ -307,6 +309,8 @@ namespace emu::win
 		uint64_t trace_limit() const { return po_.trace_max_bytes; }
 
 		struct hook_ctx;   // the hooks' state (win_env.cpp)
+		// P44 (U2118): enter / leave a kernel -> user callback (nt::reply_kind::callback / callback_return) at a SYSCALL hook
+		bool callback_transfer( uc_engine* uc, hook_ctx& c, const nt::reply& rep, const std::string& service, std::string& why );
 
 		// U2095 (plan 3.M6): the TSC rate of the run's virtual time base (emu/vclock.hpp) and where it came from
 		uint64_t tsc_hz() const { return tsc_hz_; }

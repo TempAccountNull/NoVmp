@@ -14,7 +14,8 @@ Checked:
      is needed)
   3. tm_nt.exe is our own test PE: it is built into build\\x64\\<cfg>\\tests\\test_pe\\ and never run by the emulator
   4. P44 (U2113, USER DECISION 2026-10-27 "measured-service drift"): fields Windows legitimately changes are compared by SHAPE / RANGE,
-     every other byte exactly - VOLATILE below lists each such field with its justification and evidence; a field is loosened only with
+     every other byte exactly - VOLATILE below lists each such field with its justification and evidence (P44 STEP 3: tm_u32 prints
+     CLIENTINFO +60H, a desktop-heap block - four measurements E3430H / CE640H / DB2D0H / 138B90H - as its shape); a field is loosened only with
      evidence (two measurements that differ, or documentation). The rules are checked on every run by a built-in RED / GREEN self-check:
      every listed mutation that breaks a shape (a wrong size class / type / value range, a missing field, a changed stable byte) must be
      rejected, every listed legitimate variation accepted. The native reference runs tm_nt from a COPY on the system volume (a fresh
@@ -40,7 +41,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CASES = ['sat', 'qsi', 'hvp', 'qip', 'wcp', 'qsix', 'iocp', 'wkf', 'tmr2', 'awcp', 'swf', 'etw', 'kd', 'of', 'tls', 'ahc', 'vmi', 'csr', 'sec', 'csrc', 'nls',   # P40 (U2064): + csrc, nls
          'con', 'etwt', 'tok', 'acc', 'bno', 'mut', 'wil', 'wnf', 'wnfe', 'wnfs', 't2s', 'hku', 'alert', 'term',   # P41 (U2068): a process started without a console
          'time',   # P42 (U2102, plan 3.M6): the time sources of a process
-         'sp', 'mit']   # P43 (U2106 / U2109, sample run 8): the DLL path search, ProcessMitigationPolicy
+         'sp', 'mit',   # P43 (U2106 / U2109, sample run 8): the DLL path search, ProcessMitigationPolicy
+         'u32', 'u32k']   # P44 (U2115 / U2116, STEP 3): what an ordinary GUI program gets from user32's start (our GUI test PE tm_u32), its kernel side
 # P41 (U2068): case term ends the process with exit code 2BH (its NtTerminateProcess( NULL, 2BH ) fixes the process' exit status)
 EXIT_CODE = {'term': 0x2B}
 # hex constants (9 .. 16 digits) that may appear: system constants and the pre-set fill pattern - never an address of the run
@@ -178,6 +180,10 @@ def system_volume_copy(tm, sysroot):
         return None, '%TEMP% is not on the system volume ' + drive
     dst = os.path.join(tmp, 'tm_nt.exe')
     shutil.copyfile(tm, dst)
+    # P44 (U2115): case u32 starts our own GUI test PE tm_u32.exe beside tm_nt.exe
+    u32 = os.path.join(os.path.dirname(tm), 'tm_u32.exe')
+    if os.path.isfile(u32):
+        shutil.copyfile(u32, os.path.join(tmp, 'tm_u32.exe'))
     return tmp, dst
 
 
@@ -263,8 +269,9 @@ def main(argv):
             # the image can stay held for a moment after its last process ended (a child of case con, a scanner): retry for up to 15 s
             for k in range(30):
                 try:
-                    if os.path.exists(image):
-                        os.remove(image)
+                    for name in ('tm_nt.exe', 'tm_u32.exe'):   # our two copies (single files), then the folder
+                        if os.path.exists(os.path.join(folder, name)):
+                            os.remove(os.path.join(folder, name))
                     os.rmdir(folder)
                     break
                 except OSError as e:

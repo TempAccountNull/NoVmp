@@ -37,6 +37,19 @@
 # the guest's other volume (E:), where the same miss writes bytes 0..23H zero (the identical binary, measured from both, 2026-10-27).
 # VOLATILE (suite nt_measured compares by shape, every other byte exactly; list + evidence in nt_measured.py VOLATILE): the ETW
 # provider enable state [+70H, +A0H) of the etw.reg* replies (set by the running trace sessions: Windows SDK evntprov.h:446-460).
+# P44 (U2115 / U2116, USER DECISION 2026-10-27 STEP 3 - user32's csrss connection): case u32 = what an ORDINARY GUI PROGRAM gets from
+# user32's start - our own GUI test PE tm_u32 (Emulator/tests/pe/tm_u32: links user32 like any GUI program; tm_nt u32 starts it normally,
+# CreateProcessW without creation flags) reads ONLY ITS OWN MEMORY after Windows' own user32 initialization made the CSR USERSRV connection
+# and the win32k start (no message hand-built, csrss never opened, no NtAlpc* / NtConnectPort / CsrClientCallServer of its own): user32's
+# SHAREDINFO copy (gSharedInfo user32+B4070H), gpsi, gfServerProcess, the PEB / TEB fields the start set, CLIENTINFO, the regions the
+# pointers lead to (R1 shared info, R2 handle table, R3 GDI shared memory, R4 desktop heap - as relations / offsets), the bytes user32 /
+# gdi32full read (psi +0 / +8BCH, GDI +180094H and the stock objects), user32's globals after its ClientThreadSetup callback. user32's
+# offsets: public symbols of user32.pdb 5201D0E610EE8C31D9BCB3C4398D252A1 (the capture's build; tm_u32 refuses another SizeOfImage).
+# CLIENTINFO +60H is a desktop-heap block of the thread: printed as its shape (four measurements E3430H / CE640H / DB2D0H / 138B90H).
+# Case u32k = the kernel services of that start that are not win32k (sat on NtCurrentThreadEffectiveToken(), kernel32's
+# BasepIsServiceSidBlocked: token 0AH, DuplicateToken, NtAccessCheck of the service-SID SD; HKLM's root + NtQueryKey 7; ThreadZeroTlsCell;
+# ntdll's LdrpFindLoadedDllByMappingFile for the IMM file: open 100001H, data section, read-only view, unmap); etw.reg8-10 / etwt8-10 =
+# user32's three ETW providers and traits; ahc.33 / ahc.34 = the LookupCdb names t6_user32.exe / IMM32.DLL; mit.6 = policy 6.
 tm_nt sat.0: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 330H) -> status C0000225H, ReturnLength 0H, written 0H
 tm_nt sat.1: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 0H) -> status C0000225H, ReturnLength 0H, written 0H
 tm_nt sat.2: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 8H) -> status C0000225H, ReturnLength 0H, written 0H
@@ -179,6 +192,18 @@ tm_nt etw.reg7: NtTraceControl(0FH, the loader's A0H bytes (provider 7, LoggerId
 tm_nt etw.reg7.fields: RegType 3, LoggerId 7, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
 tm_nt etw.reg7.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
 tm_nt etw.reg7.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg8: NtTraceControl(0FH, the loader's A0H bytes (provider 8, LoggerId 8, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg8.fields: RegType 3, LoggerId 8, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg8.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg8.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg9: NtTraceControl(0FH, the loader's A0H bytes (provider 9, LoggerId 9, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg9.fields: RegType 3, LoggerId 9, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg9.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg9.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg10: NtTraceControl(0FH, the loader's A0H bytes (provider 10, LoggerId 10, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg10.fields: RegType 3, LoggerId 10, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg10.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg10.close: NtClose(ReplyHandle) -> 00000000H
 tm_nt kd.open: NtOpenDirectoryObject(&h, 3, "\KnownDlls" OBJ_CASE_INSENSITIVE) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
 tm_nt kd.list: kernel32.dll:Section ucrtbase.dll:Section WS2_32.dll:Section MSCTF.dll:Section SHLWAPI.dll:Section kernelbase.dll:Section wow64.dll:Section msvcp_win.dll:Section gdiplus.dll:Section KnownDllPath:SymbolicLink user32.dll:Section bcrypt.dll:Section COMCTL32.dll:Section cfgmgr32.dll:Section combase.dll:Section IMM32.dll:Section rpcrt4.dll:Section bcryptPrimitives.dll:Section ntdll.dll:Section coml2.dll:Section win32u.dll:Section wow64cpu.dll:Section COMDLG32.dll:Section gdi32full.dll:Section IMAGEHLP.dll:Section SHELL32.dll:Section sechost.dll:Section WINTRUST.dll:Section NORMALIZ.dll:Section difxapi.dll:Section Setupapi.dll:Section CRYPT32.dll:Section gdi32.dll:Section MSVCRT.dll:Section advapi32.dll:Section wow64win.dll:Section PSAPI.DLL:Section NSI.dll:Section WLDAP32.dll:Section OLEAUT32.dll:Section SHCORE.dll:Section ole32.dll:Section clbcatq.dll:Section; 43 entries, end status 8000001AH
 tm_nt kd.section.0: NtOpenSection(&s, 0DH, root \KnownDlls, "KERNEL32.DLL" OBJ_CASE_INSENSITIVE) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
@@ -234,6 +259,8 @@ tm_nt ahc.29: NtApphelpCacheControl(6 LookupCdb, Name "ADVAPI32.dll", ParamsOut 
 tm_nt ahc.30: NtApphelpCacheControl(6 LookupCdb, Name "cfgmgr32.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
 tm_nt ahc.31: NtApphelpCacheControl(6 LookupCdb, Name "SETUPAPI.dll", ParamsOut 4 bytes) -> status 00000000H, out 80H, DriverStatus 00000000H, changed context bytes:
 tm_nt ahc.32: NtApphelpCacheControl(6 LookupCdb, Name "transparent_makimav2.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.33: NtApphelpCacheControl(6 LookupCdb, Name "t6_user32.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.34: NtApphelpCacheControl(6 LookupCdb, Name "IMM32.DLL", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
 tm_nt vmi.fresh: NtSetInformationVirtualMemory(-1, 4, 1, {a fresh image view's base, 1000H}, &1, 4) -> status C00000BBH
 tm_nt vmi.again: the same call again -> status C00000BBH
 tm_nt vmi.loaded: the same call on this process' kernelbase.dll base -> status C00000BBH
@@ -294,6 +321,18 @@ tm_nt etwt7.blob: kernel32.dll+8C95CH, 39H bytes: first USHORT (the traits size)
 tm_nt etwt7.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 39H, 6 zero bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
 tm_nt etwt7.in: input after the call: handle unchanged, blob pointer unchanged, size 39H
 tm_nt etwt7.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt8.reg: NtTraceControl(0FH, provider 8 as etw.reg8) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt8.blob: user32's traits (as bytes), 2EH bytes: first USHORT (the traits size) 2EH, non-zero bytes 43
+tm_nt etwt8.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 2EH, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt8.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt9.reg: NtTraceControl(0FH, provider 9 as etw.reg9) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt9.blob: user32's traits (as bytes), CH bytes: first USHORT (the traits size) CH, non-zero bytes 10
+tm_nt etwt9.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, CH, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt9.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt10.reg: NtTraceControl(0FH, provider 10 as etw.reg10) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt10.blob: user32's traits (as bytes), 26H bytes: first USHORT (the traits size) 26H, non-zero bytes 36
+tm_nt etwt10.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 26H, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt10.close: NtClose(ReplyHandle) -> 00000000H
 tm_nt tok.pt.1d: NtQueryInformationToken(NtCurrentProcessToken(), 1DH, Length 4H) -> status 00000000H, ReturnLength 4H, written 4H; value 0H
 tm_nt tok.pt.1d.0: NtQueryInformationToken(NtCurrentProcessToken(), 1DH, Length 0H) -> status C0000023H, ReturnLength 4H, written 0H
 tm_nt tok.pt.1d.8: NtQueryInformationToken(NtCurrentProcessToken(), 1DH, Length 8H) -> status 00000000H, ReturnLength 4H, written 4H; value 0H
@@ -417,3 +456,70 @@ tm_nt sp.4.close: NtClose(the section) -> 00000000H, NtClose(the file) -> 000000
 tm_nt mit.b: NtQueryInformationProcess(-1, 34H, {0BH ProcessSystemCallFilterPolicy, CCH}, 8, NULL) -> status 00000000H, Policy after BH, Flags 0H, bytes 8.. untouched
 tm_nt mit.b.rl: the same with ReturnLength -> status 00000000H, Flags 0H, ReturnLength CCCCCCCCH
 tm_nt mit.b.4: Length 4 -> status C0000004H, Flags not written
+tm_nt mit.6: NtQueryInformationProcess(-1, 34H, {6 ProcessExtensionPointDisablePolicy, CCH}, 8, NULL) -> status 00000000H, Policy after 6H, Flags 0H, bytes 8.. untouched
+tm_nt u32.start: CreateProcessW(tm_u32.exe, "tm_u32.exe <file>", bInheritHandles FALSE, creation flags 0, STARTUPINFOW {cb only}) -> ok, wait 0H, exit code 0
+tm_nt u32.mod: user32.dll SizeOfImage 1A1000H, TimeDateStamp CF0B5B34H, CheckSum 001B2DDCH; CharUpperW(L"tm") -> L"TM"
+tm_nt u32.si.0: +0H <R1>+1040H +8H <R2>+0H +10H 20H +18H <R1>+2C00H +20H <R1>+0H
+tm_nt u32.si.10: HeEntrySize 20H
+tm_nt u32.si.wm0: +28H maxMsgs 318H, abMsgs <R1>+2DE0H
+tm_nt u32.si.wm1: +38H maxMsgs 0H, abMsgs 0
+tm_nt u32.si.wm2: +48H maxMsgs 318H, abMsgs <R1>+2E60H
+tm_nt u32.si.wm3: +58H maxMsgs 14H, abMsgs <R1>+2EE0H
+tm_nt u32.si.wm4: +68H maxMsgs 0H, abMsgs 0
+tm_nt u32.si.wm5: +78H maxMsgs 0H, abMsgs 0
+tm_nt u32.si.wm6: +88H maxMsgs 0H, abMsgs 0
+tm_nt u32.si.wm7: +98H maxMsgs 318H, abMsgs <R1>+2F80H
+tm_nt u32.si.wm8: +A8H maxMsgs 318H, abMsgs <R1>+3080H
+tm_nt u32.si.wm9: +B8H maxMsgs 318H, abMsgs <R1>+3100H
+tm_nt u32.si.wm10: +C8H maxMsgs 402H, abMsgs <R1>+2D40H
+tm_nt u32.si.wm11: +D8H maxMsgs 318H, abMsgs <R1>+3180H
+tm_nt u32.si.wm12: +E8H maxMsgs 318H, abMsgs <R1>+3000H
+tm_nt u32.si.wm13: +F8H maxMsgs 0H, abMsgs 0
+tm_nt u32.si.wm14: +108H maxMsgs 318H, abMsgs <R1>+2F00H
+tm_nt u32.si.wm15: +118H maxMsgs 288H, abMsgs <R1>+3200H
+tm_nt u32.si.wm16: +128H maxMsgs 82H, abMsgs <R1>+3270H
+tm_nt u32.si.wm17: +138H maxMsgs 0H, abMsgs 0
+tm_nt u32.si.wm18: +148H maxMsgs 0H, abMsgs 0
+tm_nt u32.si.wm19: +158H maxMsgs 0H, abMsgs 0
+tm_nt u32.si.wm20: +168H maxMsgs 0H, abMsgs 0
+tm_nt u32.si.wm21: +178H maxMsgs 0H, abMsgs 0
+tm_nt u32.si.wm22: +188H maxMsgs 0H, abMsgs 0
+tm_nt u32.si.wm23: +198H maxMsgs 0H, abMsgs 0
+tm_nt u32.si.wm24: +1A8H maxMsgs 0H, abMsgs 0
+tm_nt u32.si.wm25: +1B8H maxMsgs 0H, abMsgs 0
+tm_nt u32.si.wm26: +1C8H maxMsgs 0H, abMsgs 0
+tm_nt u32.si.wm27: +1D8H maxMsgs 0H, abMsgs 0
+tm_nt u32.si.wm28: +1E8H maxMsgs 0H, abMsgs 0
+tm_nt u32.si.wm29: +1F8H maxMsgs 0H, abMsgs 0
+tm_nt u32.si.wm30: +208H maxMsgs 0H, abMsgs 0
+tm_nt u32.si.wm31: +218H maxMsgs 33FH, abMsgs <R1>+2C40H
+tm_nt u32.si.wm32: +228H maxMsgs 349H, abMsgs <R1>+2CC0H
+tm_nt u32.gpsi: gpsi <R1>+1040H, = gSharedInfo.psi yes; gfServerProcess 0H
+tm_nt u32.peb: KernelCallbackTable (58H) user32+92070H (= user32+92070H apfnDispatch yes), GdiSharedHandleTable (F8H) <R3>+0H, PostProcessInitRoutine (230H) 0, GdiDCAttributeList (108H) 14H
+tm_nt u32.teb: Win32ThreadInfo (78H) non-zero yes, = GetCurrentThreadId() yes
+tm_nt u32.ci: CI_flags (+0) 8H, +8 0H, dwExpWinVer (+10H) 600H (= the image's subsystem version 600H yes), dwCompatFlags (+14H) 0H, dwCompatFlags2 (+18H) 0H, pDeskInfo (+20H) <R4>+1040H, +E0H byte 00H, +D0H = user32+B4364H yes
+tm_nt u32.psi: +0 00000D14H, +8BCH 04H
+tm_nt u32.gdi: +180094H 00000001H; stock 0 <gdi handle> type 10H stock-bit 1 upper 0; stock 1 <gdi handle> type 10H stock-bit 1 upper 0; stock 2 <gdi handle> type 10H stock-bit 1 upper 0; stock 3 <gdi handle> type 10H stock-bit 1 upper 0; stock 4 <gdi handle> type 10H stock-bit 1 upper 0; stock 5 <gdi handle> type 10H stock-bit 1 upper 0; stock 6 <gdi handle> type 30H stock-bit 1 upper 0; stock 7 <gdi handle> type 30H stock-bit 1 upper 0; stock 8 <gdi handle> type 30H stock-bit 1 upper 0; stock 9 0; stock 10 <gdi handle> type 0AH stock-bit 1 upper 0; stock 11 <gdi handle> type 0AH stock-bit 1 upper 0; stock 12 <gdi handle> type 0AH stock-bit 1 upper 0; stock 13 <gdi handle> type 0AH stock-bit 1 upper 0; stock 14 <gdi handle> type 0AH stock-bit 1 upper 0; stock 15 <gdi handle> type 08H stock-bit 1 upper 0; stock 16 <gdi handle> type 0AH stock-bit 1 upper 0; stock 17 <gdi handle> type 0AH stock-bit 1 upper 0; stock 18 <gdi handle> type 10H stock-bit 1 upper 0; stock 19 <gdi handle> type 30H stock-bit 1 upper 0; stock 20 <gdi handle> type 09H stock-bit 1 upper 0; stock 21 <gdi handle> type 05H stock-bit 1 upper 0; stock 22 0; stock 23 0; +180140H <gdi handle> type 10H stock-bit 1; +180148H <gdi handle> type 30H stock-bit 1
+tm_nt u32.g: gcxGray 8H, gcyGray 8H, ghbrWhite = GetStockObject(0) yes, ghbrBlack = GetStockObject(4) yes, gfSystemInitialized 1H, B43A4H FH, guiContextInfo 00000000H 00000000H, gfFirstThread 0H
+tm_nt u32.teb.ci: +800H 8H +808H 0 +810H 600H +818H 0 +820H <R4>+1040H +828H <R4>+0H +830H 0 +838H 0 +840H 0 +848H 0 +850H 0 +858H 0 +860H <R4>+<a heap block> +868H 0 +870H 0 +878H 0 +880H 0 +888H 0 +890H <user va, not mapped> +898H 4E4H +8A0H 0 +8A8H 0 +8B0H 0 +8B8H 0 +8C0H 0 +8C8H 0 +8D0H user32+B4364H +8D8H 0 +8E0H 0 +8E8H 0 +8F0H 0 +8F8H 0 +900H <user va, not mapped> +908H 0 +910H 0 +918H 0 +920H 0 +928H 0 +930H 0 +938H 0 +940H 0 +948H 0 +950H 0 +958H 0 +960H 0 +968H 0 +970H 0 +978H 0 +980H 0 +988H 0 +990H 0 +998H 0 +9A0H 0 +9A8H 0 +9B0H 0 +9B8H 0 +9C0H 0 +9C8H 0 +9D0H 0 +9D8H 0 +9E0H 0 +9E8H 0
+tm_nt u32.peb.more: AppCompatFlagsUser (2D0H) 0H
+tm_nt u32.region.R1: AllocationBase 64K-aligned yes, AllocationProtect 2H, first region Protect 2H, Type 40000H, size 8000H, committed 4000H
+tm_nt u32.region.R2: AllocationBase 64K-aligned yes, AllocationProtect 2H, first region Protect 2H, Type 40000H, size 200000H, committed 23000H
+tm_nt u32.region.R3: AllocationBase 64K-aligned yes, AllocationProtect 2H, first region Protect 2H, Type 40000H, size 181000H, committed 181000H
+tm_nt u32.region.R4: AllocationBase 64K-aligned yes, AllocationProtect 2H, first region Protect 2H, Type 40000H, size 1401000H, committed 199000H
+tm_nt u32k.sat.eff.2: NtQuerySecurityAttributesToken(NtCurrentThreadEffectiveToken(), 2 name(s), Length 330H) -> status C0000225H, ReturnLength 0H, written 0H
+tm_nt u32k.sat.eff.1: NtQuerySecurityAttributesToken(NtCurrentThreadEffectiveToken(), 1 name(s), Length 330H) -> status C0000225H, ReturnLength 0H, written 0H
+tm_nt u32k.svc.open: NtOpenProcessToken(NtCurrentProcess(), 0AH TOKEN_DUPLICATE | TOKEN_QUERY, &h) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt u32k.svc.dup: DuplicateToken(the token, SecurityImpersonation, &d) -> TRUE, LastError 0H, handle <handle> (non-zero, multiple of 4)
+tm_nt u32k.svc.acc: NtAccessCheck(the service-SID SD (5 ACEs), the duplicate, 1, {20001H, 20000H, 20000H, 1F0001H}, ps, &38H, ...) -> status 00000000H, GrantedAccess 0H, AccessStatus C0000022H, PrivilegeSet bytes written 8 (PrivilegeCount 0H, Control 0H), PrivilegeSetLength 38H
+tm_nt u32k.svc.close: NtClose(the duplicate) -> 00000000H, NtClose(the token) -> 00000000H
+tm_nt u32k.hklm.open: NtOpenKeyEx(&h, 2000000H MAXIMUM_ALLOWED, "\REGISTRY\MACHINE" attributes 40H, 0) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt u32k.hklm.tags: NtQueryKey(it, 7 KeyHandleTagsInformation, 4) -> status 00000000H, HandleTags 0H, ResultLength 4H
+tm_nt u32k.hklm.tags.0: NtQueryKey(it, 7, Length 0) -> status C0000023H, HandleTags not written, ResultLength 4H
+tm_nt u32k.hklm.close: NtClose -> 00000000H
+tm_nt u32k.tls: NtSetInformationThread(NtCurrentThread(), 0AH ThreadZeroTlsCell, &index (< 64 yes), 4) -> status 00000000H, the cell set -> 0
+tm_nt u32k.tls.8: the same with Length 8 -> status C0000004H
+tm_nt u32k.fl.open: NtOpenFile(&h, 100001H, "\??\<SystemRoot>\system32\IMM32.DLL" 840H, iosb, 5, 60H) -> status 00000000H, handle <handle> (non-zero, multiple of 4), IoStatus 00000000H / 1H
+tm_nt u32k.fl.sec: NtCreateSection(&s, 4, NULL, NULL, PAGE_READONLY, SEC_COMMIT, the file) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt u32k.fl.map: NtMapViewOfSection(it, -1, &base (0), 0, 0, NULL, &size (0), ViewShare, 0, PAGE_READONLY) -> status 00000000H, base 64K-aligned yes, ViewSize = the file size rounded up to pages yes (2E000H), the bytes = the file's start yes (MZ); MBI AllocationProtect 2H, State 1000H, Protect 2H, Type 40000H, RegionSize 2E000H; NtUnmapViewOfSection -> 00000000H
+tm_nt u32k.fl.close: NtClose(the section) -> 00000000H, NtClose(the file) -> 00000000H

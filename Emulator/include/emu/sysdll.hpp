@@ -84,6 +84,9 @@ namespace emu::win
 		uint64_t stubs = 0;                          // of them: system-service stubs
 	};
 	bool parse_syscall_table( const std::vector<uint8_t>& ntdll_file, syscall_table& t, std::string& error );
+	// P44 (U2117): the SECOND service table - win32k's services as the capture's win32u.dll stubs load them (the same stub form; the
+	// number's bits 15:12 = 1, the table index of the win32k service table; by_number holds the full 16-bit number 1000H .. 1FFFH)
+	bool parse_win32k_table( const std::vector<uint8_t>& win32u_file, syscall_table& t, std::string& error );
 
 	struct platform_facts
 	{

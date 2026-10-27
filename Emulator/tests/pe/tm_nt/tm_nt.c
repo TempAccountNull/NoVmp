@@ -16,7 +16,8 @@
  * SDK's ntdll.lib (the import library only).
  *
  * usage: tm_nt.exe [CASE ...]   (no argument = every case, in table order); exit 0 = every case ran, 2 = unknown case
- *        tm_nt.exe run.detached IMAGE   (P41: our own test PE IMAGE started detached; prints its exit code) */
+ *        tm_nt.exe run.detached IMAGE   (P41: our own test PE IMAGE started detached; prints its exit code)
+ *        tm_nt.exe run.normal IMAGE     (P44: our own test PE IMAGE started normally, no creation flags; prints its exit code) */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <stdio.h>
@@ -514,18 +515,23 @@ static void case_etw( void )
 		 * (as bytes; RegType 3, LoggerId 4, ReplyCallback = a kernelbase function) - tag etw.reg4 */
 		/* P41 exploration x4 (system calls 137 / 139 / 143): three more providers of the start in a process without a console -
 		 * 0A27EFF1-..., FE5EF905-... (kernelbase) and 58446CE3-... (kernel32), RegType 3, LoggerId 5 / 6 / 7, ReplyCallback set */
-		static const unsigned char guids[ 7 ][ 16 ] = {
+		static const unsigned char guids[ 10 ][ 16 ] = {
 			{ 0x5C, 0xAB, 0x95, 0x35, 0x2A, 0x04, 0x8E, 0x4C, 0xB9, 0x42, 0x2D, 0x05, 0x9B, 0xFE, 0xB1, 0xB1 },
 			{ 0x7B, 0xC8, 0x5F, 0x30, 0x2A, 0x00, 0x26, 0x5E, 0xD2, 0x97, 0x60, 0x22, 0x30, 0x12, 0xCA, 0x9C },
 			{ 0xFA, 0x2A, 0x1D, 0x90, 0xF6, 0x4F, 0xD7, 0x46, 0x8D, 0x0E, 0x53, 0x64, 0x5E, 0x1A, 0x47, 0xF5 },
 			{ 0xB9, 0xAF, 0x74, 0x3C, 0x82, 0x8D, 0xE3, 0x44, 0xB5, 0x2C, 0x36, 0x5D, 0xBF, 0x48, 0x38, 0x2A },
 			{ 0x0A, 0x27, 0xEF, 0xF1, 0x32, 0x0D, 0x52, 0x43, 0xBA, 0x52, 0xDB, 0xAB, 0x41, 0xE1, 0xD8, 0x59 },
 			{ 0xFE, 0x5E, 0xF9, 0x05, 0x75, 0x7F, 0xC7, 0x49, 0xA9, 0x94, 0x60, 0xA5, 0x5C, 0xC0, 0x95, 0x71 },
-			{ 0x58, 0x44, 0x6C, 0xE3, 0x80, 0xED, 0xD7, 0x4A, 0xA8, 0xBE, 0x52, 0xDD, 0xA1, 0xEB, 0x5F, 0x1C } };
-		static const USHORT logger[ 7 ] = { 1, 2, 3, 4, 5, 6, 7 };
-		static const int with_cb[ 7 ] = { 0, 1, 1, 1, 1, 1, 1 };
+			{ 0x58, 0x44, 0x6C, 0xE3, 0x80, 0xED, 0xD7, 0x4A, 0xA8, 0xBE, 0x52, 0xDD, 0xA1, 0xEB, 0x5F, 0x1C },
+			/* P44 (U2115; exploration x2, T6 system calls 284 / 286 / 288): user32's providers 2ECD5BF2-... (Microsoft.Windows.User32),
+			 * AC5EB75F-... (InputCore), 250E91E0-... (Microsoft.Windows.OneCoreTransforms) - RegType 3, LoggerId 8 / 9 / 10, ReplyCallback set */
+			{ 0x2E, 0xCD, 0x5B, 0xF2, 0x90, 0x26, 0xDC, 0x55, 0x3B, 0xC4, 0x07, 0xB6, 0x5B, 0x1B, 0x41, 0xC9 },
+			{ 0xAC, 0x5E, 0xB7, 0x5F, 0x0B, 0x9F, 0x0C, 0x55, 0x33, 0x9F, 0xFC, 0x21, 0xFD, 0xE9, 0x66, 0xCD },
+			{ 0x25, 0x0E, 0x91, 0xE0, 0xCC, 0x6F, 0x32, 0x4F, 0x8F, 0x5E, 0xA4, 0x2C, 0xF7, 0xAC, 0xC5, 0xC3 } };
+		static const USHORT logger[ 10 ] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+		static const int with_cb[ 10 ] = { 0, 1, 1, 1, 1, 1, 1, 1, 1, 1 };
 		int g;
-		for ( g = 0; g < 7; g++ )
+		for ( g = 0; g < 10; g++ )
 		{
 			unsigned char io[ 0xA0 ], in0[ 0xA0 ];
 			size_t k;
@@ -580,6 +586,7 @@ static void case_etw( void )
  * (valid for the capture's kernelbase build only, as csrc). Printed: status, ReturnLength, which output bytes changed and the reply's
  * non-zero qwords as shapes (a handle / pointer is never printed). */
 static void tm_etwt( const char* pfx, const unsigned char* guid, USHORT loggerid, const wchar_t* module, ULONG rva, USHORT size, int trace_tail );
+static void tm_etwt_bytes( const char* pfx, const unsigned char* guid, USHORT loggerid, const unsigned char* blob, USHORT size );
 static void case_etwt( void )
 {
 	/* P41 exploration x4: the traits of providers 5 / 6 (kernelbase+282E80H 25H, +282DEFH 39H) and 7 (kernel32+8C95CH 39H); their inputs'
@@ -592,6 +599,20 @@ static void case_etwt( void )
 	tm_etwt( "etwt5", g5, 5, L"kernelbase.dll", 0x282E80, 0x25, 0 );
 	tm_etwt( "etwt6", g6, 6, L"kernelbase.dll", 0x282DEF, 0x39, 0 );
 	tm_etwt( "etwt7", g7, 7, L"kernel32.dll", 0x8C95C, 0x39, 0 );
+	{
+		/* P44 (U2115; exploration x2, T6 system calls 285 / 287 / 289): user32's traits (user32+996FCH 2EH, +996DFH 0CH, +996A8H 26H in
+		 * the capture's user32 build) - this process has no user32: the blobs are those bytes (the provider names and the group GUID of
+		 * the trace), passed from a buffer of this program; the 6 bytes after the size: the trace's */
+		static const unsigned char g8[ 16 ] = { 0x2E, 0xCD, 0x5B, 0xF2, 0x90, 0x26, 0xDC, 0x55, 0x3B, 0xC4, 0x07, 0xB6, 0x5B, 0x1B, 0x41, 0xC9 };
+		static const unsigned char g9[ 16 ] = { 0xAC, 0x5E, 0xB7, 0x5F, 0x0B, 0x9F, 0x0C, 0x55, 0x33, 0x9F, 0xFC, 0x21, 0xFD, 0xE9, 0x66, 0xCD };
+		static const unsigned char g10[ 16 ] = { 0x25, 0x0E, 0x91, 0xE0, 0xCC, 0x6F, 0x32, 0x4F, 0x8F, 0x5E, 0xA4, 0x2C, 0xF7, 0xAC, 0xC5, 0xC3 };
+		static const char t8[] = "\x2E\x00Microsoft.Windows.User32\x00\x13\x00\x01\x1A\x73\x50\x4F\xCF\x89\x82\x47\xB3\xE0\xDC\xE8\xC9\x04\x76\xBA";
+		static const char t9[] = "\x0C\x00InputCore";
+		static const char t10[] = "\x26\x00Microsoft.Windows.OneCoreTransforms";
+		tm_etwt_bytes( "etwt8", g8, 8, (const unsigned char*)t8, 0x2E );
+		tm_etwt_bytes( "etwt9", g9, 9, (const unsigned char*)t9, 0x0C );
+		tm_etwt_bytes( "etwt10", g10, 10, (const unsigned char*)t10, 0x26 );
+	}
 }
 
 static void tm_etwt( const char* pfx, const unsigned char* guid, USHORT loggerid, const wchar_t* module, ULONG rva, USHORT size, int trace_tail )
@@ -637,6 +658,42 @@ static void tm_etwt( const char* pfx, const unsigned char* guid, USHORT loggerid
 		printf( "tm_nt %s.in: input after the call: handle %s, blob pointer %s, size %XH\n", pfx, *(HANDLE*)in == h ? "unchanged" : "changed",
 				*(unsigned char**)( in + 8 ) == kb + rva ? "unchanged" : "changed", *(USHORT*)( in + 0x10 ) );
 	}
+	printf( "tm_nt %s.close: NtClose(ReplyHandle) -> %08lXH\n", pfx, (unsigned long)NtClose( h ) );
+}
+
+/* P44 (U2115): the same with the traits blob given as bytes (user32's, this process has no user32); the trace's 6 bytes after the size */
+static void tm_etwt_bytes( const char* pfx, const unsigned char* guid, USHORT loggerid, const unsigned char* blob, USHORT size )
+{
+	unsigned char io[ 0xA0 ], in[ 0x18 ], out[ 0x78 ];
+	static const unsigned char tail[ 6 ] = { 0x06, 0x00, 0xFB, 0x7F, 0x00, 0x00 };
+	ULONG ret;
+	TM_NTSTATUS st;
+	size_t k, ch = 0, nz = 0;
+	HANDLE h;
+	memset( io, 0, sizeof( io ) );
+	memcpy( io, guid, 16 );
+	*(ULONG*)( io + 0x10 ) = 3;
+	*(USHORT*)( io + 0x14 ) = loggerid;
+	*(void**)( io + 0x20 ) = (void*)tm_etw_cb;
+	st = NtTraceControl( 0xF, io, 0xA0, io, 0xA0, &ret );
+	h = *(HANDLE*)( io + 0x18 );
+	printf( "tm_nt %s.reg: NtTraceControl(0FH, provider %u as etw.reg%u) -> status %08lXH, ReplyHandle %s\n", pfx, loggerid, loggerid, (unsigned long)st, tm_hshape( h ) );
+	if ( st < 0 ) return;
+	for ( k = 0; k < size; k++ ) nz += blob[ k ] != 0;
+	printf( "tm_nt %s.blob: user32's traits (as bytes), %XH bytes: first USHORT (the traits size) %XH, non-zero bytes %zu\n", pfx, size, *(const USHORT*)blob, nz );
+	memset( in, 0, sizeof( in ) );
+	*(HANDLE*)in = h;
+	*(const void**)( in + 8 ) = blob;
+	*(USHORT*)( in + 0x10 ) = size;
+	memcpy( in + 0x12, tail, 6 );
+	memset( out, 0xCC, sizeof( out ) );
+	ret = 0xCCCCCCCC;
+	st = NtTraceControl( 0x1E, in, 0x18, out, 0x78, &ret );
+	printf( "tm_nt %s.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, %XH, the trace's 6 bytes}, 18H, out, 78H, &r) -> status %08lXH, ReturnLength %lXH; output bytes changed:",
+			pfx, size, (unsigned long)st, (unsigned long)ret );
+	for ( k = 0; k < sizeof( out ); k++ )
+		if ( out[ k ] != 0xCC ) { printf( " +%02zX", k ); ch++; }
+	printf( " (%zu)\n", ch );
 	printf( "tm_nt %s.close: NtClose(ReplyHandle) -> %08lXH\n", pfx, (unsigned long)NtClose( h ) );
 }
 
@@ -982,7 +1039,8 @@ static void case_ahc( void )
 											L"win32u.dll", L"ucrtbase.dll", L"msvcp_win.dll", L"gdi32full.dll", L"GDI32.dll", L"USER32.dll", L"msvcrt.dll", L"dxgi.dll",
 											L"d3d11.dll", L"RPCRT4.dll", L"combase.dll", L"kernel.appcore.dll", L"dcomp.dll", L"ole32.dll", L"OLEAUT32.dll", L"SHELL32.dll",
 											L"dwmapi.dll", L"WS2_32.dll", L"bcrypt.dll", L"sechost.dll", L"ADVAPI32.dll", L"cfgmgr32.dll", L"SETUPAPI.dll",
-											L"transparent_makimav2.exe" };
+											L"transparent_makimav2.exe",
+											L"t6_user32.exe", L"IMM32.DLL" };   /* P44 (U2116): ahc.34 - user32 loads the IMM file (its _InitializeImmEntryTable) */   /* P44 (U2115): ahc.33 - test PE T6's image name (its loader's LookupCdb) */
 	size_t q, k;
 	for ( q = 0; q < sizeof( names ) / sizeof( names[ 0 ] ); q++ )
 	{
@@ -1525,7 +1583,8 @@ static void tm_con_child( const char* outfile, const char* parent_flags )
 }
 
 /* the launcher: start an image DETACHED (see above) and wait; returns the exit code, or -1 if the start / wait failed */
-static long long tm_detached( const wchar_t* image, wchar_t* cmdline, DWORD* how )
+/* P44 (U2115): the creation flags as a parameter - tm_detached = DETACHED_PROCESS (P41), tm_normal = none (an ordinary start) */
+static long long tm_start( const wchar_t* image, wchar_t* cmdline, DWORD flags, DWORD* how )
 {
 	STARTUPINFOW si;
 	PROCESS_INFORMATION pi;
@@ -1533,7 +1592,7 @@ static long long tm_detached( const wchar_t* image, wchar_t* cmdline, DWORD* how
 	memset( &si, 0, sizeof( si ) );
 	si.cb = sizeof( si );
 	memset( &pi, 0, sizeof( pi ) );
-	if ( !CreateProcessW( image, cmdline, NULL, NULL, FALSE, DETACHED_PROCESS, NULL, NULL, &si, &pi ) )
+	if ( !CreateProcessW( image, cmdline, NULL, NULL, FALSE, flags, NULL, NULL, &si, &pi ) )
 	{
 		*how = GetLastError();
 		return -1;
@@ -1544,6 +1603,11 @@ static long long tm_detached( const wchar_t* image, wchar_t* cmdline, DWORD* how
 	CloseHandle( pi.hThread );
 	CloseHandle( pi.hProcess );
 	return code == 0xCCCCCCCC ? -1 : (long long)code;
+}
+
+static long long tm_detached( const wchar_t* image, wchar_t* cmdline, DWORD* how )
+{
+	return tm_start( image, cmdline, DETACHED_PROCESS, how );
 }
 
 static void case_con( void )
@@ -1598,6 +1662,68 @@ static int tm_run_detached( const char* image )
 	MultiByteToWideChar( CP_ACP, 0, image, -1, w, MAX_PATH );
 	code = tm_detached( w, NULL, &how );
 	printf( "tm_nt run.detached: %s started with DETACHED_PROCESS -> %s, exit code %llXH\n", base ? base + 1 : image, code < 0 ? "failed" : "ok", code < 0 ? 0ull : (unsigned long long)code );
+	return code < 0 ? 3 : 0;
+}
+
+/* ------------------------------------------------------------------------------------------------ user32's start (P44, U2115)
+ * USER DECISION 2026-10-27 STEP 3: what an ordinary GUI program gets from user32's initialization - its CSR server connection and the
+ * win32k start are made by Windows' own user32 code in our own GUI test PE tm_u32 (Emulator/tests/pe/tm_u32), started NORMALLY here
+ * (CreateProcessW( tm_u32.exe beside this image, "tm_u32.exe <temporary file>", bInheritHandles FALSE, no creation flags, STARTUPINFOW
+ * {cb only} )); it reads only its own memory and writes its lines to the temporary file, printed here (one file, deleted). "tm_nt
+ * run.normal IMAGE" starts our own test PE IMAGE the same way (no arguments) and prints its exit code (the T6 native reference). */
+static void case_u32( void )
+{
+	wchar_t self[ MAX_PATH ], img[ MAX_PATH ], tmp[ MAX_PATH ], cmd[ 2 * MAX_PATH + 64 ];
+	wchar_t* slash;
+	DWORD how = 0, got = 0;
+	long long code;
+	HANDLE f;
+	static char buf[ 0x8000 ];
+	char* line;
+	char* next;
+	GetModuleFileNameW( NULL, self, MAX_PATH );
+	wcscpy_s( img, MAX_PATH, self );
+	slash = wcsrchr( img, L'\\' );
+	if ( !slash ) return;
+	wcscpy_s( slash + 1, MAX_PATH - ( slash + 1 - img ), L"tm_u32.exe" );
+	GetTempPathW( MAX_PATH, tmp );
+	if ( !GetTempFileNameW( tmp, L"tmu", 0, tmp ) )
+	{
+		printf( "tm_nt u32.start: no temporary file (GetTempFileNameW failed %lXH)\n", (unsigned long)GetLastError() );
+		return;
+	}
+	swprintf_s( cmd, sizeof( cmd ) / sizeof( cmd[ 0 ] ), L"\"%s\" %s", img, tmp );
+	code = tm_start( img, cmd, 0, &how );
+	printf( "tm_nt u32.start: CreateProcessW(tm_u32.exe, \"tm_u32.exe <file>\", bInheritHandles FALSE, creation flags 0, STARTUPINFOW {cb only}) -> %s, wait %lXH, exit code %s\n",
+			code < 0 && how != WAIT_OBJECT_0 && how != WAIT_TIMEOUT ? "failed" : "ok", (unsigned long)how, code < 0 ? "none" : ( code == 0 ? "0" : "non-zero" ) );
+	f = CreateFileW( tmp, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL );
+	if ( f != INVALID_HANDLE_VALUE )
+	{
+		if ( !ReadFile( f, buf, sizeof( buf ) - 1, &got, NULL ) ) got = 0;
+		CloseHandle( f );
+	}
+	DeleteFileW( tmp );   /* our own temporary file, one file */
+	buf[ got ] = 0;
+	for ( line = buf; *line; line = next )
+	{
+		next = strchr( line, '\n' );
+		if ( next ) *next++ = 0;
+		else next = line + strlen( line );
+		if ( *line && line[ strlen( line ) - 1 ] == '\r' ) line[ strlen( line ) - 1 ] = 0;   /* the child wrote its file in text mode (CR LF) */
+		if ( *line ) printf( "%s\n", line );
+	}
+	if ( !got ) printf( "tm_nt u32.child: no output\n" );
+}
+
+static int tm_run_normal( const char* image )
+{
+	wchar_t w[ MAX_PATH ];
+	const char* base = strrchr( image, '\\' );
+	DWORD how = 0;
+	long long code;
+	MultiByteToWideChar( CP_ACP, 0, image, -1, w, MAX_PATH );
+	code = tm_start( w, NULL, 0, &how );
+	printf( "tm_nt run.normal: %s started normally (no creation flags) -> %s, exit code %llXH\n", base ? base + 1 : image, code < 0 ? "failed" : "ok", code < 0 ? 0ull : (unsigned long long)code );
 	return code < 0 ? 3 : 0;
 }
 
@@ -2490,9 +2616,192 @@ static void case_mit( void )
 	b[ 0 ] = 0xB; b[ 1 ] = 0xCCCCCCCC;
 	st = NtQueryInformationProcess( (HANDLE)(LONG_PTR)-1, 0x34, b, 4, NULL );
 	printf( "tm_nt mit.b.4: Length 4 -> status %08lXH, Flags %s\n", (unsigned long)st, b[ 1 ] == 0xCCCCCCCC ? "not written" : "written" );
+	/* P44 (U2116): policy 6 ProcessExtensionPointDisablePolicy (um\winnt.h PROCESS_MITIGATION_EXTENSION_POINT_DISABLE_POLICY) - kernel32's
+	 * BasepAreExtensionPointsBlocked in user32's LoadAppInitDlls (P44 exploration x11, system call 316): Length 8, ReturnLength NULL */
+	b[ 0 ] = 6; b[ 1 ] = 0xCCCCCCCC; b[ 2 ] = 0xCCCCCCCC;
+	st = NtQueryInformationProcess( (HANDLE)(LONG_PTR)-1, 0x34, b, 8, NULL );
+	printf( "tm_nt mit.6: NtQueryInformationProcess(-1, 34H, {6 ProcessExtensionPointDisablePolicy, CCH}, 8, NULL) -> status %08lXH, Policy after %lXH, Flags %lXH, bytes 8.. %s\n",
+			(unsigned long)st, (unsigned long)b[ 0 ], (unsigned long)b[ 1 ], b[ 2 ] == 0xCCCCCCCC ? "untouched" : "written" );
 }
 
-static const struct tm_case g_cases[] = { { "sat", case_sat }, { "qsi", case_qsi }, { "hvp", case_hvp }, { "qip", case_qip }, { "wcp", case_wcp }, { "qsix", case_qsix }, { "iocp", case_iocp }, { "wkf", case_wkf }, { "tmr2", case_tmr2 }, { "awcp", case_awcp }, { "swf", case_swf }, { "etw", case_etw }, { "kd", case_kd }, { "of", case_of }, { "tls", case_tls }, { "ahc", case_ahc }, { "vmi", case_vmi }, { "csr", case_csr }, { "sec", case_sec }, { "csrc", case_csrc }, { "nls", case_nls }, { "con", case_con }, { "etwt", case_etwt }, { "tok", case_tok }, { "acc", case_acc }, { "bno", case_bno }, { "mut", case_mut }, { "wil", case_wil }, { "wnf", case_wnf }, { "wnfe", case_wnfe }, { "wnfs", case_wnfs }, { "t2s", case_t2s }, { "hku", case_hku }, { "alert", case_alert }, { "term", case_term }, { "time", case_time }, { "sp", case_sp }, { "mit", case_mit } };
+/* ------------------------------------------------------------------------------------------------ user32's start: the kernel side (P44, U2116)
+ * The services of an ordinary GUI program's start that are not win32k (P44 explorations x6-x14 of T6, each replayed in this process with
+ * the arguments the emulated trace showed):
+ *   sat.eff  - the loader (after user32's IMM lookup): NtQuerySecurityAttributesToken( NtCurrentThreadEffectiveToken(), "WIN://SYSAPPID" +
+ *              "WIN://PKG" / "WIN://SYSAPPID", Length 330H ) (phnt ntseapi.h:947-954)
+ *   svc.*    - kernel32 BasepIsServiceSidBlocked (user32's LoadAppInitDlls in its ClientThreadSetup): NtOpenProcessToken( -1, 0AH ),
+ *              DuplicateToken( SecurityImpersonation ) (um\securitybaseapi.h; kernelbase builds NtDuplicateToken's object attributes),
+ *              NtAccessCheck( an absolute SD - owner = group = a service SID, a DACL (AclSize 198H) of five ACCESS_ALLOWED ACEs (mask 1) for
+ *              four service SIDs and S-1-5-83-0, as the trace shows it; the SIDs as their bytes), the duplicate, 1, the mapping {20001H, 20000H,
+ *              20000H, 1F0001H}, PrivilegeSetLength 38H ) (phnt ntseapi.h:977-986)
+ *   hklm.*   - kernelbase's HKEY_LOCAL_MACHINE: NtOpenKeyEx( "\REGISTRY\MACHINE", MAXIMUM_ALLOWED, options 0 ), NtQueryKey( it, 7
+ *              KeyHandleTagsInformation, 4 ) (phnt ntregapi.h NtOpenKeyEx / NtQueryKey / KEY_INFORMATION_CLASS)
+ *   tls.*    - kernelbase TlsFree (gdi32full's detach): NtSetInformationThread( NtCurrentThread(), 0AH ThreadZeroTlsCell, &index, 4 )
+ *              (phnt ntpsapi.h THREADINFOCLASS) on an index of TlsAlloc, the cell set before
+ *   fl.*     - ntdll LdrpFindLoadedDllByMappingFile (GetModuleHandleW( the IMM file's full path ), user32 _InitializeImmEntryTable):
+ *              NtOpenFile( "\??\<SystemRoot>\system32\IMM32.DLL", 100001H, 840H, 5, 60H ), NtCreateSection( 4, NULL, NULL, PAGE_READONLY,
+ *              SEC_COMMIT, the file ), NtMapViewOfSection( it, -1, 0, 0, 0, NULL, 0, ViewShare, 0, PAGE_READONLY ), NtUnmapViewOfSection,
+ *              NtClose x2 (phnt ntioapi.h / ntmmapi.h)
+ * Printed: statuses, handle shapes, the written fields / their shapes; the SIDs never (constants of the system's services, as bytes). */
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtOpenKeyEx( PHANDLE KeyHandle, ACCESS_MASK DesiredAccess, TM_OA* ObjectAttributes, ULONG OpenOptions );
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtQueryKey( HANDLE KeyHandle, ULONG KeyInformationClass, PVOID KeyInformation, ULONG Length, PULONG ResultLength );
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtSetInformationThread( HANDLE ThreadHandle, ULONG ThreadInformationClass, PVOID ThreadInformation, ULONG ThreadInformationLength );
+static void case_u32k( void )
+{
+	TM_NTSTATUS st;
+	{
+		TM_USTR nm[ 2 ];
+		static unsigned char buf[ 0x330 ];
+		ULONG rl, n;
+		size_t w, k;
+		tm_ustr( &nm[ 0 ], L"WIN://SYSAPPID" );
+		tm_ustr( &nm[ 1 ], L"WIN://PKG" );
+		for ( n = 2; n >= 1; n-- )
+		{
+			memset( buf, 0xCC, sizeof( buf ) );
+			rl = 0xCCCCCCCC;
+			st = NtQuerySecurityAttributesToken( (HANDLE)(LONG_PTR)-6, nm, n, buf, 0x330, &rl );
+			for ( w = 0, k = 0; k < sizeof( buf ); k++ ) w += buf[ k ] != 0xCC;
+			printf( "tm_nt u32k.sat.eff.%lu: NtQuerySecurityAttributesToken(NtCurrentThreadEffectiveToken(), %lu name(s), Length 330H) -> status %08lXH, ReturnLength %lXH, written %zXH\n",
+					(unsigned long)n, (unsigned long)n, (unsigned long)st, (unsigned long)rl, w );
+		}
+	}
+	{
+		static const unsigned char sid_owner[ 32 ] = { 0x01, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x50, 0x00, 0x00, 0x00, 0x1C, 0x8F, 0x72, 0x3C,
+													   0x73, 0xE4, 0x39, 0xC5, 0xB8, 0x0B, 0x81, 0xC6, 0xD2, 0x18, 0x3A, 0x10, 0x2C, 0xD3, 0x8F, 0x05 };
+		static const unsigned char sid_a[ 32 ] = { 0x01, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x50, 0x00, 0x00, 0x00, 0xF0, 0x5B, 0x58, 0x07,
+												   0xC3, 0x43, 0x8C, 0x9A, 0xC7, 0x8A, 0x72, 0xDD, 0x8F, 0x8C, 0xB4, 0xDF, 0x44, 0x47, 0xE7, 0xF8 };
+		static const unsigned char sid_b[ 32 ] = { 0x01, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x50, 0x00, 0x00, 0x00, 0xBF, 0x55, 0x08, 0x72,
+												   0x3B, 0xE0, 0x28, 0xD0, 0x89, 0x79, 0x4B, 0xF8, 0x91, 0x89, 0x6E, 0x7C, 0x40, 0x25, 0xEC, 0xF4 };
+		static const unsigned char sid_c[ 32 ] = { 0x01, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x50, 0x00, 0x00, 0x00, 0x1B, 0x6D, 0x39, 0x16,
+												   0x2D, 0x47, 0x25, 0x79, 0xA6, 0x40, 0xB1, 0xD0, 0xEE, 0xA7, 0x7C, 0x0C, 0x27, 0x4C, 0xEB, 0x61 };
+		static const unsigned char sid_vm[ 16 ] = { 0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x53, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+		const unsigned char* ace_sid[ 5 ] = { sid_a, sid_b, sid_c, sid_vm, sid_owner };
+		const unsigned char ace_len[ 5 ] = { 32, 32, 32, 16, 32 };
+		static unsigned char acl[ 0x198 ], sd[ 40 ], ps[ 0x38 ];
+		static const ULONG gm[ 4 ] = { 0x20001, 0x20000, 0x20000, 0x1F0001 };
+		HANDLE tok = (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull, dup = (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull;
+		ULONG psl = 0x38, granted = 0xCCCCCCCC, ast = 0xCCCCCCCC;
+		size_t off = 8, i, w;
+		st = NtOpenProcessToken( (HANDLE)(LONG_PTR)-1, 0xA, &tok );
+		printf( "tm_nt u32k.svc.open: NtOpenProcessToken(NtCurrentProcess(), 0AH TOKEN_DUPLICATE | TOKEN_QUERY, &h) -> status %08lXH, handle %s\n", (unsigned long)st, tm_hshape( tok ) );
+		if ( st < 0 ) return;
+		{
+			/* kernelbase's DuplicateToken (the export kernel32 calls through api-ms-win-security-base; taken from this process' kernelbase:
+			   linking advapi32.lib would change this program's loaded DLL set) */
+			typedef BOOL( WINAPI * dup_fn )( HANDLE, SECURITY_IMPERSONATION_LEVEL, PHANDLE );
+			const dup_fn df = (dup_fn)GetProcAddress( GetModuleHandleW( L"kernelbase.dll" ), "DuplicateToken" );
+			printf( "tm_nt u32k.svc.dup: DuplicateToken(the token, SecurityImpersonation, &d) -> %s, LastError %lXH, handle %s\n",
+					df && df( tok, SecurityImpersonation, &dup ) ? "TRUE" : "FALSE", (unsigned long)GetLastError(), tm_hshape( dup ) );
+		}
+		memset( acl, 0, sizeof( acl ) );
+		acl[ 0 ] = 2;                       /* AclRevision */
+		*(USHORT*)( acl + 2 ) = 0x198;      /* AclSize (the trace's) */
+		*(USHORT*)( acl + 4 ) = 5;          /* AceCount */
+		for ( i = 0; i < 5; i++ )
+		{
+			acl[ off ] = 0;                                       /* ACCESS_ALLOWED_ACE_TYPE */
+			acl[ off + 1 ] = 0;                                   /* AceFlags */
+			*(USHORT*)( acl + off + 2 ) = (USHORT)( 8 + ace_len[ i ] );
+			*(ULONG*)( acl + off + 4 ) = 1;                       /* Mask */
+			memcpy( acl + off + 8, ace_sid[ i ], ace_len[ i ] );
+			off += 8 + ace_len[ i ];
+		}
+		memset( sd, 0, sizeof( sd ) );
+		sd[ 0 ] = 1;                        /* Revision */
+		*(USHORT*)( sd + 2 ) = 4;           /* Control: SE_DACL_PRESENT (absolute) */
+		*(const void**)( sd + 8 ) = sid_owner;
+		*(const void**)( sd + 16 ) = sid_owner;
+		*(void**)( sd + 32 ) = acl;
+		memset( ps, 0xCC, sizeof( ps ) );
+		st = NtAccessCheck( sd, dup, 1, (PVOID)gm, ps, &psl, &granted, (TM_NTSTATUS*)&ast );
+		for ( w = 0, i = 0; i < sizeof( ps ); i++ ) w += ps[ i ] != 0xCC;
+		printf( "tm_nt u32k.svc.acc: NtAccessCheck(the service-SID SD (5 ACEs), the duplicate, 1, {20001H, 20000H, 20000H, 1F0001H}, ps, &38H, ...) -> status %08lXH, GrantedAccess %lXH, "
+				"AccessStatus %08lXH, PrivilegeSet bytes written %zu (PrivilegeCount %lXH, Control %lXH), PrivilegeSetLength %lXH\n", (unsigned long)st, (unsigned long)granted,
+				(unsigned long)ast, w, (unsigned long)*(ULONG*)ps, (unsigned long)*(ULONG*)( ps + 4 ), (unsigned long)psl );
+		printf( "tm_nt u32k.svc.close: NtClose(the duplicate) -> %08lXH, NtClose(the token) -> %08lXH\n", (unsigned long)NtClose( dup ), (unsigned long)NtClose( tok ) );
+	}
+	{
+		TM_USTR n;
+		TM_OA oa;
+		HANDLE h = (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull;
+		ULONG tags = 0xCCCCCCCC, rl = 0xCCCCCCCC;
+		tm_ustr( &n, L"\\REGISTRY\\MACHINE" );
+		tm_oa( &oa, NULL, &n );
+		st = NtOpenKeyEx( &h, 0x2000000, &oa, 0 );
+		printf( "tm_nt u32k.hklm.open: NtOpenKeyEx(&h, 2000000H MAXIMUM_ALLOWED, \"\\REGISTRY\\MACHINE\" attributes %lXH, 0) -> status %08lXH, handle %s\n", (unsigned long)oa.Attributes,
+				(unsigned long)st, tm_hshape( h ) );
+		if ( st >= 0 )
+		{
+			st = NtQueryKey( h, 7, &tags, 4, &rl );
+			printf( "tm_nt u32k.hklm.tags: NtQueryKey(it, 7 KeyHandleTagsInformation, 4) -> status %08lXH, HandleTags %lXH, ResultLength %lXH\n", (unsigned long)st, (unsigned long)tags, (unsigned long)rl );
+			tags = 0xCCCCCCCC; rl = 0xCCCCCCCC;
+			st = NtQueryKey( h, 7, &tags, 0, &rl );
+			printf( "tm_nt u32k.hklm.tags.0: NtQueryKey(it, 7, Length 0) -> status %08lXH, HandleTags %s, ResultLength %lXH\n", (unsigned long)st, tags == 0xCCCCCCCC ? "not written" : "written", (unsigned long)rl );
+			printf( "tm_nt u32k.hklm.close: NtClose -> %08lXH\n", (unsigned long)NtClose( h ) );
+		}
+	}
+	{
+		DWORD idx = TlsAlloc();
+		ULONG i4 = idx;
+		void* before;
+		TlsSetValue( idx, (void*)(ULONG_PTR)0x1234 );
+		before = TlsGetValue( idx );
+		st = NtSetInformationThread( (HANDLE)(LONG_PTR)-2, 0xA, &i4, 4 );
+		printf( "tm_nt u32k.tls: NtSetInformationThread(NtCurrentThread(), 0AH ThreadZeroTlsCell, &index (< 64 %s), 4) -> status %08lXH, the cell %s -> %s\n", idx < 64 ? "yes" : "no",
+				(unsigned long)st, before ? "set" : "0", TlsGetValue( idx ) ? "still set" : "0" );
+		st = NtSetInformationThread( (HANDLE)(LONG_PTR)-2, 0xA, &i4, 8 );
+		printf( "tm_nt u32k.tls.8: the same with Length 8 -> status %08lXH\n", (unsigned long)st );
+		TlsFree( idx );
+	}
+	{
+		static wchar_t win[ 300 ], path[ 400 ];
+		TM_USTR n;
+		TM_OA oa;
+		ULONG_PTR iosb[ 2 ] = { 0xCCCCCCCCCCCCCCCCull, 0xCCCCCCCCCCCCCCCCull };
+		HANDLE f = (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull, s = (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull;
+		PVOID base = NULL;
+		SIZE_T vs = 0, rl2 = 0;
+		MEMORY_BASIC_INFORMATION mbi;
+		WIN32_FILE_ATTRIBUTE_DATA fa;
+		GetWindowsDirectoryW( win, 300 );
+		wcscpy( path, L"\\??\\" );
+		wcscat( path, win );
+		wcscat( path, L"\\system32\\IMM32.DLL" );
+		tm_ustr( &n, path );
+		tm_oa( &oa, NULL, &n );
+		oa.Attributes = 0x840;
+		st = NtOpenFile( &f, 0x100001, &oa, iosb, 5, 0x60 );
+		printf( "tm_nt u32k.fl.open: NtOpenFile(&h, 100001H, \"\\??\\<SystemRoot>\\system32\\IMM32.DLL\" 840H, iosb, 5, 60H) -> status %08lXH, handle %s, IoStatus %08lXH / %llXH\n",
+				(unsigned long)st, tm_hshape( f ), (unsigned long)iosb[ 0 ], (unsigned long long)iosb[ 1 ] );
+		if ( st < 0 ) return;
+		st = NtCreateSection( &s, 4, NULL, NULL, 2, 0x8000000, f );
+		printf( "tm_nt u32k.fl.sec: NtCreateSection(&s, 4, NULL, NULL, PAGE_READONLY, SEC_COMMIT, the file) -> status %08lXH, handle %s\n", (unsigned long)st, tm_hshape( s ) );
+		if ( st >= 0 )
+		{
+			GetFileAttributesExW( path + 4, GetFileExInfoStandard, &fa );
+			st = NtMapViewOfSection( s, (HANDLE)(LONG_PTR)-1, &base, 0, 0, NULL, &vs, 1, 0, 2 );
+			printf( "tm_nt u32k.fl.map: NtMapViewOfSection(it, -1, &base (0), 0, 0, NULL, &size (0), ViewShare, 0, PAGE_READONLY) -> status %08lXH", (unsigned long)st );
+			if ( st >= 0 && base )
+			{
+				memset( &mbi, 0, sizeof( mbi ) );
+				NtQueryVirtualMemory( (HANDLE)(LONG_PTR)-1, base, 0, &mbi, sizeof( mbi ), &rl2 );
+				printf( ", base 64K-aligned %s, ViewSize = the file size rounded up to pages %s (%zXH), the bytes = the file's start %s; MBI AllocationProtect %lXH, State %lXH, Protect %lXH, Type %lXH, RegionSize %zXH",
+						( (ULONG_PTR)base & 0xFFFF ) ? "no" : "yes", vs == ( ( (SIZE_T)fa.nFileSizeLow + 0xFFF ) & ~(SIZE_T)0xFFF ) ? "yes" : "no", vs,
+						( (const unsigned char*)base )[ 0 ] == 'M' && ( (const unsigned char*)base )[ 1 ] == 'Z' ? "yes (MZ)" : "no", (unsigned long)mbi.AllocationProtect,
+						(unsigned long)mbi.State, (unsigned long)mbi.Protect, (unsigned long)mbi.Type, mbi.RegionSize );
+				printf( "; NtUnmapViewOfSection -> %08lXH", (unsigned long)NtUnmapViewOfSection( (HANDLE)(LONG_PTR)-1, base ) );
+			}
+			printf( "\n" );
+			printf( "tm_nt u32k.fl.close: NtClose(the section) -> %08lXH", (unsigned long)NtClose( s ) );
+		}
+		else
+			printf( "tm_nt u32k.fl.close:" );
+		printf( ", NtClose(the file) -> %08lXH\n", (unsigned long)NtClose( f ) );
+	}
+}
+
+static const struct tm_case g_cases[] = { { "sat", case_sat }, { "qsi", case_qsi }, { "hvp", case_hvp }, { "qip", case_qip }, { "wcp", case_wcp }, { "qsix", case_qsix }, { "iocp", case_iocp }, { "wkf", case_wkf }, { "tmr2", case_tmr2 }, { "awcp", case_awcp }, { "swf", case_swf }, { "etw", case_etw }, { "kd", case_kd }, { "of", case_of }, { "tls", case_tls }, { "ahc", case_ahc }, { "vmi", case_vmi }, { "csr", case_csr }, { "sec", case_sec }, { "csrc", case_csrc }, { "nls", case_nls }, { "con", case_con }, { "etwt", case_etwt }, { "tok", case_tok }, { "acc", case_acc }, { "bno", case_bno }, { "mut", case_mut }, { "wil", case_wil }, { "wnf", case_wnf }, { "wnfe", case_wnfe }, { "wnfs", case_wnfs }, { "t2s", case_t2s }, { "hku", case_hku }, { "alert", case_alert }, { "term", case_term }, { "time", case_time }, { "sp", case_sp }, { "mit", case_mit }, { "u32", case_u32 }, { "u32k", case_u32k } };
 
 int main( int argc, char** argv )
 {
@@ -2505,6 +2814,7 @@ int main( int argc, char** argv )
 		return 0;
 	}
 	if ( argc == 3 && !strcmp( argv[ 1 ], "run.detached" ) ) return tm_run_detached( argv[ 2 ] );   /* P41: a test PE started detached */
+	if ( argc == 3 && !strcmp( argv[ 1 ], "run.normal" ) ) return tm_run_normal( argv[ 2 ] );   /* P44: a test PE started normally */
 	if ( argc < 2 )
 	{
 		for ( k = 0; k < sizeof( g_cases ) / sizeof( g_cases[ 0 ] ); k++ ) g_cases[ k ].fn();

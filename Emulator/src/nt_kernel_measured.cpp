@@ -462,7 +462,13 @@ namespace emu::nt
 				// A0H << 56, ProviderTraits (+90H) 8, TraitsFlags (+98H) 1) - written as measured below (enabled_ = true)
 				{ { 0x0A, 0x27, 0xEF, 0xF1, 0x32, 0x0D, 0x52, 0x43, 0xBA, 0x52, 0xDB, 0xAB, 0x41, 0xE1, 0xD8, 0x59 }, 5, true, "tm_nt etw.reg5" },
 				{ { 0xFE, 0x5E, 0xF9, 0x05, 0x75, 0x7F, 0xC7, 0x49, 0xA9, 0x94, 0x60, 0xA5, 0x5C, 0xC0, 0x95, 0x71 }, 6, true, "tm_nt etw.reg6" },
-				{ { 0x58, 0x44, 0x6C, 0xE3, 0x80, 0xED, 0xD7, 0x4A, 0xA8, 0xBE, 0x52, 0xDD, 0xA1, 0xEB, 0x5F, 0x1C }, 7, true, "tm_nt etw.reg7" } };
+				{ { 0x58, 0x44, 0x6C, 0xE3, 0x80, 0xED, 0xD7, 0x4A, 0xA8, 0xBE, 0x52, 0xDD, 0xA1, 0xEB, 0x5F, 0x1C }, 7, true, "tm_nt etw.reg7" },
+				// P44 (U2121): user32's providers (T6 exploration x2, system calls 284 / 286 / 288: Microsoft.Windows.User32 2ECD5BF2-...,
+				// InputCore AC5EB75F-..., Microsoft.Windows.OneCoreTransforms 250E91E0-...; LoggerId 8 / 9 / 10, ReplyCallback set) - MEASURED
+				// tm_nt etw.reg8 / .reg9 / .reg10: STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0x2E, 0xCD, 0x5B, 0xF2, 0x90, 0x26, 0xDC, 0x55, 0x3B, 0xC4, 0x07, 0xB6, 0x5B, 0x1B, 0x41, 0xC9 }, 8, true, "tm_nt etw.reg8" },
+				{ { 0xAC, 0x5E, 0xB7, 0x5F, 0x0B, 0x9F, 0x0C, 0x55, 0x33, 0x9F, 0xFC, 0x21, 0xFD, 0xE9, 0x66, 0xCD }, 9, true, "tm_nt etw.reg9" },
+				{ { 0x25, 0x0E, 0x91, 0xE0, 0xCC, 0x6F, 0x32, 0x4F, 0x8F, 0x5E, 0xA4, 0x2C, 0xF7, 0xAC, 0xC5, 0xC3 }, 10, true, "tm_nt etw.reg10" } };
 			uint8_t d[ 0xA0 ] = {};
 			std::string err, guid;
 			if ( ilen != 0xA0 || olen != 0xA0 || c.args[ 1 ] != c.args[ 3 ] || !user_buffer( c.args[ 1 ], 0xA0, UC_PROT_READ | UC_PROT_WRITE ) )
@@ -519,7 +525,10 @@ namespace emu::nt
 			// the measured (provider, traits size) pairs: tm_nt etwt (B9AF743C, 33H), etwt5 (0A27EFF1, 25H), etwt6 (FE5EF905, 39H), etwt7 (58446CE3, 39H)
 			const std::string pn = hr != handles_.end() ? hr->second.name : std::string();
 			const bool known = ( pn == "B9AF743C828DE344B52C365DBF48382A" && sz == 0x33 ) || ( pn == "0A27EFF1320D5243BA52DBAB41E1D859" && sz == 0x25 ) ||
-							   ( pn == "FE5EF905757FC749A99460A55CC09571" && sz == 0x39 ) || ( pn == "58446CE380EDD74AA8BE52DDA1EB5F1C" && sz == 0x39 );
+							   ( pn == "FE5EF905757FC749A99460A55CC09571" && sz == 0x39 ) || ( pn == "58446CE380EDD74AA8BE52DDA1EB5F1C" && sz == 0x39 ) ||
+							   // P44 (U2121): user32's three traits (tm_nt etwt8 / etwt9 / etwt10: STATUS_SUCCESS, ReturnLength 0, no output)
+							   ( pn == "2ECD5BF29026DC553BC407B65B1B41C9" && sz == 0x2E ) || ( pn == "AC5EB75F0B9F0C55339FFC21FDE966CD" && sz == 0x0C ) ||
+							   ( pn == "250E91E0CC6F324F8F5EA42CF7ACC5C3" && sz == 0x26 );
 			if ( hr == handles_.end() || hr->second.kind != "etw registration" || !known || !user_buffer( blob, sz, UC_PROT_READ ) )
 				return stop_( what + " - EtwSetProviderTraitsCode for handle " + hex( h ) + ", traits size " + hex( sz ) + ": not measured (tm_nt etwt*: the four providers' blobs are)" );
 			if ( c.args[ 5 ] && !user_buffer( c.args[ 5 ], 4, UC_PROT_WRITE ) ) return done_( status::access_violation, what + ": ReturnLength not writable" );
@@ -731,6 +740,29 @@ namespace emu::nt
 			// P39 stopped here (no layout source, csrss not measurable); P40 (U2065, USER DECISION 2026-10-26): the view as a CONNECTED
 			// client sees it, measured from inside our own test PE (tm_nt csrc.*) - map_csr_shared_view below
 			return map_csr_shared_view( c, what );
+		// P44 (U2121): the view of a DATA section of a captured file - MEASURED tm_nt u32k.fl.map (NtCurrentProcess(), *BaseAddress 0, 0, 0, NULL,
+		// *ViewSize 0, ViewShare, AllocationType 0, PAGE_READONLY): STATUS_SUCCESS, the base 64 KiB-aligned, ViewSize = the file size rounded
+		// up to pages, the bytes = the file's, MBI {AllocationProtect PAGE_READONLY, MEM_COMMIT, PAGE_READONLY, MEM_MAPPED, RegionSize = ViewSize}
+		if ( it != handles_.end() && it->second.kind == "section (data)" )
+		{
+			const uint64_t pb = c.args[ 2 ], ps = c.args[ 6 ];
+			if ( c.args[ 1 ] != current_process || c.args[ 3 ] || c.args[ 4 ] || c.args[ 5 ] || uint32_t( c.args[ 7 ] ) != 1 || uint32_t( c.args[ 8 ] ) || uint32_t( c.args[ 9 ] ) != page::readonly )
+				return stop_( what + " - other arguments: not measured (tm_nt u32k.fl.map)" );
+			if ( !user_buffer( pb, 8, UC_PROT_READ | UC_PROT_WRITE ) || !user_buffer( ps, 8, UC_PROT_READ | UC_PROT_WRITE ) ) return done_( status::access_violation, what + ": BaseAddress / ViewSize not writable" );
+			uint64_t wb = 0, ws = 0;
+			get64( pb, wb );
+			get64( ps, ws );
+			if ( wb || ws ) return stop_( what + " - *BaseAddress / *ViewSize not 0: not measured" );
+			if ( !f_.files || !f_.files->count( it->second.target ) ) return stop_( what + " - the file is not in the capture" );
+			const auto& bytes = f_.files->at( it->second.target );
+			uint64_t base = 0;
+			std::string err;
+			if ( !map_data_view( bytes, "data view of " + it->second.target, base, err ) ) return stop_( what + " - " + err );
+			const uint64_t vs = ( uint64_t( bytes.size() ) + f_.page_size - 1 ) & ~uint64_t( f_.page_size - 1 );
+			reply rv = done_( status::success, what + ": a read-only view of the captured " + it->second.target + " at " + hex( base ) + ", ViewSize " + hex( vs ) + " (measured: tm_nt u32k.fl.map)" );
+			if ( !put( pb, &base, 8, rv ) || !put( ps, &vs, 8, rv ) ) return stop_( "writing the result failed after the probe" );
+			return rv;
+		}
 		if ( it == handles_.end() || it->second.kind != "section (image)" ) return stop_( what + " - not a KnownDlls image section of this process: not measured" );
 		const uint64_t pbase = c.args[ 2 ], psize = c.args[ 6 ];
 		if ( c.args[ 1 ] != current_process || c.args[ 3 ] || c.args[ 4 ] || c.args[ 5 ] || uint32_t( c.args[ 7 ] ) != 1 || uint32_t( c.args[ 8 ] ) != 0x800000 ||
@@ -809,7 +841,9 @@ namespace emu::nt
 		std::string sysfile;
 		if ( sysdir_file( oa, sysfile ) )
 		{
-			if ( access != 0x100021 || share != 5 || options != 0x60 || oa.attributes != 0x840 )
+			// P44 (U2121): access 100001H (SYNCHRONIZE | FILE_READ_DATA) - ntdll LdrpFindLoadedDllByMappingFile for GetModuleHandleW( a full path ),
+			// user32 _InitializeImmEntryTable - MEASURED tm_nt u32k.fl.open: STATUS_SUCCESS, a handle, IoStatus {0, 1 FILE_OPENED} (as sp.open)
+			if ( ( access != 0x100021 && access != 0x100001 ) || share != 5 || options != 0x60 || oa.attributes != 0x840 )
 				return stop_( what + " - a captured system-directory file with other arguments: not measured (tm_nt sp.open: 100021H, 840H, 5, 60H)" );
 			if ( !user_buffer( ph, 8, UC_PROT_WRITE ) || !user_buffer( iosb, 16, UC_PROT_WRITE ) ) return done_( status::access_violation, what + ": FileHandle / IoStatusBlock not writable" );
 			object o;
@@ -965,12 +999,13 @@ namespace emu::nt
 		static const char* const measured0[] = { "kernelbase.dll", "kernel32.dll", "ntdll.dll", "t2_import.exe", "t3_tls.exe", "t3_tls.vmware_guest.exe", "t5_stdout.exe",
 												  "win32u.dll", "ucrtbase.dll", "msvcp_win.dll", "gdi32full.dll", "gdi32.dll", "user32.dll", "dxgi.dll", "d3d11.dll", "rpcrt4.dll",
 												  "combase.dll", "kernel.appcore.dll", "dcomp.dll", "ole32.dll", "shell32.dll", "ws2_32.dll", "bcrypt.dll", "sechost.dll",
-												  "advapi32.dll", "cfgmgr32.dll", "transparent_makimav2.exe" };
+												  "advapi32.dll", "cfgmgr32.dll", "transparent_makimav2.exe",
+												  "t6_user32.exe", "imm32.dll" };   // P44 (U2121): ahc.33 test PE T6's image name, ahc.34 IMM32.DLL (user32 loads it)
 		static const char* const measured80[] = { "msvcrt.dll", "oleaut32.dll", "dwmapi.dll", "setupapi.dll" };
 		uint32_t outv = 0xFFFFFFFF;
 		for ( const char* m : measured0 ) if ( ln == m ) outv = 0;
 		for ( const char* m : measured80 ) if ( ln == m ) outv = 0x80;
-		if ( outv == 0xFFFFFFFF ) return stop_( what + " - this module name is not measured (tm_nt ahc.0 .. ahc.32)" );
+		if ( outv == 0xFFFFFFFF ) return stop_( what + " - this module name is not measured (tm_nt ahc.0 .. ahc.34)" );
 		if ( !user_buffer( pout, 4, UC_PROT_WRITE ) ) return stop_( what + " - ParamsOut not writable: not measured" );
 		reply rr = done_( status::success, what + ": ParamsOut = " + hex( outv ) + ( outv ? " (as the guest's lookup answers this name)" : " (no compatibility-database entry)" ) + " (measured: tm_nt ahc)" );
 		if ( !put( pout, &outv, 4, rr ) ) return stop_( "writing ParamsOut failed after the probe" );
@@ -1085,6 +1120,20 @@ namespace emu::nt
 		{
 			const auto fh = handles_.find( c.args[ 6 ] );
 			if ( fh == handles_.end() || fh->second.kind != "file (system image)" ) return stop_( what + " - FileHandle is not a captured system-directory file of this process: not measured" );
+			// P44 (U2121): a DATA section of the file - access 4 SECTION_MAP_READ, PAGE_READONLY, SEC_COMMIT (ntdll LdrpFindLoadedDllByMappingFile)
+			// - MEASURED tm_nt u32k.fl.sec: STATUS_SUCCESS, a handle; its view below (u32k.fl.map)
+			if ( uint32_t( c.args[ 1 ] ) == 4 && !c.args[ 2 ] && !c.args[ 3 ] && uint32_t( c.args[ 4 ] ) == page::readonly && uint32_t( c.args[ 5 ] ) == 0x8000000 )
+			{
+				if ( !user_buffer( c.args[ 0 ], 8, UC_PROT_WRITE ) ) return done_( status::access_violation, what + ": SectionHandle not writable" );
+				object o;
+				o.kind = "section (data)";
+				o.name = fh->second.name;
+				o.target = fh->second.target;
+				const uint64_t h = open_handle( o );
+				reply rs = done_( status::success, what + ": a data section of the captured " + o.target + ", handle " + hex( h ) + " (measured: tm_nt u32k.fl.sec)" );
+				if ( !put( c.args[ 0 ], &h, 8, rs ) ) return stop_( "writing the handle failed after the probe" );
+				return rs;
+			}
 			if ( uint32_t( c.args[ 1 ] ) != 0xD || c.args[ 2 ] || c.args[ 3 ] || uint32_t( c.args[ 4 ] ) != 0x10 || uint32_t( c.args[ 5 ] ) != 0x1000000 )
 				return stop_( what + " - other arguments: not measured (tm_nt sp.sec: 0DH, NULL, NULL, PAGE_EXECUTE, SEC_IMAGE)" );
 			if ( !user_buffer( c.args[ 0 ], 8, UC_PROT_WRITE ) ) return done_( status::access_violation, what + ": SectionHandle not writable" );
@@ -1378,7 +1427,9 @@ namespace emu::nt
 		// packaged application) - answers STATUS_NOT_FOUND (C0000225H) for every Length (0 .. 1000H, incl. the loader's 330H), writes
 		// *ReturnLength = 0 and nothing into the buffer. Not measured (= loud stop): another token, other names, no names (the call
 		// then returns the process' own attributes, e.g. TSA://ProcUnique - measured shape sat.none, values not modelled), ReturnLength NULL.
-		bool known = token == current_process_token && count > 0 && pret != 0;
+		// P44 (U2121): also on NtCurrentThreadEffectiveToken() (the loader after user32's IMM lookup; the thread has no token of its own:
+		// MEASURED tm_nt u32k.sat.eff.2 / .1 = the process token's answer)
+		bool known = ( token == current_process_token || token == current_thread_effective_token ) && count > 0 && pret != 0;
 		for ( const auto& s : nm ) known = known && ( s == "WIN://SYSAPPID" || s == "WIN://PKG" );
 		if ( !known ) return stop_( "NtQuerySecurityAttributesToken: " + what + " - this input is not measured (P39: phnt prototype ntseapi.h:947, behaviour from tm_nt case sat)" );
 		if ( !user_buffer( pret, 4, UC_PROT_WRITE ) ) return stop_( "NtQuerySecurityAttributesToken: ReturnLength " + hex( pret ) + " not writable - not measured" );
@@ -1557,7 +1608,9 @@ namespace emu::nt
 	{
 		const uint32_t access = uint32_t( c.args[ 1 ] );
 		const std::string what = "NtOpenProcessToken( " + hex( c.args[ 0 ] ) + ", access " + hex( access ) + ", " + hex( c.args[ 2 ] ) + " )";
-		if ( c.args[ 0 ] != current_process || ( access != 8 && access != 0x20008 ) ) return stop_( what + " - not measured (NtCurrentProcess(), 8 / 20008H are)" );
+		// P44 (U2121): access 0AH TOKEN_DUPLICATE | TOKEN_QUERY (kernel32 BasepIsServiceSidBlocked, user32's LoadAppInitDlls) - MEASURED
+		// tm_nt u32k.svc.open: STATUS_SUCCESS, a handle
+		if ( c.args[ 0 ] != current_process || ( access != 8 && access != 0x20008 && access != 0xA ) ) return stop_( what + " - not measured (NtCurrentProcess(), 8 / 20008H / 0AH are)" );
 		if ( !user_buffer( c.args[ 2 ], 8, UC_PROT_WRITE ) ) return done_( status::access_violation, what + ": TokenHandle not writable" );
 		object o;
 		o.kind = "token (process)";
@@ -1718,6 +1771,71 @@ namespace emu::nt
 					sd += "]";
 				}
 				sd += "}";
+			}
+		}
+		// P44 (U2121): kernel32 BasepIsServiceSidBlocked (user32's LoadAppInitDlls): an ABSOLUTE SD {Revision 1, Control 4, Owner = Group = a
+		// service SID, no SACL, DACL {AclRevision 2, AclSize 198H, 5 ACCESS_ALLOWED ACEs (flags 0, mask 1) for four service SIDs (S-1-5-80 +
+		// 5 sub-authorities: hashes of service names, the same on every system) and S-1-5-83-0}}, the duplicated impersonation token,
+		// DesiredAccess 1, GenericMapping {20001H, 20000H, 20000H, 1F0001H}, PrivilegeSetLength 38H - MEASURED tm_nt u32k.svc.acc: not a
+		// member - STATUS_SUCCESS, GrantedAccess 0, AccessStatus STATUS_ACCESS_DENIED, PrivilegeSet {0, 0} (8 bytes), PrivilegeSetLength 38H
+		{
+			static const uint8_t sid_owner[ 32 ] = { 0x01, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x50, 0x00, 0x00, 0x00, 0x1C, 0x8F, 0x72, 0x3C,
+													 0x73, 0xE4, 0x39, 0xC5, 0xB8, 0x0B, 0x81, 0xC6, 0xD2, 0x18, 0x3A, 0x10, 0x2C, 0xD3, 0x8F, 0x05 };
+			static const uint8_t sid_a[ 32 ] = { 0x01, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x50, 0x00, 0x00, 0x00, 0xF0, 0x5B, 0x58, 0x07,
+												 0xC3, 0x43, 0x8C, 0x9A, 0xC7, 0x8A, 0x72, 0xDD, 0x8F, 0x8C, 0xB4, 0xDF, 0x44, 0x47, 0xE7, 0xF8 };
+			static const uint8_t sid_b[ 32 ] = { 0x01, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x50, 0x00, 0x00, 0x00, 0xBF, 0x55, 0x08, 0x72,
+												 0x3B, 0xE0, 0x28, 0xD0, 0x89, 0x79, 0x4B, 0xF8, 0x91, 0x89, 0x6E, 0x7C, 0x40, 0x25, 0xEC, 0xF4 };
+			static const uint8_t sid_c[ 32 ] = { 0x01, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x50, 0x00, 0x00, 0x00, 0x1B, 0x6D, 0x39, 0x16,
+												 0x2D, 0x47, 0x25, 0x79, 0xA6, 0x40, 0xB1, 0xD0, 0xEE, 0xA7, 0x7C, 0x0C, 0x27, 0x4C, 0xEB, 0x61 };
+			static const uint8_t sid_vm[ 16 ] = { 0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x53, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+			static const uint8_t gm_svc[ 16 ] = { 1, 0, 2, 0, 0, 0, 2, 0, 0, 0, 2, 0, 1, 0, 0x1F, 0 };
+			const auto th = handles_.find( c.args[ 1 ] );
+			if ( th != handles_.end() && th->second.kind == "token (impersonation)" )
+			{
+				uint8_t h[ 40 ] = {}, gm[ 16 ] = {}, acl[ 0xC0 ] = {}, own[ 32 ] = {}, grp[ 32 ] = {};
+				std::string err;
+				bool ok = c.stack_args && user_buffer( c.args[ 0 ], 40, UC_PROT_READ ) && uint32_t( c.args[ 2 ] ) == 1 && psl == 0x38 && user_buffer( c.args[ 3 ], 16, UC_PROT_READ );
+				uint64_t po = 0, pg = 0, psa = 0, pda = 0;
+				if ( ok )
+				{
+					e_.read( c.args[ 0 ], h, 40, err );
+					e_.read( c.args[ 3 ], gm, 16, err );
+					std::memcpy( &po, h + 8, 8 );
+					std::memcpy( &pg, h + 16, 8 );
+					std::memcpy( &psa, h + 24, 8 );
+					std::memcpy( &pda, h + 32, 8 );
+					ok = h[ 0 ] == 1 && h[ 2 ] == 4 && h[ 3 ] == 0 && !psa && std::memcmp( gm, gm_svc, 16 ) == 0 && user_buffer( po, 32, UC_PROT_READ ) && user_buffer( pg, 32, UC_PROT_READ ) &&
+						 user_buffer( pda, 0xC0, UC_PROT_READ );
+				}
+				if ( ok )
+				{
+					e_.read( po, own, 32, err );
+					e_.read( pg, grp, 32, err );
+					e_.read( pda, acl, 0xC0, err );
+					const uint8_t* sids[ 5 ] = { sid_a, sid_b, sid_c, sid_vm, sid_owner };
+					const uint32_t lens[ 5 ] = { 32, 32, 32, 16, 32 };
+					ok = std::memcmp( own, sid_owner, 32 ) == 0 && std::memcmp( grp, sid_owner, 32 ) == 0 && acl[ 0 ] == 2 && acl[ 2 ] == 0x98 && acl[ 3 ] == 1 && acl[ 4 ] == 5 && acl[ 5 ] == 0;
+					uint32_t at = 8;
+					for ( int i = 0; ok && i < 5; i++ )
+					{
+						uint32_t mask = 0;
+						std::memcpy( &mask, acl + at + 4, 4 );
+						ok = acl[ at ] == 0 && acl[ at + 1 ] == 0 && acl[ at + 2 ] == 8 + lens[ i ] && acl[ at + 3 ] == 0 && mask == 1 && std::memcmp( acl + at + 8, sids[ i ], lens[ i ] ) == 0;
+						at += 8 + lens[ i ];
+					}
+				}
+				if ( ok )
+				{
+					const uint64_t ps = c.args[ 4 ], pgr = c.args[ 6 ], pas = c.args[ 7 ];
+					if ( !user_buffer( ps, 0x38, UC_PROT_WRITE ) || !user_buffer( pgr, 4, UC_PROT_WRITE ) || !user_buffer( pas, 4, UC_PROT_WRITE ) )
+						return done_( status::access_violation, "NtAccessCheck: an OUT buffer is not writable" );
+					reply r = done_( status::success, "NtAccessCheck( the service-SID SD of BasepIsServiceSidBlocked, the duplicated impersonation token, 1 ): not a member - STATUS_SUCCESS, "
+														  "GrantedAccess 0, AccessStatus STATUS_ACCESS_DENIED, PrivilegeSet {0, 0} (measured: tm_nt u32k.svc.acc)" );
+					const uint64_t zero8 = 0;
+					const uint32_t zero = 0, denied = 0xC0000022;
+					if ( !put( ps, &zero8, 8, r ) || !put( pgr, &zero, 4, r ) || !put( pas, &denied, 4, r ) ) return stop_( "writing the result failed after the probe" );
+					return r;
+				}
 			}
 		}
 		// P41 (U2074): MEASURED (tm_nt acc.N): ntdll's membership check of kernelbase's start - an ABSOLUTE SD {Revision 1, Control 4

@@ -132,13 +132,18 @@ namespace emu::nt
 
 	// U2030 (plan 3.M5 part 2): resume = NtContinue - the caller (the SYSCALL hook) loads the CPU state from the CONTEXT record at
 	// reply::context and returns to user mode there (not through SYSRETQ)
-	enum class reply_kind { done, terminated, stop, resume };
+	// P44 (U2118): callback = the kernel calls back into user mode (KeUserModeCallback: ntdll!KiUserCallbackDispatcher with the
+	// callback number and an input buffer on the user stack); callback_return = NtCallbackReturn ended the innermost callback - the
+	// interrupted service completes with STATUS (the process layer restores the user state of that service's SYSCALL)
+	enum class reply_kind { done, terminated, stop, resume, callback, callback_return };
 	struct reply
 	{
 		reply_kind kind = reply_kind::stop;
 		uint32_t status = 0;                 // done: the NTSTATUS returned in RAX
 		uint32_t exit_status = 0;            // terminated
 		uint64_t context = 0;                // resume: the guest CONTEXT record (probed readable, 4D0H bytes)
+		uint32_t callback_api = 0;           // callback: the index into PEB KernelCallbackTable (ApiNumber)
+		std::vector<uint8_t> callback_input; // callback: the input buffer copied onto the user stack
 		std::string text;                    // what happened (done / terminated) or why the call stops (stop)
 		std::vector<std::string> writes;     // the OUT parameters written ("[addr] 8 = 0x...")
 	};
@@ -167,6 +172,19 @@ namespace emu::nt
 		inline constexpr uint32_t mapped = 0x40000, image = 0x1000000;
 	}
 
+	// P44 (U2122): a region whose bytes are only partly MEASURED (the win32k / user32 shared views, the TEB's CLIENTINFO after the GUI
+	// conversion): the process layer stops loudly when the guest reads a byte that is neither measured / modelled nor written by the
+	// guest itself before ("an unmeasured field read = loud fail", USER DECISION 2026-10-27)
+	struct watch
+	{
+		uint64_t base = 0, size = 0;
+		std::string name;
+		std::vector<std::pair<uint64_t, uint64_t>> known;   // [offset, offset + length): measured / modelled bytes
+		bool active = true;
+	};
+	// P44: the window holding every watched win32k view (fixed placeholder bases inside it; the process layer hooks it once)
+	inline constexpr uint64_t win32k_view_window = 0x00007FF000000000ull, win32k_view_window_size = 0x10000000ull;
+
 	class kernel
 	{
 	public:
@@ -189,6 +207,11 @@ namespace emu::nt
 
 		// a guest buffer as the kernel probes it: inside the user range, mapped, NEED = UC_PROT_READ / WRITE bits
 		bool user_buffer( uint64_t address, uint64_t length, uint32_t need ) const;
+
+		// P44 (U2118): the kernel -> user callbacks in progress (innermost last)
+		size_t callback_depth() const { return callbacks_.size(); }
+		// P44 (U2122): the partly measured regions (the process layer checks every guest read of them)
+		const std::vector<watch>& watches() const { return watches_; }
 
 	private:
 		reply svc_terminate_process( const call& c );
@@ -282,6 +305,29 @@ namespace emu::nt
 		reply svc_initialize_nls_files( const call& c );
 		bool svc_create_file_measured( const call& c, reply& r );   // NtCreateFile: the console-driver frontier (false = not handled here)
 		uint64_t csr_port_ = 0;                                 // the API port handle of this process (0 = not connected)
+		// P44 (U2118): kernel -> user callbacks - the service waiting for each one (innermost last); nt_kernel_win32k.cpp
+		struct pending_callback
+		{
+			std::string service;                               // the interrupted service ("NtGdiInit", ...)
+			uint32_t api = 0;                                  // the callback number
+		};
+		std::vector<pending_callback> callbacks_;
+		reply begin_callback( const std::string& service, uint32_t api, const std::string& text );
+		reply svc_callback_return( const call& c );
+		reply complete_callback( const pending_callback& p, uint32_t callback_status );
+		bool dispatch_win32k( const call& c, reply& r );       // P44: the win32k services (the second table, win32u.dll stubs)
+		std::vector<watch> watches_;                            // P44 (U2122)
+		bool map_watched_view( uint64_t base, uint64_t size, uint64_t committed, const std::vector<uint8_t>& content, const std::string& name,
+							   const std::vector<std::pair<uint64_t, uint64_t>>& known, std::string& why );
+		reply svc_alpc_send_wait_receive_port( const call& c );   // P44 (U2119): the CSR request of user32's start (USERSRV connect)
+		bool user_connected_ = false;                           // P44: the USERSRV connection made (the shared-info views mapped)
+		uint64_t user_si_view_ = 0, user_he_view_ = 0;          // P44: the user shared-info view (R1), the user handle table view (R2)
+		bool gui_process_ = false, gui_thread_ = false;         // P44 (U2120): the GUI conversion of the process / the thread done
+		uint64_t gdi_view_ = 0, desk_view_ = 0;                 // P44: the GDI shared memory view (R3), the desktop heap view (R4)
+		uint64_t winsta_handle_ = 0, desktop_handle_ = 0;       // P44: the process' window station / the thread's desktop (InitThreadCallback)
+		reply gui_convert( const call& c );                     // P44 (U2120): the first win32k service of the thread
+		reply svc_unmap_view_of_section( const call& c );       // P44 (U2121): NtUnmapViewOfSection
+		bool dispatch_user_start( const call& c, reply& r );    // P44 (U2121): NtDuplicateToken, NtQueryKey 7, ThreadZeroTlsCell
 		// P41 (U2069-U2089): the model of a process started WITHOUT a console (a DETACHED_PROCESS start; tm_nt con.*)
 		bool console_host_set_ = false;                         // ProcessConsoleHostProcess (31H) set by the process (kernelbase)
 		uint64_t console_host_ = 0;                             // its value (measured: 1 in a detached process)

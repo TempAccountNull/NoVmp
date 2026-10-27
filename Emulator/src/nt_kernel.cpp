@@ -391,6 +391,13 @@ namespace emu::nt
 			r.text = "continue at the CONTEXT " + hex( c.args[ 0 ] ) + ( c.args[ 1 ] & 0xFF ? " (TestAlert: no APC queued)" : "" );
 			return r;
 		}
+		if ( c.name == "NtCallbackReturn" ) return svc_callback_return( c );   // P44 (U2118): the end of a kernel -> user callback
+		if ( c.name == "NtAlpcSendWaitReceivePort" ) return svc_alpc_send_wait_receive_port( c );   // P44 (U2119): user32's USERSRV connection
+		if ( c.name == "NtUnmapViewOfSection" ) return svc_unmap_view_of_section( c );   // P44 (U2121)
+		reply us;
+		if ( dispatch_user_start( c, us ) ) return us;   // P44 (U2121): more services of user32's start (nt_kernel_win32k.cpp)
+		reply w32;
+		if ( dispatch_win32k( c, w32 ) ) return w32;   // P44: the win32k services (nt_kernel_win32k.cpp)
 		reply more;
 		if ( dispatch_more( c, more ) ) return more;   // U2032: the services of the --Sys process start (nt_kernel_sys.cpp)
 		return stopped( c.name + " (" + hex( c.number ) + ") is known but not implemented in milestone M5 (the services of M5: NtTerminateProcess, NtClose, "

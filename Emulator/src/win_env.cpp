@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <set>
 
 // ---- layout checks against the Windows SDK 10.0.26100.0 headers the compiler sees (um\winnt.h, um\winternl.h)
 static_assert( offsetof( NT_TIB, ExceptionList ) == emu::win::layout::teb_exception_list && offsetof( NT_TIB, StackBase ) == emu::win::layout::teb_stack_base &&
@@ -173,11 +174,19 @@ namespace emu::win
 			auto reg = std::make_shared<std::map<std::string, nt::registry_key>>();   // U2034
 			if ( !load_registry( f.capture_dir, *reg, error ) ) return false;
 			f.registry = reg;
+			// P44 (U2117): win32k's service table from the capture's win32u.dll (the second table; absent file = an empty table)
+			const auto w = files->find( "win32u.dll" );
+			if ( w != files->end() && !parse_win32k_table( w->second, f.win32k_syscalls, error ) )
+			{
+				error = f.capture_dir + "\\win32u.dll: " + error;
+				return false;
+			}
 		}
 		log.push_back( "  capture: " + f.capture_dir + " (manifest format 1, captured " + m.captured + "; ntdll.dll " + std::to_string( bytes.size() ) +
 					   " bytes = the manifest size; the SHA-256 is checked by the harness)" );
 		log.push_back( "  syscall table from the capture's ntdll stubs (4C 8B D1 B8 imm32): " + std::to_string( f.syscalls.stubs ) + " services of " +
 					   std::to_string( f.syscalls.nt_exports ) + " Nt* exports (plan 6.4.b: never hardcoded)" );
+		log.push_back( "  win32k service table (P44 U2117) from the capture's win32u.dll stubs: " + std::to_string( f.win32k_syscalls.stubs ) + " services" );
 		log.push_back( "  OS facts (manifest): version " + std::to_string( f.os_major ) + "." + std::to_string( f.os_minor ) + " build " + std::to_string( f.os_build ) +
 					   ", product type " + std::to_string( f.product_type ) + ", system root " + f.system_root );
 		log.push_back( "  platform facts (" + f.platform_source + "): " + std::to_string( f.processors ) + " processors, architecture " +
@@ -224,6 +233,15 @@ namespace emu::win
 		};
 		std::vector<con_wait> con_waits;
 		std::unique_ptr<output_file> con;
+		// P44 (U2122): the guest bytes written inside watched regions (address -> 1); a read of a watched byte neither known nor written stops
+		std::set<uint64_t> watch_written;
+		// P44 (U2118): the user state of each service SYSCALL interrupted by a kernel -> user callback (innermost last)
+		struct cb_saved
+		{
+			uint64_t gpr[ 16 ] = {};   // RAX .. R15 at the SYSCALL (RSP = the user RSP; RCX = the return RIP, R11 = RFLAGS)
+			std::string service;
+		};
+		std::vector<cb_saved> cb_stack;
 		std::string con_dir;
 		uint64_t con_max = 0;
 		bool con_failed = false;
@@ -554,6 +572,37 @@ namespace emu::win
 			}
 		}
 
+		// P44 (U2122): a guest access inside the win32k view window / the TEB's CLIENTINFO: writes make bytes known, a read of a byte the
+		// measurement did not cover (and the guest did not write) stops loudly, naming the region and the offset
+		void on_watch_access( uc_engine* uc, uc_mem_type type, uint64_t address, int size, int64_t, void* user )
+		{
+			auto& c = *static_cast<process::hook_ctx*>( user );
+			if ( c.stopped || size <= 0 ) return;
+			for ( const auto& w : c.p->kern().watches() )
+			{
+				if ( !w.active || address < w.base || address - w.base >= w.size ) continue;
+				if ( type == UC_MEM_WRITE )
+				{
+					for ( int i = 0; i < size; i++ ) c.watch_written.insert( address + uint64_t( i ) );
+					return;
+				}
+				for ( int i = 0; i < size; i++ )
+				{
+					const uint64_t a = address + uint64_t( i ), off = a - w.base;
+					bool ok = c.watch_written.count( a ) != 0;
+					for ( const auto& [ lo, hi ] : w.known ) ok = ok || ( off >= lo && off < hi );
+					if ( !ok )
+					{
+						c.stop( stop_kind::error, "unmeasured read: " + w.name + " +" + hex( off ) + " (" + std::to_string( size ) + " bytes at " + hex( address ) + ", rip " +
+														hex( read_reg( uc, UC_X86_REG_RIP ) ) + ") - this byte was not measured (P44: an unmeasured field read is a loud stop)" );
+						uc_emu_stop( uc );
+						return;
+					}
+				}
+				return;
+			}
+		}
+
 		// U2020: a guest read of PEB / TEB / KUSER_SHARED_DATA (and the other structures the environment builds), named per member
 		void on_env_read( uc_engine*, uc_mem_type, uint64_t address, int size, int64_t, void* user )
 		{
@@ -640,12 +689,15 @@ namespace emu::win
 			r.user_rip = s.at;
 			r.user_rflags = r11;
 			r.user_rsp = rsp;
-			const auto& tab = c.p->syscalls();
-			const auto it = s.number <= 0xFFF ? tab.by_number.find( s.number ) : tab.by_number.end();
+			// P44 (U2117): bits 15:12 select the service table - 0 = ntdll's (NT), 1 = win32u's (win32k); no other table exists here
+			const bool w32 = ( s.number & 0xF000 ) == 0x1000;
+			const auto& tab = w32 ? c.p->win32k_syscalls() : c.p->syscalls();
+			const auto it = ( s.number <= 0xFFF || w32 ) ? tab.by_number.find( s.number ) : tab.by_number.end();
 			if ( s.at + 2 != rcx ) s.outcome = "(RCX " + hex( rcx ) + " is not the SYSCALL address + 2) ";
 			if ( it == tab.by_number.end() )
 			{
-				s.outcome += "unknown: no stub of the environment's ntdll loads this number" + std::string( s.number > 0xFFF ? " (bits 15:12 set: not the NT table)" : "" );
+				s.outcome += w32 ? std::string( "unknown: no stub of the environment's win32u.dll loads this number (win32k table)" )
+								 : "unknown: no stub of the environment's ntdll loads this number" + std::string( s.number > 0xFFF ? " (bits 15:12 set: not the NT table)" : "" );
 				r.syscalls.push_back( s );
 				c.stop( stop_kind::unknown_syscall, "system service EAX AND FFFFH = " + hex( s.number ) + " (RAX " + hex( s.rax ) + ") at rip " + hex( s.at ) +
 														" is unknown in the environment's syscall table - stopped with a state dump, nothing forwarded to the host" );
@@ -703,6 +755,33 @@ namespace emu::win
 				s.outcome += std::string( "status " ) + b + "H: " + rep.text;
 				r.syscalls.push_back( s );
 				return;   // the SYSRETQ at IA32_LSTAR returns to the caller
+			}
+			if ( rep.kind == nt::reply_kind::callback || rep.kind == nt::reply_kind::callback_return )
+			{
+				// P44 (U2118): KeUserModeCallback / NtCallbackReturn (ReactOS 0.4.16 ntoskrnl/ke/amd64/usercall.c:210-294 KiSetupUserCalloutFrame
+				// / KeUserModeCallback, sdk/include/ndk/amd64/ketypes.h:1092-1102 UCALLOUT_FRAME, reference only; the frame fields ntdll's
+				// KiUserCallbackDispatcher of the capture reads: +20H Buffer, +28H Length, +2CH ApiNumber)
+				std::string why;
+				if ( !c.p->callback_transfer( uc, c, rep, s.name, why ) )
+				{
+					s.outcome += "not answered: " + why;
+					r.syscalls.push_back( s );
+					c.stop( stop_kind::unimplemented_syscall, s.name + " at rip " + hex( s.at ) + ": " + why + " - stopped with a state dump" );
+					uc_emu_stop( uc );
+					return;
+				}
+				s.answered = true;
+				s.status = rep.status;
+				if ( rep.kind == nt::reply_kind::callback )
+					s.outcome += "callback into user mode: " + rep.text;
+				else
+				{
+					char cb[ 16 ];
+					std::snprintf( cb, sizeof( cb ), "%08X", rep.status );
+					s.outcome += std::string( "status " ) + cb + "H (the interrupted service's result, returned at its SYSCALL): " + rep.text;
+				}
+				r.syscalls.push_back( s );
+				return;
 			}
 			if ( rep.kind == nt::reply_kind::terminated )
 			{
@@ -1337,6 +1416,15 @@ namespace emu::win
 					log_.push_back( "FAILED: " + error );
 					return false;
 				}
+		// P44 (U2122): the measured-region watch - the win32k view window and the TEB's CLIENTINFO (only under --Sys: the views exist there)
+		if ( po_.boundary != env_boundary::hle &&
+			 ( uc_hook_add( uc, &h, UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE, (void*)on_watch_access, hc_.get(), nt::win32k_view_window, nt::win32k_view_window + nt::win32k_view_window_size - 1 ) != UC_ERR_OK ||
+			   uc_hook_add( uc, &h, UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE, (void*)on_watch_access, hc_.get(), guest_teb_va + 0x800, guest_teb_va + 0x9EF ) != UC_ERR_OK ) )
+		{
+			error = "uc_hook_add (the measured-region watch) failed";
+			log_.push_back( "FAILED: " + error );
+			return false;
+		}
 		// U2095 (plan 3.M6): KUSER_SHARED_DATA's time fields are rewritten from the virtual time base at every guest read of them
 		for ( auto [ lo, n ] : { std::pair<uint64_t, uint64_t>{ guest_kuser_va + layout::kuser_tick_count_low_deprecated, 0x2C },
 								std::pair<uint64_t, uint64_t>{ guest_kuser_va + layout::kuser_tick_count, 0x10 } } )
@@ -1539,6 +1627,86 @@ namespace emu::win
 			return false;
 		}
 		return true;
+	}
+
+	// ------------------------------------------------------------------------------------------------ P44 (U2118): kernel -> user callbacks
+	// callback: the user state of the SYSCALL is saved; below the user RSP the input buffer (16-byte aligned - 8) and a UCALLOUT_FRAME
+	// (58H: P1Home .. P4Home, Buffer, Length, ApiNumber, MACHINE_FRAME {Rip, SegCs, EFlags, Rsp, SegSs} with the interrupted Rip / Rsp)
+	// are written; the thread enters ntdll!KiUserCallbackDispatcher with RSP = the frame (IRETQ). callback_return (NtCallbackReturn):
+	// the innermost saved state comes back, RAX = the interrupted service's result, IRETQ to its return address (RCX at its SYSCALL).
+	bool process::callback_transfer( uc_engine* uc, hook_ctx& c, const nt::reply& rep, const std::string& service, std::string& why )
+	{
+		static const int gpr[ 16 ] = { UC_X86_REG_RAX, UC_X86_REG_RCX, UC_X86_REG_RDX, UC_X86_REG_RBX, UC_X86_REG_RSP, UC_X86_REG_RBP, UC_X86_REG_RSI, UC_X86_REG_RDI,
+									   UC_X86_REG_R8, UC_X86_REG_R9, UC_X86_REG_R10, UC_X86_REG_R11, UC_X86_REG_R12, UC_X86_REG_R13, UC_X86_REG_R14, UC_X86_REG_R15 };
+		auto iret = [ & ]( uint64_t rip, uint64_t rsp, uint64_t flags ) {
+			const uint64_t frame[ 5 ] = { rip, uint64_t( layout::gdt_r3_code | layout::rpl3 ), ( flags & eflags_user_sanitize ) | 0x202, rsp, uint64_t( layout::gdt_r3_data | layout::rpl3 ) };
+			const uint64_t fva = guest_kernel_stack_va + page_size - sizeof( frame );
+			if ( !e_->write( fva, frame, sizeof( frame ), why ) ) return false;
+			if ( uc_reg_write( uc, UC_X86_REG_RSP, &fva ) != UC_ERR_OK || uc_reg_write( uc, UC_X86_REG_RIP, &iretq_stub_ ) != UC_ERR_OK )
+			{
+				why = "register write failed";
+				return false;
+			}
+			return true;
+		};
+		if ( rep.kind == nt::reply_kind::callback )
+		{
+			if ( c.cb_stack.size() >= 16 )
+			{
+				why = "more than 16 nested kernel -> user callbacks: not modelled";
+				return false;
+			}
+			hook_ctx::cb_saved sv;
+			for ( int i = 0; i < 16; i++ ) uc_reg_read( uc, gpr[ i ], &sv.gpr[ i ] );
+			sv.service = service;
+			const uint64_t user_rsp = sv.gpr[ 4 ], len = rep.callback_input.size();
+			if ( len > 0x10000 || user_rsp < 0x10000 + len + 0x200 )
+			{
+				why = "the callback's input (" + hex( len ) + " bytes) does not fit below the user stack pointer " + hex( user_rsp );
+				return false;
+			}
+			const uint64_t args = ( ( user_rsp - len ) & ~0xFull ) - 8, frame = args - 0x58;
+			uint64_t ntdll = 0, dispatcher = 0;
+			for ( const auto& m : modules_ )
+				if ( m.name == "ntdll.dll" )
+				{
+					ntdll = m.base;
+					for ( const auto& [ rva, name ] : m.exports_by_rva )
+						if ( name == "KiUserCallbackDispatcher" ) dispatcher = m.base + rva;
+				}
+			if ( !ntdll || !dispatcher )
+			{
+				why = "ntdll.dll exports no KiUserCallbackDispatcher";
+				return false;
+			}
+			if ( !kern().user_buffer( frame, user_rsp - frame, UC_PROT_READ | UC_PROT_WRITE ) )
+			{
+				why = "the callback frame [" + hex( frame ) + ", " + hex( user_rsp ) + ") is not writable user stack";
+				return false;
+			}
+			uint8_t f[ 0x58 ] = {};
+			const uint32_t l32 = uint32_t( len ), api = rep.callback_api;
+			std::memcpy( f + 0x20, &args, 8 );
+			std::memcpy( f + 0x28, &l32, 4 );
+			std::memcpy( f + 0x2C, &api, 4 );
+			std::memcpy( f + 0x30, &sv.gpr[ 1 ], 8 );   // MachineFrame.Rip = the interrupted service's return address
+			std::memcpy( f + 0x48, &user_rsp, 8 );      // MachineFrame.Rsp
+			if ( ( len && !e_->write( args, rep.callback_input.data(), len, why ) ) || !e_->write( frame, f, sizeof( f ), why ) ) return false;
+			c.cb_stack.push_back( sv );
+			return iret( dispatcher, frame, sv.gpr[ 11 ] );
+		}
+		if ( c.cb_stack.empty() )
+		{
+			why = "NtCallbackReturn completed a callback the process layer did not start";
+			return false;
+		}
+		const hook_ctx::cb_saved sv = c.cb_stack.back();
+		c.cb_stack.pop_back();
+		for ( int i = 0; i < 16; i++ )
+			if ( i != 4 ) uc_reg_write( uc, gpr[ i ], &sv.gpr[ i ] );
+		const uint64_t st = rep.status;
+		uc_reg_write( uc, UC_X86_REG_RAX, &st );
+		return iret( sv.gpr[ 1 ], sv.gpr[ 4 ], sv.gpr[ 11 ] );
 	}
 
 	// ------------------------------------------------------------------------------------------------ U2031: the kernel's views

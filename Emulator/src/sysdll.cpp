@@ -365,6 +365,47 @@ namespace emu::win
 		return true;
 	}
 
+	bool parse_win32k_table( const std::vector<uint8_t>& f, syscall_table& t, std::string& error )
+	{
+		t = syscall_table{};
+		pe::image img;
+		if ( !pe::parse( f, img, error ) ) return false;
+		std::vector<pe::export_entry> ex;
+		if ( !pe::exports( f, img, ex, error ) ) return false;
+		for ( const auto& e : ex )
+		{
+			if ( e.name.size() < 3 || e.name[ 0 ] != 'N' || e.name[ 1 ] != 't' || e.forwarder ) continue;
+			t.nt_exports++;
+			uint64_t off = 0;
+			uint8_t b[ 8 ] = {};
+			if ( !pe::rva_to_offset( img, e.rva, 8, off ) ) continue;
+			std::memcpy( b, f.data() + off, 8 );
+			if ( !( b[ 0 ] == 0x4C && b[ 1 ] == 0x8B && b[ 2 ] == 0xD1 && b[ 3 ] == 0xB8 ) ) continue;
+			uint32_t n = 0;
+			std::memcpy( &n, b + 4, 4 );
+			if ( n < 0x1000 || n > 0x1FFF )
+			{
+				error = "win32u stub " + e.name + ": service number " + hex( n ) + " outside the win32k table (bits 15:12 must be 1)";
+				return false;
+			}
+			auto it = t.by_number.find( n );
+			if ( it != t.by_number.end() && it->second != e.name )
+			{
+				error = "win32u stubs " + it->second + " and " + e.name + " both load service number " + hex( n );
+				return false;
+			}
+			t.by_number[ n ] = e.name;
+			t.by_name[ e.name ] = n;
+			t.stubs++;
+		}
+		if ( !t.stubs )
+		{
+			error = "no win32k system-service stub (4C 8B D1 B8 imm32) among " + std::to_string( t.nt_exports ) + " Nt* exports";
+			return false;
+		}
+		return true;
+	}
+
 	bool load_platform_facts( environment env, const std::string& data_dir, platform_facts& p, std::string& error )
 	{
 		p = platform_facts{};

@@ -348,10 +348,16 @@ namespace emu::nt
 				return stop_( std::string( c.name ) + " \"" + full + "\": a key of the user's hive that was not measured (tm_nt hku.*: measured from inside with the process' own SID)" );
 			}
 		}
-		if ( !f_.registry ) return none();
-		const auto reg = f_.registry->find( key );
-		if ( reg == f_.registry->end() ) return none();
-		if ( !reg->second.present ) return absent( "in the captured environment" );
+		// P44 (U2121): the hive root \REGISTRY\MACHINE (the predefined HKEY_LOCAL_MACHINE - WDK "Registry Key Object Routines": user-mode
+		// HKEY_LOCAL_MACHINE = \Registry\Machine) exists on every system - kernelbase opens it (NtOpenKeyEx, MAXIMUM_ALLOWED) before a
+		// relative open of HKLM\... (user32's LoadAppInitDlls, P44 x12); the capture tool records keys BELOW it only
+		if ( key != "\\registry\\machine" )
+		{
+			if ( !f_.registry ) return none();
+			const auto reg = f_.registry->find( key );
+			if ( reg == f_.registry->end() ) return none();
+			if ( !reg->second.present ) return absent( "in the captured environment" );
+		}
 		if ( !user_buffer( c.args[ 0 ], 8, UC_PROT_WRITE ) ) return done_( status::access_violation, "KeyHandle " + hex( c.args[ 0 ] ) + " not writable" );
 		object o;
 		o.kind = "key";
@@ -388,7 +394,17 @@ namespace emu::nt
 				std::string err;
 				if ( len >= 4 && user_buffer( out, 4, UC_PROT_READ ) ) e_.read( out, &pol, 4, err );
 				const std::string w = "ProcessMitigationPolicy policy " + hex( pol ) + ", Length " + hex( len );
-				if ( pol != 0xB || ( len != 8 && len != 4 ) ) { r = stop_( w + ": not measured (tm_nt mit: policy 0BH, Length 8 / 4)" ); return true; }
+				// P44 (U2116): policy 6 ProcessExtensionPointDisablePolicy (kernel32 BasepAreExtensionPointsBlocked, user32's LoadAppInitDlls in
+				// its ClientThreadSetup callback; P44 x11) - MEASURED (tm_nt mit.6): Length 8, ReturnLength NULL = STATUS_SUCCESS, flags 0
+				if ( pol == 6 && len == 8 && !pret )
+				{
+					if ( !user_buffer( out, 8, UC_PROT_WRITE ) ) { r = done_( status::access_violation, w + ": ProcessInformation not writable" ); return true; }
+					r = done_( status::success, w + ": ProcessExtensionPointDisablePolicy flags 0 (measured: tm_nt mit.6)" );
+					const uint32_t zero6 = 0;
+					if ( !put( out + 4, &zero6, 4, r ) ) r = stop_( "writing the result failed after the probe" );
+					return true;
+				}
+				if ( pol != 0xB || ( len != 8 && len != 4 ) ) { r = stop_( w + ": not measured (tm_nt mit: policy 0BH, Length 8 / 4; 6 with Length 8)" ); return true; }
 				if ( len == 4 ) { r = done_( status::info_length_mismatch, w + ": STATUS_INFO_LENGTH_MISMATCH (measured: tm_nt mit.b.4)" ); return true; }
 				if ( !user_buffer( out, 8, UC_PROT_WRITE ) ) { r = done_( status::access_violation, w + ": ProcessInformation not writable" ); return true; }
 				r = done_( status::success, w + ": ProcessSystemCallFilterPolicy flags 0, ReturnLength not written (measured: tm_nt mit.b / mit.b.rl)" );

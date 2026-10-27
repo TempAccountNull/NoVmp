@@ -3618,6 +3618,71 @@ namespace
 			   "upper case / other names: no slot (callers pass lower-case names)" );
 	}
 
+	// P44 (U2124): nt_measured_user32 - the kernel side of user32's start (nt_kernel_win32k.cpp; tm_nt u32 / u32k): the CSR USERSRV request
+	// refused without the connected-client model, a win32k service refused before the USERSRV connection, NtCallbackReturn without a
+	// callback refused, NtUnmapViewOfSection of an address in no view refused, NtQueryKey only on \REGISTRY\MACHINE class 7 (measured
+	// Length 4 / 0), ThreadZeroTlsCell (measured: Length 4 zeroes the cell, Length 8 STATUS_INFO_LENGTH_MISMATCH, an index >= 64 stops),
+	// NtDuplicateToken refused for a handle that is not the 0AH process token
+	void t_nt_measured_user32()
+	{
+		std::string err;
+		emu::engine_config ec;
+		ec.profile = emu::cpu_profile_choice::guest;
+		emu::win::process_options po;
+		po.boundary = emu::env_boundary::sys;
+		po.max_insns = 200000;
+		po.image_name = "w5";
+		po.image_file_name = "w5.exe";
+		auto f = w5_facts();
+		std::vector<std::string> log;
+		auto p = emu::win::process::create( ec, f, po, w5_build( { w5_trivial }, err ), log, err );
+		CHECK( p != nullptr, "process: " + err );
+		if ( !p ) return;
+		namespace N = emu::nt;
+		const uint64_t S = w5_scratch, cp = N::current_process;
+		auto rd = [ & ]( uint64_t va, int n ) { return w4_read( *p, va, n ); };
+		auto w32 = [ & ]( const char* name, uint32_t number, std::initializer_list<uint64_t> a ) {
+			N::call c;
+			c.name = name;
+			c.number = number;
+			size_t i = 0;
+			for ( auto v : a ) c.args[ i++ ] = v;
+			c.stack_args = true;
+			return p->kern().dispatch( c );
+		};
+		// 1. the USERSRV request without the connected-client model (no NtConnectPort before): stop
+		auto r = w5_call( *p, "NtAlpcSendWaitReceivePort", { 0x64, 0x20000, S, 0, S, S + 0x100, 0, 0 } );
+		CHECK( w5_stop( r ) && r.text.find( "not the CSR API port" ) != std::string::npos, "the CSR request without the connected-client model: stop: " + r.text );
+		// 2. a win32k service (the win32u number of NtGdiInit in the capture's build) before the USERSRV connection: stop
+		r = w32( "NtGdiInit", 0x12E3, {} );
+		CHECK( w5_stop( r ) && r.text.find( "before user32's USERSRV connection" ) != std::string::npos, "NtGdiInit before the USERSRV connection: stop: " + r.text );
+		// 3. NtCallbackReturn without a callback: stop
+		r = w5_call( *p, "NtCallbackReturn", { 0, 0, 0 } );
+		CHECK( w5_stop( r ) && r.text.find( "no callback in progress" ) != std::string::npos, "NtCallbackReturn without a callback: stop: " + r.text );
+		// 4. NtUnmapViewOfSection of an address in no view: stop
+		r = w5_call( *p, "NtUnmapViewOfSection", { cp, S } );
+		CHECK( w5_stop( r ), "NtUnmapViewOfSection outside every view: stop: " + r.text );
+		// 5. NtQueryKey on a handle that is not \REGISTRY\MACHINE: stop
+		r = w5_call( *p, "NtQueryKey", { 0x4, 7, S, 4, S + 8 } );
+		CHECK( w5_stop( r ), "NtQueryKey on another handle: stop: " + r.text );
+		// 6. ThreadZeroTlsCell: the cell of index 3 zeroed (Length 4), Length 8 = STATUS_INFO_LENGTH_MISMATCH, index 64: stop
+		std::string werr;
+		uint64_t cell = 0x1234, idx = 3;
+		const uint64_t tebva = p->kern().facts().teb;
+		CHECK( p->eng().write( tebva + 0x1480 + 8 * 3, &cell, 8, werr ), "TEB write " + werr );
+		w5_put( *p, S, idx );
+		r = w5_call( *p, "NtSetInformationThread", { ~0ull - 1, 0xA, S, 4 } );
+		CHECK( w5_ok( r ) && rd( tebva + 0x1480 + 8 * 3, 8 ) == 0, "ThreadZeroTlsCell index 3, Length 4: STATUS_SUCCESS, the cell 0 (tm_nt u32k.tls): " + r.text );
+		r = w5_call( *p, "NtSetInformationThread", { ~0ull - 1, 0xA, S, 8 } );
+		CHECK( w5_status( r, N::status::info_length_mismatch ), "ThreadZeroTlsCell Length 8: STATUS_INFO_LENGTH_MISMATCH (tm_nt u32k.tls.8): " + r.text );
+		w5_put( *p, S, 64 );
+		r = w5_call( *p, "NtSetInformationThread", { ~0ull - 1, 0xA, S, 4 } );
+		CHECK( w5_stop( r ), "ThreadZeroTlsCell index 64 (the expansion slots): stop: " + r.text );
+		// 7. NtDuplicateToken of a handle that is not the process token: stop
+		r = w5_call( *p, "NtDuplicateToken", { 0x4, 0xC, S, 0, 2, S + 0x40 } );
+		CHECK( w5_stop( r ), "NtDuplicateToken of another handle: stop: " + r.text );
+	}
+
 	// P43 (U2110): nt_measured_dllsearch - the DLL path search for a captured System32 DLL that is not a KnownDll (tm_nt sp.*), the
 	// KnownDlls slot of a further KnownDll (U2105), the LookupCdb names of the sample's import graph (tm_nt ahc.9 .. ahc.32) and
 	// ProcessMitigationPolicy 0BH (tm_nt mit.*) - in a process whose facts hold two synthetic DLL images (d3d11.dll, user32.dll)
@@ -3813,6 +3878,7 @@ namespace
 		{ "nt_time_services", t_nt_time_services },
 		{ "knowndll_slots", t_knowndll_slots },   // U2105
 		{ "nt_measured_dllsearch", t_nt_measured_dllsearch },   // U2110
+		{ "nt_measured_user32", t_nt_measured_user32 },   // P44 (U2124)
 	};
 }
 

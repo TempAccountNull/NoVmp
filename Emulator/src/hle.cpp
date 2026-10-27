@@ -41,6 +41,8 @@ namespace emu::hle
 								   // P41 (U2083): a process without a console prints
 								   { "GetStdHandle", api::get_std_handle }, { "WriteFile", api::write_file }, { "WriteConsoleA", api::write_console_a },
 								   { "WriteConsoleW", api::write_console_w }, { "GetLastError", api::get_last_error } };
+		// P44 (U2123): user32.dll APIs (test PE T6)
+		const known user32[] = { { "CharUpperW", api::char_upper_w } };
 	}
 
 	std::string binding::label() const
@@ -64,7 +66,7 @@ namespace emu::hle
 		if ( !map_page( e, error ) ) return false;
 		for ( const auto& m : mods )
 		{
-			const bool is_k32 = lower( m.dll ) == "kernel32.dll";
+			const bool is_k32 = lower( m.dll ) == "kernel32.dll", is_u32 = lower( m.dll ) == "user32.dll";
 			for ( const auto& en : m.entries )
 			{
 				if ( b_.size() >= max_stubs )
@@ -78,6 +80,9 @@ namespace emu::hle
 				b.ordinal = en.ordinal;
 				if ( is_k32 && !en.name.empty() )
 					for ( const auto& k : kernel32 )
+						if ( en.name == k.name ) b.id = k.id;
+				if ( is_u32 && !en.name.empty() )
+					for ( const auto& k : user32 )
 						if ( en.name == k.name ) b.id = k.id;
 				b.stub = module_va + stub_size * b_.size();
 				if ( image_base > UINT64_MAX - en.iat_rva )
@@ -271,9 +276,64 @@ namespace emu::hle
 				r.text = "the TEB's LastErrorValue " + hex( v );
 				return r;
 			}
+			case api::char_upper_w:
+			{
+				// P44 (U2123): LPWSTR CharUpperW( LPWSTR lpsz ) - Windows SDK um\winuser.h; Learn "CharUpperW function": a value whose high-order
+				// word is zero is ONE character (returned converted in the low word), else a NUL-terminated string converted in place and the
+				// pointer returned. The conversion here: the ASCII letters a..z (the characters of T6's string; their upper case is the same in
+				// every locale) - another non-ASCII character stops (not modelled: the locale's case table); at most 1000H characters.
+				const uint64_t p = args[ 0 ];
+				if ( !( p >> 16 ) )
+				{
+					const uint16_t ch = uint16_t( p );
+					if ( ch >= 0x80 )
+					{
+						r.text = "CharUpperW( the character " + hex( ch ) + " ): not ASCII - the locale's case table is not modelled under --HLE";
+						return r;
+					}
+					r.kind = result_kind::returned;
+					r.rax = ( ch >= 'a' && ch <= 'z' ) ? uint64_t( ch - 0x20 ) : uint64_t( ch );
+					r.text = "CharUpperW( the character " + hex( ch ) + " ) = " + hex( r.rax );
+					return r;
+				}
+				std::string conv;
+				for ( uint32_t i = 0; i < 0x1000; i++ )
+				{
+					uint16_t ch = 0;
+					if ( uc_mem_read( uc, p + 2ull * i, &ch, 2 ) != UC_ERR_OK )
+					{
+						r.text = "CharUpperW( " + hex( p ) + " ): character " + std::to_string( i ) + " is not readable";
+						return r;
+					}
+					if ( !ch )
+					{
+						r.kind = result_kind::returned;
+						r.rax = p;
+						r.text = "CharUpperW( " + hex( p ) + " ): " + std::to_string( i ) + " characters converted in place (\"" + conv + "\"), the pointer returned";
+						return r;
+					}
+					if ( ch >= 0x80 )
+					{
+						r.text = "CharUpperW( " + hex( p ) + " ): character " + std::to_string( i ) + " (" + hex( ch ) + ") is not ASCII - the locale's case table is not modelled under --HLE";
+						return r;
+					}
+					if ( ch >= 'a' && ch <= 'z' )
+					{
+						ch = uint16_t( ch - 0x20 );
+						if ( uc_mem_write( uc, p + 2ull * i, &ch, 2 ) != UC_ERR_OK )
+						{
+							r.text = "CharUpperW( " + hex( p ) + " ): character " + std::to_string( i ) + " is not writable";
+							return r;
+						}
+					}
+					conv += char( ch );
+				}
+				r.text = "CharUpperW( " + hex( p ) + " ): no NUL within 1000H characters - not modelled";
+				return r;
+			}
 			default:
 				r.text = b.label() + " is not implemented in milestone M5 (the --HLE APIs of M5: kernel32.dll GetCurrentProcessId, GetCurrentThreadId, ExitProcess, "
-									 "GetModuleHandleW / A( NULL ); P41: GetStdHandle, WriteFile, WriteConsoleA / W, GetLastError)";
+									 "GetModuleHandleW / A( NULL ); P41: GetStdHandle, WriteFile, WriteConsoleA / W, GetLastError; P44: user32.dll CharUpperW)";
 				return r;
 		}
 	}

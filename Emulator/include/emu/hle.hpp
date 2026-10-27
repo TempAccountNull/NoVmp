@@ -55,7 +55,8 @@ namespace emu::hle
 	inline constexpr uint64_t trampoline_va = module_va + 0x8000;
 
 	enum class api { unknown, get_current_process_id, get_current_thread_id, exit_process, get_module_handle_w, get_module_handle_a,
-					 get_std_handle, write_file, write_console_a, write_console_w, get_last_error };   // P41 (U2083): the last five
+					 get_std_handle, write_file, write_console_a, write_console_w, get_last_error,   // P41 (U2083): the last five
+					 char_upper_w };   // P44 (U2123): user32.dll CharUpperW
 
 	struct binding
 	{
