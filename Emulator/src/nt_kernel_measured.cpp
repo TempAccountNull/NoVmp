@@ -1834,10 +1834,11 @@ namespace emu::nt
 		{
 			// P41 (U2078): the fourth state (ExitProcess - WIL's feature-usage code, trace c37) - MEASURED (tm_nt wnf4.1000 / wnf4.0): no TypeId,
 			// a 1000H buffer = STATUS_SUCCESS, BufferLength = the state's size, its bytes, ChangeStamp written non-zero (placeholder 1);
-			// BufferLength 0 = STATUS_BUFFER_TOO_SMALL with the size and the ChangeStamp written. The state GROWS (a table the system extends as
-			// features are used: 44CH at the measurement 2026-10-26 07:4x, 450H an hour later), so the native reference checks its SHAPE (size
-			// > 400H, a multiple of 4, the 16-byte header) and the environment answers the 44CH SNAPSHOT of the measurement below (WIL
-			// feature-usage data of the guest system: no identity; tm_nt wnf6 log of P41)
+			// BufferLength 0 = STATUS_BUFFER_TOO_SMALL with the size and the ChangeStamp written. The state CHANGES (a table the system extends
+			// as features are used: 44CH at the measurement 2026-10-26 07:4x, 450H an hour later; 1EAH with the header count 1 after the guest's
+			// restart, P43), so the native reference checks its SHAPE (U2104: size 1..1000H, written = the size, the header with its count as
+			// zero / non-zero) and the environment answers the 44CH SNAPSHOT of the measurement below (WIL feature-usage data of the guest
+			// system: no identity; tm_nt wnf6 log of P41)
 			static const uint8_t state4[ 0x44C ] = {
 			0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x04, 0x00, 0x01, 0x00, 0x02, 0x00, 0x01, 0x01, 0x00, 0x00, 0x8A, 0x83, 0x85, 0x00, 0xA5, 0xAD, 0xCF, 0x00,
 			0xCE, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x40, 0x27, 0x01, 0x02, 0x38, 0x8F, 0x02, 0x02, 0x99, 0x66, 0x00, 0x02, 0xE6, 0x38, 0x01, 0x03, 0xBB,

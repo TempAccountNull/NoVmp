@@ -1957,15 +1957,19 @@ static void tm_wnf( const char* tag, ULONG len, int with_type )
 	for ( k = 0; k < w; k++ ) nz += g_buf[ k ] != 0;
 	if ( with_type == 4 )
 	{
-		/* the fourth state GROWS (a table the system extends as features are used: 44CH at the measurement, 450H an hour later) - its
-		 * SHAPE only: the size (> 400H, a multiple of 4), written = the size, the first 16 bytes (the table's header) */
-		printf( "tm_nt %s: NtQueryWnfStateData(&418A073AA3BC1C75H, NULL, NULL, &stamp, %s, &BufferLength = %lXH) -> status %08lXH, ChangeStamp %s, BufferLength > 400H %s, "
-				"a multiple of 4 %s, written = BufferLength %s", tag, len ? "buffer" : "NULL", (unsigned long)len, (unsigned long)st, stamp == 0xCCCCCCCC ? "not written" : ( stamp ? "non-zero" : "0" ),
-				bl > 0x400 ? "yes" : "no", bl % 4 ? "no" : "yes", w == ( st >= 0 ? bl : 0 ) ? "yes" : "no" );
+		/* the fourth state CHANGES with the system's feature usage and per boot (a table: 44CH at the measurement 2026-10-26, 450H an
+		 * hour later; 1EAH after the guest's restart, P43) - its SHAPE only (U2104, P43): the size non-zero and at most 1000H, written =
+		 * the size, the table's header (bytes 0-9 and 12-15; bytes 10-11 are a count - 2 on 2026-10-26, 1 on 2026-10-27 - printed as
+		 * zero / non-zero) */
+		printf( "tm_nt %s: NtQueryWnfStateData(&418A073AA3BC1C75H, NULL, NULL, &stamp, %s, &BufferLength = %lXH) -> status %08lXH, ChangeStamp %s, BufferLength 1..1000H %s, "
+				"written = BufferLength %s", tag, len ? "buffer" : "NULL", (unsigned long)len, (unsigned long)st, stamp == 0xCCCCCCCC ? "not written" : ( stamp ? "non-zero" : "0" ),
+				bl >= 1 && bl <= 0x1000 ? "yes" : "no", w == ( st >= 0 ? bl : 0 ) ? "yes" : "no" );
 		if ( st >= 0 && w >= 16 )
 		{
 			printf( "; header" );
-			for ( k = 0; k < 16; k++ ) printf( " %02X", g_buf[ k ] );
+			for ( k = 0; k < 10; k++ ) printf( " %02X", g_buf[ k ] );
+			printf( " <count %s>", g_buf[ 10 ] | g_buf[ 11 ] ? "non-zero" : "0" );
+			for ( k = 12; k < 16; k++ ) printf( " %02X", g_buf[ k ] );
 		}
 		putchar( 10 );
 		return;
