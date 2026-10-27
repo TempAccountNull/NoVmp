@@ -341,6 +341,17 @@ static void case_wkf( void )
 	st = NtCreateWorkerFactory( &h2, 0xF00FF, NULL, (HANDLE)(LONG_PTR)-1, (HANDLE)(LONG_PTR)-1, (PVOID)tm_worker, param, 0x200, 0x100000, 0x1000 );
 	printf( "tm_nt wkf.badport: NtCreateWorkerFactory(..., CompletionPortHandle NtCurrentProcess(), ...) -> status %08lXH, handle %s\n", (unsigned long)st, tm_hshape( h2 ) );
 	if ( (ULONG_PTR)h2 != (ULONG_PTR)0xCCCCCCCCCCCCCCCCull && h2 ) NtClose( h2 );
+	{
+		/* P42 (step 3, run 7): the same call with the sample's own SizeOfStackReserve 800000H (P41 run 6 system call 40: the loader passes the
+		 * image's stack reserve) on a fresh port of its own (Count 9, as the loader's) */
+		HANDLE io8 = NULL, h8 = (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull;
+		TM_NTSTATUS s8 = NtCreateIoCompletion( &io8, 0x1F0003, NULL, 9 );
+		if ( s8 >= 0 ) s8 = NtCreateWorkerFactory( &h8, 0xF00FF, NULL, io8, (HANDLE)(LONG_PTR)-1, (PVOID)tm_worker, param, 0x200, 0x800000, 0x1000 );
+		printf( "tm_nt wkf.800: NtCreateWorkerFactory(&h, F00FFH, NULL, a fresh port, NtCurrentProcess(), start, param, 200H, 800000H, 1000H) -> status %08lXH, handle %s\n",
+				(unsigned long)s8, tm_hshape( h8 ) );
+		if ( (ULONG_PTR)h8 != (ULONG_PTR)0xCCCCCCCCCCCCCCCCull && h8 ) NtClose( h8 );
+		if ( io8 ) NtClose( io8 );
+	}
 	Sleep( 200 );
 	printf( "tm_nt wkf.runs: start routine runs after 200 ms %ld\n", (long)g_worker_runs );
 	if ( (ULONG_PTR)h != (ULONG_PTR)0xCCCCCCCCCCCCCCCCull && h ) printf( "tm_nt wkf.close: NtClose(the factory) -> %08lXH\n", (unsigned long)NtClose( h ) );

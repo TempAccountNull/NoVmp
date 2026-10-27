@@ -308,8 +308,10 @@ namespace emu::nt
 		std::string a;
 		for ( int i = 0; i < 10; i++ ) a += ( i ? ", " : "" ) + hex( c.args[ size_t( i ) ] );
 		const uint64_t port = c.args[ 3 ];
-		if ( c.args[ 4 ] != current_process || uint32_t( c.args[ 7 ] ) != 0x200 || c.args[ 8 ] != 0x100000 || c.args[ 9 ] != 0x1000 )
-			return stop_( "NtCreateWorkerFactory( " + a + " ) - not measured (tm_nt wkf: NtCurrentProcess(), 200H, 100000H, 1000H)" );
+		// P42 (U2099, sample run 7): StackReserve 800000H too - the sample's own SizeOfStackReserve that the loader passes (P41 run 6 system
+		// call 40); MEASURED tm_nt wkf.800: the same call with 800000H on a fresh port = STATUS_SUCCESS and a handle, as with 100000H
+		if ( c.args[ 4 ] != current_process || uint32_t( c.args[ 7 ] ) != 0x200 || ( c.args[ 8 ] != 0x100000 && c.args[ 8 ] != 0x800000 ) || c.args[ 9 ] != 0x1000 )
+			return stop_( "NtCreateWorkerFactory( " + a + " ) - not measured (tm_nt wkf / wkf.800: NtCurrentProcess(), 200H, 100000H or 800000H, 1000H)" );
 		if ( port == current_process ) return done_( status::object_type_mismatch, "NtCreateWorkerFactory: CompletionPortHandle NtCurrentProcess() is not an I/O completion port - STATUS_OBJECT_TYPE_MISMATCH (measured: tm_nt wkf.badport)" );
 		const auto it = handles_.find( port );
 		if ( it == handles_.end() ) return stop_( "NtCreateWorkerFactory( " + a + " ) - CompletionPortHandle is not a handle of this process: not measured" );

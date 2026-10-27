@@ -25,7 +25,8 @@
 # P42 (U2102, plan 3.M6 - the one virtual time base): case time measures what a process reads as time - the KUSER constants
 # (QpcFrequency, TickCountMultiplier), QueryPerformanceFrequency / NtQueryPerformanceCounter, NtQueryTimerResolution, the relations
 # of QPC / InterruptTime / SystemTime / TickCount (signs, constancy - never a time value), NtQuerySystemTime, NtDelayExecution and
-# NtWaitForSingleObject time-outs, the TSC rate the hypervisor page states (to 0.1 MHz) and IA32_TSC_AUX.
+# NtWaitForSingleObject time-outs, the TSC rate the hypervisor page states (to 0.1 MHz) and IA32_TSC_AUX. P42 (U2099, sample run 7):
+# wkf.800 = the loader's NtCreateWorkerFactory with the sample's own StackReserve 800000H.
 tm_nt sat.0: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 330H) -> status C0000225H, ReturnLength 0H, written 0H
 tm_nt sat.1: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 0H) -> status C0000225H, ReturnLength 0H, written 0H
 tm_nt sat.2: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 8H) -> status C0000225H, ReturnLength 0H, written 0H
@@ -100,6 +101,7 @@ tm_nt iocp.8: NtCreateIoCompletion(&h, DesiredAccess 1F0003H, NULL, Count 8) -> 
 tm_nt wkf.io: NtCreateIoCompletion(Count 9) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
 tm_nt wkf: NtCreateWorkerFactory(&h, F00FFH, NULL, the port, NtCurrentProcess(), start, param, 200H, 100000H, 1000H) -> status 00000000H, handle <handle> (non-zero, multiple of 4), start routine runs 0
 tm_nt wkf.badport: NtCreateWorkerFactory(..., CompletionPortHandle NtCurrentProcess(), ...) -> status C0000024H, handle not written
+tm_nt wkf.800: NtCreateWorkerFactory(&h, F00FFH, NULL, a fresh port, NtCurrentProcess(), start, param, 200H, 800000H, 1000H) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
 tm_nt wkf.runs: start routine runs after 200 ms 0
 tm_nt wkf.close: NtClose(the factory) -> 00000000H
 tm_nt tmr2: NtCreateTimer2(&h, NULL, NULL, Attributes 8, DesiredAccess 100002H) -> status 00000000H, handle <handle> (non-zero, multiple of 4); NtClose -> 00000000H
