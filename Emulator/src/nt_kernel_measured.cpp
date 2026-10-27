@@ -1026,7 +1026,9 @@ namespace emu::nt
 	// LastAccessTime, LastWriteTime, ChangeTime, FileAttributes} (WDK wdm.h; 28H bytes). P43 (U2107): the loader's DLL path search for a
 	// system DLL that is not a KnownDll (sample run 8: d3d11, dxgi, dcomp, dwmapi, kernel.appcore). MEASURED (tm_nt sp.*), attributes 840H
 	// (OBJ_CASE_INSENSITIVE | OBJ_IGNORE_IMPERSONATED_DEVICEMAP): a name in the image's directory that it does not hold =
-	// STATUS_OBJECT_NAME_NOT_FOUND with bytes 0..23H written zero (24H..27H untouched); "\??\<SystemRoot>\SYSTEM32\<name>" of an existing
+	// STATUS_OBJECT_NAME_NOT_FOUND with NOTHING written when the image's directory lies on the system volume (P44, U2111: the sample's
+	// directory does; a directory on another volume of this guest - E: - writes bytes 0..23H zero: the P43 recording, made from E:);
+	// "\??\<SystemRoot>\SYSTEM32\<name>" of an existing
 	// file = STATUS_SUCCESS, all 28H bytes: the four times non-zero, FileAttributes 20H (FILE_ATTRIBUTE_ARCHIVE), bytes 24H..27H 0. The
 	// emulated image directory holds only the image; System32 holds the capture's files; the times are a placeholder (non-zero: the
 	// model's boot time, emu::vclock - the capture records no file times). Other paths / attributes / the image's own name: stop.
@@ -1057,10 +1059,8 @@ namespace emu::nt
 		if ( !oa.root && !dir.empty() && n.size() > pre.size() && n.compare( 0, pre.size(), pre ) == 0 && n.find( '\\', pre.size() ) == std::string::npos && n.substr( pre.size() ) != img )
 		{
 			if ( !user_buffer( out, 0x24, UC_PROT_WRITE ) ) return done_( status::access_violation, what + ": FileInformation not writable" );
-			const uint8_t z[ 0x24 ] = {};
-			reply rn = done_( status::object_name_not_found, what + ": the image's directory holds only the image - STATUS_OBJECT_NAME_NOT_FOUND, bytes 0..23H zero (measured: tm_nt sp.app)" );
-			if ( !put( out, z, 0x24, rn ) ) return stop_( "writing the result failed after the probe" );
-			return rn;
+			// P44 (U2111): the image's directory is on the system volume - nothing is written (measured: tm_nt sp.app from the system volume)
+			return done_( status::object_name_not_found, what + ": the image's directory holds only the image - STATUS_OBJECT_NAME_NOT_FOUND, nothing written (measured: tm_nt sp.app, system volume)" );
 		}
 		return stop_( what + " - the path is not answered by the emulated file system (the image's directory, the system directory's captured files) - not measured" );
 	}

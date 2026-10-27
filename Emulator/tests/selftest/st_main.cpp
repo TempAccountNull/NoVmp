@@ -3670,8 +3670,9 @@ namespace
 		oa( O, 0, "\\??\\C:\\Users\\user\\Desktop\\d3d11.dll", 0x840 );
 		fill( F, 0x30 );
 		auto r = w5_call( *p, "NtQueryAttributesFile", { O, F } );
-		CHECK( w5_status( r, N::status::object_name_not_found ) && rd( F, 8 ) == 0 && rd( F + 0x18, 8 ) == 0 && rd( F + 0x20, 4 ) == 0 && rd( F + 0x24, 4 ) == 0xCCCCCCCC,
-			   "sp.app: not in the image's directory - STATUS_OBJECT_NAME_NOT_FOUND, bytes 0..23H zero, 24H.. untouched: " + r.text );
+		// P44 (U2112): the image's directory on the system volume - nothing written (tm_nt sp.app measured from the system volume)
+		CHECK( w5_status( r, N::status::object_name_not_found ) && rd( F, 8 ) == 0xCCCCCCCCCCCCCCCCull && rd( F + 0x18, 8 ) == 0xCCCCCCCCCCCCCCCCull && rd( F + 0x20, 8 ) == 0xCCCCCCCCCCCCCCCCull,
+			   "sp.app: not in the image's directory - STATUS_OBJECT_NAME_NOT_FOUND, nothing written: " + r.text );
 		oa( O, 0, "\\??\\C:\\Users\\user\\Desktop\\w5.exe", 0x840 );
 		CHECK( w5_stop( w5_call( *p, "NtQueryAttributesFile", { O, F } ) ), "the image's own name: not measured, stop" );
 		oa( O, 0, "\\??\\C:\\Windows\\SYSTEM32\\d3d11.dll", 0x840 );
