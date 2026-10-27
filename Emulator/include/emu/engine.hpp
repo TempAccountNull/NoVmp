@@ -10,8 +10,10 @@
 //      engine starts with the profile's OS-environment values (fork U1530 / U1531: reset XCR0 from the profile's leaf 0DH);
 //      strict is the fork's default with a profile (U435: features the profile hides are #UD); the profile's microcode line
 //      (U1473) - both only possible before the engine initialises
-//   4. RDRAND / RDSEED source (decision D8, fork U835): --seeded (DEFAULT; deterministic, seed config.rng_seed) or
-//      --HostSeed (the host DRNG, executed by the fork)
+//   4. RDRAND / RDSEED source (decision D8, fork U835): --seeded (DEFAULT; deterministic, seed config.rng_seed: since U2091 the
+//      fork's CTR_DRBG of NIST SP 800-90A, AES-128) or --HostSeed (the host DRNG, executed by the fork)
+//   4b. U2092 (plan 3.M6): the virtual time base (fork U2090 UC_CTL_X86_VCLOCK virtual, start config.tsc_start, rate
+//      config.tsc_per_insn ticks per instruction) - RDTSC / RDTSCP / the TSC MSRs never read the host clock
 //   5. the reset machine state (RIP, RSP, RFLAGS, CR0, CR4, XCR0, strict, profile rows, XINUSE model) read back and logged
 // U1973 (plan 3.M3): the settings emu-alltest applies to its Unicorn engine, in emu-alltest's order (at_engine.hpp
 // open_configured): CPU model, the opt-ins (AVX-512, AMX, AVX10, APX, platform features), the RNG source, the CPUID profile,
@@ -66,6 +68,11 @@ namespace emu
 		uint64_t xcr0 = 0;                                       // XCR0 at the start (uc_reg_write)
 		uint64_t cr0 = 0;                                        // CR0 at the start (uc_reg_write; U1962: refused like MOV to CR0)
 		int xinuse_model = 0;                                    // UC_CTL_X86_XINUSE_MODEL (U1481)
+		// U2092 (plan 3.M6): the one virtual time base - every engine runs the fork's TSC in UC_X86_VCLOCK_VIRTUAL mode (never the
+		// host clock): the TSC at the first instruction is tsc_start + tsc_per_insn (emu-snippet: the value emu-alltest exported;
+		// win_env restarts it at the process start, emu/vclock.hpp)
+		uint64_t tsc_start = 0;
+		uint64_t tsc_per_insn = 1;                               // emu::vclock::ticks_per_insn
 	};
 
 	// the engine settings of a parsed command line (profile, rng); the rest keeps the defaults
@@ -96,7 +103,10 @@ namespace emu
 		// profile once guest code ran)
 		uc_err install_cpuid_profile( const std::vector<uc_x86_cpuid>& leaves );
 
-		bool map( uint64_t base, uint64_t size, uint32_t prot, const std::string& name, std::string& error );
+		// U2092: BACKING (optional) = an emulator-owned host buffer of SIZE bytes (readable / writable, never executable) that holds
+		// the region's bytes (uc_mem_map_ptr): the environment updates it directly (KUSER_SHARED_DATA's time fields at a guest read);
+		// the buffer must outlive the engine
+		bool map( uint64_t base, uint64_t size, uint32_t prot, const std::string& name, std::string& error, void* backing = nullptr );
 		bool unmap( uint64_t base, uint64_t size, std::string& error );   // exactly one mapped region
 		// U2006 (plan 3.M5): the emulated kernel's virtual-memory services work on parts of regions. protect / unmap_range need
 		// every page of [base, +size) mapped (page aligned); the region table is split the way uc_mem_protect / uc_mem_unmap split

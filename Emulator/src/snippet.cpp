@@ -1048,7 +1048,7 @@ namespace emu::snippet
 		if ( const json::value* c = v.find( "config" ) )
 		{
 			if ( !only_keys( *c, { "profile", "cpuid_file", "strict", "cpu_model", "avx512", "amx", "avx10", "apx", "x86_features", "rdrand", "rdrand_seed", "smm_revision",
-								   "feature_control", "xcr0", "cr0", "xinuse_model" },
+								   "feature_control", "xcr0", "cr0", "xinuse_model", "tsc_start", "tsc_per_insn" },
 							 "config", error ) )
 				return false;
 			engine_config& g = out.config;
@@ -1083,7 +1083,10 @@ namespace emu::snippet
 					if ( x < f.lo || x > f.hi ) { error = std::string( "config." ) + f.k + " out of range"; return false; }
 					*f.dst = int( x );
 				}
-			struct ufield { const char* k; uint64_t* dst; } u64s[] = { { "rdrand_seed", &g.rng_seed }, { "feature_control", &g.feature_control }, { "xcr0", &g.xcr0 }, { "cr0", &g.cr0 } };
+			struct ufield { const char* k; uint64_t* dst; } u64s[] = { { "rdrand_seed", &g.rng_seed }, { "feature_control", &g.feature_control }, { "xcr0", &g.xcr0 }, { "cr0", &g.cr0 },
+				// U2096 (plan 3.M6): the virtual time base - the TSC before the snippet's first instruction (emu-alltest exports its engine's
+				// clock at the snippet start) and the ticks per instruction
+				{ "tsc_start", &g.tsc_start }, { "tsc_per_insn", &g.tsc_per_insn } };
 			for ( auto& f : u64s )
 				if ( const json::value* p = c->find( f.k ) )
 					if ( !get_u( *p, *f.dst, std::string( "config." ) + f.k, error ) ) return false;
@@ -1094,6 +1097,7 @@ namespace emu::snippet
 				if ( x > 0xFFFFFFFFull ) { error = "config.smm_revision: 32-bit"; return false; }
 				g.smm_revision = uint32_t( x );
 			}
+			if ( !g.tsc_per_insn ) { error = "config.tsc_per_insn: at least 1 (the virtual time base must advance)"; return false; }
 		}
 		if ( const json::value* c = v.find( "code" ) )
 		{
@@ -1417,6 +1421,10 @@ namespace emu::snippet
 		r.counted = c.per_insn;
 
 		const uint64_t until = s.stop_at_given ? s.stop_at : s.code_address + s.code.size();
+		// U2096 (plan 3.M6): the virtual time base restarts at the snippet's first instruction - the state loader's own instructions above
+		// are not part of the case (emu-alltest exports its clock before that instruction: config.tsc_start)
+		if ( uc_ctl_set_x86_vclock( uc, UC_X86_VCLOCK_VIRTUAL, e->config().tsc_start, e->config().tsc_per_insn ) != UC_ERR_OK )
+			return fail( "UC_CTL_X86_VCLOCK (the clock at the snippet start) failed" );
 		r.ran = true;
 		const uc_err ue = e->emulate( start_rip, until, s.max_insns );
 		if ( s.trace ) finish_trace_entry( c );

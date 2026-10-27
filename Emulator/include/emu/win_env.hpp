@@ -51,8 +51,9 @@
 //   SYSCALL / SYSRET  253667-093 Vol2B SYSCALL Operation p. 4-700, SYSRET Operation p. 4-710; FS / GS loads in 64-bit mode
 //         253668-093 Vol3A 3.4.4 p. 3-9 ("load a standard 32-bit base ... bits above the standard 32 bits are cleared")
 // Values: the OS version / product type / system root from the environment's capture manifest; processor count, physical
-// memory, processor architecture and the user address range from the platform profile (views\environment.txt); time fields
-// stay 0 until the one virtual time base (milestone M6); ProcessorFeatures stay 0 until their first consumer (none in M5).
+// memory, processor architecture and the user address range from the platform profile (views\environment.txt); the time fields
+// (TickCountMultiplier, InterruptTime, SystemTime, TimeZoneBias, QpcFrequency, TickCount) from the one virtual time base (U2095,
+// plan 3.M6, emu/vclock.hpp: refreshed when the guest reads them); ProcessorFeatures stay 0 until their first consumer (none in M5).
 #pragma once
 
 #include <emu/engine.hpp>
@@ -107,6 +108,9 @@ namespace emu::win
 								  kuser_kd_debugger_enabled = 0x2D4, kuser_number_of_physical_pages = 0x2E8, kuser_safe_boot_mode = 0x2EC,
 								  kuser_system_call = 0x308, kuser_active_processor_count = 0x3C0, kuser_active_group_count = 0x3C4;
 		inline constexpr uint64_t kuser_system_root_chars = 260;   // WCHAR NtSystemRoot[260] (ntddk.h; next field at 238H)
+		// U2095 (plan 3.M6): KUSER time fields (public-symbol layout, emu/win_fields.hpp: TickCountLowDeprecated 0H, QpcFrequency 300H,
+		// TickCount 320H (KSYSTEM_TIME / TickCountQuad), TickCountPad 32CH)
+		inline constexpr uint64_t kuser_tick_count_low_deprecated = 0x000, kuser_qpc_frequency = 0x300, kuser_tick_count = 0x320;
 		// GDT (ksamd64.inc KGDT64_* :1017-1024, RPL_MASK :1170)
 		inline constexpr uint16_t gdt_r0_code = 0x10, gdt_r0_data = 0x18, gdt_r3_cmcode = 0x20, gdt_r3_data = 0x28, gdt_r3_code = 0x30,
 								  gdt_sys_tss = 0x40, gdt_r3_cmteb = 0x50, rpl3 = 3;
@@ -304,10 +308,20 @@ namespace emu::win
 
 		struct hook_ctx;   // the hooks' state (win_env.cpp)
 
+		// U2095 (plan 3.M6): the TSC rate of the run's virtual time base (emu/vclock.hpp) and where it came from
+		uint64_t tsc_hz() const { return tsc_hz_; }
+		const std::string& tsc_source() const { return tsc_source_; }
+		// U2095: rewrite KUSER_SHARED_DATA's time fields (InterruptTime, SystemTime, TickCount) from the virtual time base - called when the
+		// guest reads them (a UC_HOOK_MEM_READ on those fields) and at the start; false = the clock could not be read
+		bool refresh_kuser_time( uc_engine* uc );
+
 	private:
 		process() = default;
 		bool build( const environment_facts& facts, const process_options& po, const std::vector<uint8_t>& pe_file, std::string& error );
 
+		// U2095: the KUSER_SHARED_DATA page's bytes (an emulator-owned buffer the engine maps read-only for the guest, engine::map BACKING):
+		// declared before e_ so that the engine is closed first
+		std::unique_ptr<uint8_t[]> kuser_page_;
 		std::unique_ptr<engine> e_;
 		pe::image img_;
 		pe::mapping map_;
@@ -326,6 +340,8 @@ namespace emu::win
 		bool loader_start_ = false;              // U2031: --Sys through the real ntdll!LdrInitializeThunk
 		uint64_t start_context_ = 0, iretq_stub_ = 0, start_rsp_ = 0, ntdll_base_ = 0;
 		uint64_t rng_seed_ = 0;   // P39 (U2052): engine_config::rng_seed (the kernel's process cookie)
+		uint64_t tsc_hz_ = 0;     // U2095 (plan 3.M6): the virtual time base's TSC rate
+		std::string tsc_source_;
 		bool build_kernel_views( const environment_facts& f, std::vector<std::string>& lines, std::string& error );
 
 	public:

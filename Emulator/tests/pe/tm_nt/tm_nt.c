@@ -2144,12 +2144,204 @@ static void case_term( void )
 	printf( "tm_nt term.null: NtTerminateProcess(NULL, 2BH) -> status %08lXH; the calling thread continues: yes\n", (unsigned long)st );
 }
 
+/* ------------------------------------------------------------------------------------------------ time (P42, plan 3.M6 - the one virtual
+ * time base): what a process reads as time, measured from inside (Windows time semantics for the emulated environment; USER DECISION
+ * 2026-10-26: Microsoft docs + public symbols + our own test PE natively in the guest, decision 3.0.7). Sources: KUSER_SHARED_DATA layout
+ * from the public symbols (emu/win_fields.hpp: TickCountLowDeprecated 0H, TickCountMultiplier 4H, InterruptTime 8H, SystemTime 14H,
+ * TimeZoneBias 20H, QpcFrequency 300H, TickCount 320H, QpcData 3C6H, QpcShift 3C7H); QueryPerformanceFrequency / QueryPerformanceCounter
+ * (um\profileapi.h), GetTickCount64 (um\sysinfoapi.h; phnt ntexapi.h:9700-9722 NtGetTickCount64: TickCountQuad * TickCountMultiplier >>
+ * 24), GetSystemTimeAsFileTime (um\sysinfoapi.h); NtQueryPerformanceCounter (phnt ntexapi.h:2267-2284), NtQuerySystemTime (um\winternl.h,
+ * phnt ntexapi.h:2194-2206), NtQueryTimerResolution (phnt ntexapi.h:2227-2242), NtDelayExecution (phnt ntexapi.h:26-47),
+ * NtWaitForSingleObject (um\winternl.h); the hypervisor page SYSTEM_HYPERVISOR_USER_SHARED_DATA (phnt ntexapi.h:7139-7175: QpcMultiplier
+ * +8H, QpcBias +10H). Printed: constants of the environment (frequencies, the multiplier, the timer resolutions, statuses) and RELATIONS
+ * (yes / no, within a stated bound) - never a time value, an address or a handle. */
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtQueryPerformanceCounter( PLARGE_INTEGER PerformanceCounter, PLARGE_INTEGER PerformanceFrequency );
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtQuerySystemTime( PLARGE_INTEGER SystemTime );
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtQueryTimerResolution( PULONG MaximumTime, PULONG MinimumTime, PULONG CurrentTime );
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtDelayExecution( BOOLEAN Alertable, PLARGE_INTEGER DelayInterval );
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtWaitForSingleObject( HANDLE Handle, BOOLEAN Alertable, PLARGE_INTEGER Timeout );
+
+#define TM_KUSER ( (volatile unsigned char*)(ULONG_PTR)0x7FFE0000 )
+
+/* a KSYSTEM_TIME {LowPart, High1Time, High2Time} read as the x64 ntdll does: retry until High1Time = High2Time */
+static ULONGLONG tm_ksystem_time( ULONG off )
+{
+	for ( ;; )
+	{
+		const LONG hi = *(volatile LONG*)( TM_KUSER + off + 4 );
+		const ULONG lo = *(volatile ULONG*)( TM_KUSER + off );
+		if ( hi == *(volatile LONG*)( TM_KUSER + off + 8 ) ) return ( (ULONGLONG)(ULONG)hi << 32 ) | lo;
+	}
+}
+
+static const char* tm_yes( int b ) { return b ? "yes" : "no"; }
+
+static void case_time( void )
+{
+	LARGE_INTEGER f, c, c2, t;
+	ULONGLONG it0, it1, st0, st1, tc, tq, mult, qpf_k, ft, gt;
+	ULONG mx = 0, mn = 0, cur = 0;
+	TM_NTSTATUS st;
+	int k, ok;
+	HANDLE ev = NULL;
+	FILETIME fti;
+
+	/* 1. the frequencies */
+	f.QuadPart = 0;
+	ok = QueryPerformanceFrequency( &f );
+	qpf_k = *(volatile ULONGLONG*)( TM_KUSER + 0x300 );
+	printf( "tm_nt time.qpf: QueryPerformanceFrequency -> %s, frequency %llXH; KUSER QpcFrequency %llXH; equal %s\n", ok ? "TRUE" : "FALSE",
+			(unsigned long long)f.QuadPart, qpf_k, tm_yes( (ULONGLONG)f.QuadPart == qpf_k ) );
+	c.QuadPart = 0;
+	t.QuadPart = 0;
+	st = NtQueryPerformanceCounter( &c, &t );
+	printf( "tm_nt time.nqpc: NtQueryPerformanceCounter(&c, &f) -> status %08lXH, frequency %llXH, counter non-zero %s\n", (unsigned long)st,
+			(unsigned long long)t.QuadPart, tm_yes( c.QuadPart != 0 ) );
+	st = NtQueryPerformanceCounter( &c, NULL );
+	printf( "tm_nt time.nqpc.nofreq: NtQueryPerformanceCounter(&c, NULL) -> status %08lXH\n", (unsigned long)st );
+	st = NtQueryPerformanceCounter( NULL, &t );
+	printf( "tm_nt time.nqpc.null: NtQueryPerformanceCounter(NULL, &f) -> status %08lXH\n", (unsigned long)st );
+
+	/* 2. the KUSER constants and the tick count */
+	mult = *(volatile ULONG*)( TM_KUSER + 4 );
+	st = NtQueryTimerResolution( &mx, &mn, &cur );
+	printf( "tm_nt time.res: NtQueryTimerResolution -> status %08lXH, MaximumTime %lXH, MinimumTime %lXH, CurrentTime in [MinimumTime, MaximumTime] %s; "
+			"KUSER TickCountMultiplier %08llXH = (MaximumTime << 24) / 10000 %s\n",
+			(unsigned long)st, (unsigned long)mx, (unsigned long)mn, tm_yes( cur >= mn && cur <= mx ), mult, tm_yes( mult == ( ( (ULONGLONG)mx << 24 ) / 10000 ) ) );
+	printf( "tm_nt time.kuser: TickCountLowDeprecated %s, TimeZoneBias %s, QpcData %04XH, QpcShift %02XH\n", *(volatile ULONG*)( TM_KUSER + 0 ) ? "non-zero" : "0",
+			tm_ksystem_time( 0x20 ) ? "non-zero" : "0", *(volatile USHORT*)( TM_KUSER + 0x3C6 ), *(volatile unsigned char*)( TM_KUSER + 0x3C7 ) );
+	for ( k = 0, ok = 0; k < 100 && !ok; k++ )
+	{
+		tq = *(volatile ULONGLONG*)( TM_KUSER + 0x320 );
+		gt = GetTickCount64();
+		ok = tq == *(volatile ULONGLONG*)( TM_KUSER + 0x320 );
+	}
+	tc = ( ( tq & 0xFFFFFFFF ) * mult >> 24 ) + ( ( tq >> 32 ) * mult << 8 );
+	printf( "tm_nt time.tick: GetTickCount64() = (TickCountQuad * TickCountMultiplier) >> 24 %s; TickCountQuad = InterruptTime / MaximumTime (within 1) %s\n",
+			tm_yes( ok && gt == tc ), tm_yes( mx && ( tm_ksystem_time( 8 ) / mx - tq ) <= 1 ) );
+
+	/* 3. QPC against the interrupt time (both 100 ns when the frequency is 10 MHz): bracketed reads; the difference QPC - InterruptTime is
+	 *    a per-boot constant (the reset-based TSC counter runs ahead of the kernel's interrupt time) - printed as its sign and whether
+	 *    it stays constant (within 1 ms over 5 reads 20 ms apart), never as a value */
+	{
+		LONGLONG d, dmin = 0, dmax = 0;
+		int pos = 1;
+		for ( k = 0; k < 5; k++ )
+		{
+			it0 = tm_ksystem_time( 8 );
+			QueryPerformanceCounter( &c );
+			it1 = tm_ksystem_time( 8 );
+			d = c.QuadPart - (LONGLONG)( it0 / 2 + it1 / 2 );
+			if ( !k || d < dmin ) dmin = d;
+			if ( !k || d > dmax ) dmax = d;
+			if ( d <= 0 ) pos = 0;
+			Sleep( 20 );
+		}
+		printf( "tm_nt time.qpc.it: QueryPerformanceCounter - KUSER InterruptTime (10 MHz both): positive %s, constant within 1 ms over 5 reads 20 ms apart %s\n",
+				tm_yes( f.QuadPart == 10000000 && pos ), tm_yes( f.QuadPart == 10000000 && dmax - dmin <= 10000 ) );
+	}
+	ok = 1;
+	for ( k = 0; k < 5; k++ )
+	{
+		QueryPerformanceCounter( &c );
+		NtQueryPerformanceCounter( &c2, NULL );
+		QueryPerformanceCounter( &t );
+		if ( !( c.QuadPart <= c2.QuadPart && c2.QuadPart <= t.QuadPart ) ) ok = 0;
+	}
+	printf( "tm_nt time.qpc.sys: QueryPerformanceCounter <= NtQueryPerformanceCounter <= QueryPerformanceCounter (5 times) %s\n", tm_yes( ok ) );
+
+	/* 4. the system time */
+	it0 = tm_ksystem_time( 8 );
+	st0 = tm_ksystem_time( 0x14 );
+	t.QuadPart = 0;
+	st = NtQuerySystemTime( &t );
+	st1 = tm_ksystem_time( 0x14 );
+	GetSystemTimeAsFileTime( &fti );
+	ft = ( (ULONGLONG)fti.dwHighDateTime << 32 ) | fti.dwLowDateTime;
+	Sleep( 50 );
+	it1 = tm_ksystem_time( 8 );
+	gt = tm_ksystem_time( 0x14 );
+	printf( "tm_nt time.st: NtQuerySystemTime(&t) -> status %08lXH, t in [KUSER SystemTime before, after] %s; GetSystemTimeAsFileTime >= that %s; "
+			"SystemTime - InterruptTime constant within 1 ms over 50 ms %s\n", (unsigned long)st, tm_yes( (ULONGLONG)t.QuadPart >= st0 && (ULONGLONG)t.QuadPart <= st1 ),
+			tm_yes( ft >= st1 ), tm_yes( (LONGLONG)( ( gt - it1 ) - ( st0 - it0 ) ) <= 10000 && (LONGLONG)( ( gt - it1 ) - ( st0 - it0 ) ) >= -10000 ) );
+	st = NtQuerySystemTime( NULL );
+	printf( "tm_nt time.st.null: NtQuerySystemTime(NULL) -> status %08lXH\n", (unsigned long)st );
+
+	/* 5. waits that use time */
+	it0 = tm_ksystem_time( 8 );
+	t.QuadPart = -100000;   /* relative 10 ms */
+	st = NtDelayExecution( FALSE, &t );
+	it1 = tm_ksystem_time( 8 );
+	printf( "tm_nt time.delay: NtDelayExecution(FALSE, relative 10 ms) -> status %08lXH, InterruptTime advanced >= 10 ms %s\n", (unsigned long)st, tm_yes( it1 - it0 >= 100000 ) );
+	t.QuadPart = 0;
+	st = NtDelayExecution( FALSE, &t );   /* a yield: STATUS_NO_YIELD_PERFORMED (40000024H, shared\ntstatus.h) when no other thread was ready */
+	printf( "tm_nt time.delay.zero: NtDelayExecution(FALSE, 0) -> status 00000000H or 40000024H (STATUS_NO_YIELD_PERFORMED: no other thread ready) %s\n",
+			tm_yes( st == 0 || st == 0x40000024 ) );
+	t.QuadPart = -1;
+	printf( "tm_nt time.delay.alert: NtDelayExecution(TRUE, relative 100 ns), no APC queued -> status %08lXH\n", (unsigned long)NtDelayExecution( TRUE, &t ) );
+	t.QuadPart = 1;   /* absolute, 1601 */
+	printf( "tm_nt time.delay.past: NtDelayExecution(FALSE, absolute 1) -> status %08lXH\n", (unsigned long)NtDelayExecution( FALSE, &t ) );
+	t.QuadPart = (LONGLONG)tm_ksystem_time( 0x14 ) + 100000;   /* absolute, 10 ms ahead */
+	it0 = tm_ksystem_time( 8 );
+	st = NtDelayExecution( FALSE, &t );
+	it1 = tm_ksystem_time( 8 );
+	printf( "tm_nt time.delay.abs: NtDelayExecution(FALSE, absolute SystemTime + 10 ms) -> status %08lXH, InterruptTime advanced >= 9 ms %s\n", (unsigned long)st,
+			tm_yes( it1 - it0 >= 90000 ) );
+	printf( "tm_nt time.delay.null: NtDelayExecution(FALSE, NULL) -> status %08lXH\n", (unsigned long)NtDelayExecution( FALSE, NULL ) );
+	st = NtCreateEvent( &ev, 0x1F0003, NULL, 0 /* NotificationEvent */, FALSE );
+	it0 = tm_ksystem_time( 8 );
+	t.QuadPart = -100000;
+	st = NtWaitForSingleObject( ev, FALSE, &t );
+	it1 = tm_ksystem_time( 8 );
+	printf( "tm_nt time.wait: NtWaitForSingleObject(a non-signaled notification event, FALSE, relative 10 ms) -> status %08lXH, InterruptTime advanced >= 10 ms %s\n",
+			(unsigned long)st, tm_yes( it1 - it0 >= 100000 ) );
+	t.QuadPart = 1;
+	printf( "tm_nt time.wait.past: NtWaitForSingleObject(the event, FALSE, absolute 1) -> status %08lXH\n", (unsigned long)NtWaitForSingleObject( ev, FALSE, &t ) );
+	if ( ev ) NtClose( ev );
+
+	/* 6. the TSC rate the environment states: the hypervisor page (QPC = umulh(TSC, QpcMultiplier) + QpcBias when KUSER QpcData has the
+	 *    hypervisor bypass), cross-checked with RDTSC against QueryPerformanceCounter over 100 ms */
+	{
+		unsigned char* va = NULL;
+		ULONG rl = 0;
+		st = NtQuerySystemInformation( 0xC5, &va, 8, &rl );
+		if ( st >= 0 && va && *(ULONGLONG*)( va + 8 ) )
+		{
+			const ULONGLONG m = *(ULONGLONG*)( va + 8 ), bias = *(ULONGLONG*)( va + 16 );
+			unsigned __int64 rem = 0, hz;
+			ULONGLONG tsc0, tsc1;
+			LARGE_INTEGER q0, q1;
+			double ratio;
+			/* f * 2^64 / m: the TSC ticks per second that make umulh(TSC, m) count at f */
+			hz = _udiv128( (unsigned __int64)f.QuadPart, 0, m, &rem );
+			tsc0 = __rdtsc();
+			QueryPerformanceCounter( &q0 );
+			Sleep( 100 );
+			tsc1 = __rdtsc();
+			QueryPerformanceCounter( &q1 );
+			ratio = (double)( tsc1 - tsc0 ) / ( (double)( q1.QuadPart - q0.QuadPart ) * (double)hz / (double)f.QuadPart );
+			printf( "tm_nt time.tsc: hypervisor page QpcMultiplier non-zero, QpcBias %s; TSC frequency = QpcFrequency * 2^64 / QpcMultiplier = %llu.%llu MHz (to 0.1 MHz); "
+					"RDTSC / QPC over 100 ms agrees within 0.1%% %s\n",
+					bias ? "non-zero" : "0", (unsigned long long)( ( hz + 50000 ) / 100000 ) / 10, (unsigned long long)( ( hz + 50000 ) / 100000 ) % 10,
+					tm_yes( ratio > 0.999 && ratio < 1.001 ) );
+		}
+		else
+			printf( "tm_nt time.tsc: no hypervisor page timing (status %08lXH)\n", (unsigned long)st );
+	}
+	{
+		unsigned int aux = 0xCCCCCCCC;
+		(void)__rdtscp( &aux );
+		printf( "tm_nt time.tscaux: RDTSCP ECX (IA32_TSC_AUX) = GetCurrentProcessorNumber() %s, bits 31:12 %s\n", tm_yes( ( aux & 0xFFF ) == GetCurrentProcessorNumber() ),
+				( aux >> 12 ) ? "non-zero" : "0" );
+	}
+}
+
 struct tm_case
 {
 	const char* name;
 	void ( *fn )( void );
 };
-static const struct tm_case g_cases[] = { { "sat", case_sat }, { "qsi", case_qsi }, { "hvp", case_hvp }, { "qip", case_qip }, { "wcp", case_wcp }, { "qsix", case_qsix }, { "iocp", case_iocp }, { "wkf", case_wkf }, { "tmr2", case_tmr2 }, { "awcp", case_awcp }, { "swf", case_swf }, { "etw", case_etw }, { "kd", case_kd }, { "of", case_of }, { "tls", case_tls }, { "ahc", case_ahc }, { "vmi", case_vmi }, { "csr", case_csr }, { "sec", case_sec }, { "csrc", case_csrc }, { "nls", case_nls }, { "con", case_con }, { "etwt", case_etwt }, { "tok", case_tok }, { "acc", case_acc }, { "bno", case_bno }, { "mut", case_mut }, { "wil", case_wil }, { "wnf", case_wnf }, { "wnfe", case_wnfe }, { "wnfs", case_wnfs }, { "t2s", case_t2s }, { "hku", case_hku }, { "alert", case_alert }, { "term", case_term } };
+static const struct tm_case g_cases[] = { { "sat", case_sat }, { "qsi", case_qsi }, { "hvp", case_hvp }, { "qip", case_qip }, { "wcp", case_wcp }, { "qsix", case_qsix }, { "iocp", case_iocp }, { "wkf", case_wkf }, { "tmr2", case_tmr2 }, { "awcp", case_awcp }, { "swf", case_swf }, { "etw", case_etw }, { "kd", case_kd }, { "of", case_of }, { "tls", case_tls }, { "ahc", case_ahc }, { "vmi", case_vmi }, { "csr", case_csr }, { "sec", case_sec }, { "csrc", case_csrc }, { "nls", case_nls }, { "con", case_con }, { "etwt", case_etwt }, { "tok", case_tok }, { "acc", case_acc }, { "bno", case_bno }, { "mut", case_mut }, { "wil", case_wil }, { "wnf", case_wnf }, { "wnfe", case_wnfe }, { "wnfs", case_wnfs }, { "t2s", case_t2s }, { "hku", case_hku }, { "alert", case_alert }, { "term", case_term }, { "time", case_time } };
 
 int main( int argc, char** argv )
 {

@@ -78,6 +78,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\assemble.cpp" />
+    <ClCompile Include="src\ctr_drbg.cpp" />
     <ClCompile Include="src\deps.cpp" />
     <ClCompile Include="src\engine.cpp" />
     <ClCompile Include="src\host_guard.cpp" />
@@ -93,10 +94,12 @@
     <ClCompile Include="src\profile.cpp" />
     <ClCompile Include="src\reg.cpp" />
     <ClCompile Include="src\snippet.cpp" />
+    <ClCompile Include="src\vclock.cpp" />
     <ClCompile Include="src\sysdll.cpp" />
     <ClCompile Include="src\win_env.cpp" />
     <ClCompile Include="src\win_process.cpp" />
     <ClInclude Include="include\emu\assemble.hpp" />
+    <ClInclude Include="include\emu\ctr_drbg.hpp" />
     <ClInclude Include="include\emu\deps.hpp" />
     <ClInclude Include="include\emu\engine.hpp" />
     <ClInclude Include="include\emu\host_guard.hpp" />
@@ -110,6 +113,7 @@
     <ClInclude Include="include\emu\profile.hpp" />
     <ClInclude Include="include\emu\reg.hpp" />
     <ClInclude Include="include\emu\snippet.hpp" />
+    <ClInclude Include="include\emu\vclock.hpp" />
     <ClInclude Include="include\emu\sysdll.hpp" />
     <ClInclude Include="include\emu\win_env.hpp" />
     <ClInclude Include="include\emu\win_fields.hpp" />

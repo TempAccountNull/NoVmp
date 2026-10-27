@@ -158,6 +158,7 @@ namespace at
 		if ( uc.feature_control && !uc.cpuid.empty() && uc.strict != 0 && !uc.apx ) o += ",\"feature_control\":" + jx_u64( uc.feature_control );
 		if ( uc.xcr0 ) o += ",\"xcr0\":" + jx_u64( uc.xcr0 );
 		if ( uc.cr0 ) o += ",\"cr0\":" + jx_u64( uc.ts_hooks ? ( uc.cr0 & ~unicorn_engine::CR0_TS ) : uc.cr0 );
+		if ( cap.tsc_valid ) o += ",\"tsc_start\":" + jx_u64( cap.tsc_start );   // U2096: emu-snippet starts its clock here
 		if ( uc.xinuse_model ) o += ",\"xinuse_model\":" + std::to_string( uc.xinuse_model );
 		o += "}";
 		const std::vector<uint8_t> snip( p.code.begin() + std::ptrdiff_t( p.snippet_begin - CODE ), p.code.begin() + std::ptrdiff_t( p.snippet_end - CODE ) );

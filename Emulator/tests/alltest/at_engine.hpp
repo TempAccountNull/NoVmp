@@ -734,6 +734,9 @@ namespace at
 		std::map<std::string, std::vector<uint8_t>> regs;
 		std::vector<uint8_t> code, data, mem, sys;
 		uint64_t efer = 0;
+		// U2096 (plan 3.M6): the virtual time base before the snippet's first instruction (virtual-clock engines only)
+		bool tsc_valid = false;
+		uint64_t tsc_start = 0;
 		std::string err;
 	};
 
@@ -761,6 +764,9 @@ namespace at
 			if ( x86_features && uc_ctl_set_x86_features( uc_, x86_features ) != UC_ERR_OK ) { err = "uc_ctl_set_x86_features failed"; return false; }
 			// U835 (D8): RDRAND/RDSEED source, --seeded (default, deterministic) or --HostSeed
 			if ( uc_ctl_set_x86_rdrand( uc_, rdrand, rdrand_seed ) != UC_ERR_OK ) { err = "uc_ctl_set_x86_rdrand failed"; return false; }
+			// U2096 (plan 3.M6): an expected-value line runs on the one virtual time base (fork U2090: 1 TSC tick per instruction from 0,
+			// the Emulator lib's engine default) - never the host clock; a hardware line keeps the host's TSC (it compares with the CPU)
+			if ( vclock && uc_ctl_set_x86_vclock( uc_, UC_X86_VCLOCK_VIRTUAL, 0, 1 ) != UC_ERR_OK ) { err = "uc_ctl_set_x86_vclock failed"; return false; }
 			// optional CPUID profile / strict-#UD / XCR0 (emu-alltest --cpuid/--strict/--xcr0)
 			if ( !cpuid.empty() ) uc_ctl_set_x86_cpuid( uc_, cpuid.data(), cpuid.size() );
 			// U435: -1 leaves Unicorn's default (strict while a profile is installed)
@@ -1153,6 +1159,13 @@ namespace at
 			start_capture& c = *self->capture;
 			c.regs.clear();
 			c.err.clear();
+			{
+				// U2096: the clock before this instruction (the count hook already counted it: one tick back)
+				int vm = 0;
+				uint64_t now = 0, n = 0;
+				c.tsc_valid = self->vclock && uc_ctl_get_x86_vclock( uc, &vm, &now, &n ) == UC_ERR_OK && vm == UC_X86_VCLOCK_VIRTUAL && n;
+				c.tsc_start = c.tsc_valid ? now - 1 : 0;
+			}
 			auto rd = [ & ]( int id, size_t n, const std::string& name ) {
 				std::vector<uint8_t> b( 64, 0 );
 				size_t sz = b.size();
@@ -1245,6 +1258,7 @@ namespace at
 		static constexpr uint64_t CR4_CET = 1ull << 23;  // CR4.CET, bit 23 (SDM 093 Vol3A 2.5 p. 2-19)
 		dbg_regs dbg;            // U1740: the case's debug registers (written by run(); !any = none written)
 		start_capture* capture = nullptr;   // U1977: --snippet-export (nullptr = no capture hook)
+		bool vclock = false;                // U2096: the virtual time base (expected-value lines)
 		// U1200: CR0.TS only inside the snippet (on_ts); set by the --cases runner only, so the --full
 		// sweep (CR0 11h, never TS) is untouched
 		bool ts_hooks = false;

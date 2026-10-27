@@ -21,6 +21,8 @@
 #include <emu/win_env.hpp>
 #include <emu/nt_kernel.hpp>
 #include <emu/hle.hpp>
+#include <emu/ctr_drbg.hpp>   // U2097 (plan 3.M6)
+#include <emu/vclock.hpp>
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -28,6 +30,8 @@
 #include <windows.h>   // winnt.h IMAGE_* (the in-memory test PEs of the M4 cases)
 
 #include <algorithm>
+#include <filesystem>   // U2097
+#include <intrin.h>     // U2097: _umul128 / _udiv128 (the checks' own 128-bit arithmetic)
 #include <array>
 #include <cstdio>
 #include <cstring>
@@ -1450,7 +1454,14 @@ namespace
 				   w4_read( p, k + L::kuser_kd_debugger_enabled, 1 ) == 0 && w4_read( p, k + L::kuser_system_call, 4 ) == 0,
 			   "KUSER fields from the facts (synthesized, no host page)" );
 		CHECK( w4_read( p, k + L::kuser_system_root, 6 ) == 0x005C003A0043ull, "KUSER NtSystemRoot = L\"C:\\...\"" );
-		CHECK( w4_read( p, k + L::kuser_interrupt_time, 8 ) == 0 && w4_read( p, k + L::kuser_system_time, 8 ) == 0, "time fields 0 until M6" );
+		// U2097 (plan 3.M6): the time fields from the one virtual time base (until M6 they were 0) - the measured constants, the time zone
+		// of the model and InterruptTime / SystemTime / TickCount of the clock (here after the run: at least the 1 h of uptime)
+		CHECK( w4_read( p, k + L::kuser_tick_count_multiplier, 4 ) == 0x0FA00000 && w4_read( p, k + L::kuser_qpc_frequency, 8 ) == 10000000 &&
+				   w4_read( p, k + L::kuser_time_zone_bias, 8 ) == 0 && w4_read( p, k + L::kuser_interrupt_time, 8 ) >= 36000000000ull &&
+				   w4_read( p, k + L::kuser_system_time, 8 ) - w4_read( p, k + L::kuser_interrupt_time, 8 ) == 134116992000000000ull &&
+				   w4_read( p, k + L::kuser_tick_count, 8 ) == w4_read( p, k + L::kuser_interrupt_time, 8 ) / 156250,
+			   "KUSER time fields from the virtual time base (TickCountMultiplier 0FA00000H, QpcFrequency 10 MHz, TimeZoneBias 0, InterruptTime >= 1 h, "
+			   "SystemTime = 2026-01-01T00:00:00Z + InterruptTime, TickCountQuad = InterruptTime / 156250)" );
 		bool kuser_ro = false;
 		for ( auto& r : p.eng().regions() )
 			if ( r.base == k ) kuser_ro = r.prot == UC_PROT_READ;
@@ -2493,7 +2504,8 @@ namespace
 		auto rd = [ & ]( uint64_t va, int n ) { return w4_read( *p, va, n ); };
 		// 1. the virtual clock
 		auto r = w5_call( *p, "NtQueryPerformanceCounter", { S, S + 8 } );
-		CHECK( w5_ok( r ) && rd( S + 8, 8 ) == 10000000 && rd( S, 8 ) == 0, "NtQueryPerformanceCounter: counter = the instructions (0 here), frequency 10 MHz: " + r.text );
+		CHECK( w5_ok( r ) && rd( S + 8, 8 ) == 10000000 && rd( S, 8 ) >= 36000000000ull + 1500000 - 1 && rd( S, 8 ) <= 36000000000ull + 1500000 + 1,
+			   "NtQueryPerformanceCounter: the virtual time base at the start (U2094: QPC = 1 h of uptime + the 150 ms lag; no instruction ran), 10 MHz: " + r.text );
 		CHECK( w5_status( w5_call( *p, "NtQueryPerformanceCounter", { 0x10, 0 } ), N::status::access_violation ), "NtQueryPerformanceCounter: bad pointer = STATUS_ACCESS_VIOLATION" );
 		// 2. NtProtectVirtualMemory
 		w5_put( *p, S, 0 );
@@ -3300,6 +3312,283 @@ namespace
 		CHECK( t.kind == N::reply_kind::terminated && t.exit_status == 0x2B, "then NtTerminateProcess( NtCurrentProcess(), 0 ): the exit status of the first call, 2BH (term.null)" );
 	}
 
+	// ------------------------------------------------------------------------------------------------ M6 the one virtual time base + RNG (U2097)
+	// Plan 3.M6 (P42): "Done = RED consistency selftest (RDTSC vs KUSER vs NtQueryPerformanceCounter, monotonic, rates consistent,
+	// deterministic run-to-run under --seeded) fails on the current tree; GREEN it passes". An in-memory image (the w5_ builder) reads,
+	// four times, RDTSC, the KUSER InterruptTime / SystemTime / TickCountQuad, NtQueryPerformanceCounter (counter + frequency), RDTSC,
+	// RDTSCP, then NtQuerySystemTime and RDTSC around an NtDelayExecution( FALSE, relative 10 ms ), and ends with NtTerminateProcess(
+	// 2AH ); results at m6_out (inside the stack area). The checks use only what the guest observes plus the constants MEASURED in the
+	// VMware guest (tm_nt case time: QPC frequency 10 MHz, the clock tick 156250 x 100 ns, TickCountMultiplier 0FA00000H) and the TSC
+	// rate of the profile (--host: CPUID.15H, 253669-093 Vol3B 22.7.3; --guest: the measured 3494.4 MHz).
+	constexpr uint32_t m6_n_qpc = 0x31, m6_n_qst = 0x5A, m6_n_delay = 0x34;
+	constexpr uint64_t m6_out = 0xFF0000ull;
+
+	emu::win::environment_facts m6_facts()
+	{
+		auto f = w5_facts();
+		for ( auto [ n, name ] : { std::pair<uint32_t, const char*>{ m6_n_qpc, "NtQueryPerformanceCounter" }, { m6_n_qst, "NtQuerySystemTime" }, { m6_n_delay, "NtDelayExecution" } } )
+		{
+			f.syscalls.by_number[ n ] = name;
+			f.syscalls.by_name[ name ] = n;
+		}
+		f.syscalls.nt_exports = f.syscalls.stubs = 10;
+		return f;
+	}
+
+	const char* m6_program =
+		"mov rsi, 0xFF0000; mov ebx, 4;"
+		"s: rdtsc; shl rdx, 32; or rax, rdx; mov [rsi], rax;"
+		"mov rax, qword ptr [0x7FFE0008]; mov [rsi + 8], rax;"
+		"mov rax, qword ptr [0x7FFE0014]; mov [rsi + 16], rax;"
+		"mov rax, qword ptr [0x7FFE0320]; mov [rsi + 24], rax;"
+		"lea r10, [rsi + 32]; lea rdx, [rsi + 40]; mov eax, 0x31; syscall;"
+		"rdtsc; shl rdx, 32; or rax, rdx; mov [rsi + 48], rax;"
+		"rdtscp; shl rdx, 32; or rax, rdx; mov [rsi + 56], rax;"
+		"mov ecx, 1000; w: dec ecx; jnz w;"
+		"add rsi, 64; dec ebx; jnz s;"
+		"lea r10, [rsi]; mov eax, 0x5A; syscall; mov [rsi + 8], rax;"
+		"rdtsc; shl rdx, 32; or rax, rdx; mov [rsi + 16], rax;"
+		"mov qword ptr [rsi + 24], -100000; xor r10d, r10d; lea rdx, [rsi + 24]; mov eax, 0x34; syscall; mov [rsi + 32], rax;"
+		"rdtsc; shl rdx, 32; or rax, rdx; mov [rsi + 40], rax;"
+		"mov r10, -1; mov edx, 0x2A; mov eax, 0x2C; syscall";
+
+	struct m6_result
+	{
+		bool ran = false;
+		std::string why;
+		std::vector<uint8_t> out;   // 0x150 bytes at m6_out
+	};
+
+	m6_result m6_run( emu::cpu_profile_choice prof, emu::rng_source rng = emu::rng_source::seeded )
+	{
+		m6_result m;
+		std::string err;
+		const auto file = w5_build( { m6_program }, err );
+		if ( file.empty() )
+		{
+			m.why = "build: " + err;
+			return m;
+		}
+		emu::engine_config ec;
+		ec.profile = prof;
+		ec.rng = rng;
+		emu::win::process_options po;
+		po.max_insns = 100000;
+		po.image_name = "m6";
+		std::vector<std::string> log;
+		auto p = emu::win::process::create( ec, m6_facts(), po, file, log, err );
+		if ( !p )
+		{
+			m.why = "create: " + err;
+			return m;
+		}
+		emu::win::run_result r;
+		if ( !p->run( r, err ) )
+		{
+			m.why = "run: " + err;
+			return m;
+		}
+		if ( r.stop != emu::win::stop_kind::terminated || r.exit_status != 0x2A )
+		{
+			m.why = std::string( "the program did not end with NtTerminateProcess( 2AH ): stop " ) + emu::win::name_of( r.stop ) + " - " + r.detail;
+			return m;
+		}
+		m.out.resize( 0x150 );
+		if ( !p->eng().read( m6_out, m.out.data(), m.out.size(), err ) )
+		{
+			m.why = "read: " + err;
+			return m;
+		}
+		m.ran = true;
+		return m;
+	}
+
+	uint64_t m6_u64( const std::vector<uint8_t>& b, size_t at )
+	{
+		uint64_t v = 0;
+		std::memcpy( &v, b.data() + at, 8 );
+		return v;
+	}
+
+	// floor( a * b / c ), 128-bit
+	uint64_t m6_muldiv( uint64_t a, uint64_t b, uint64_t c )
+	{
+		unsigned long long hi = 0, rem = 0;
+		const unsigned long long lo = _umul128( a, b, &hi );
+		return hi >= c ? ~0ull : _udiv128( hi, lo, c, &rem );
+	}
+
+	// the TSC rate the checks expect: --host = the bare-host profile's CPUID.15H ( ECX * EBX ) / EAX; --guest = the measured 3494.4 MHz
+	uint64_t m6_expected_hz( emu::cpu_profile_choice prof )
+	{
+		if ( prof == emu::cpu_profile_choice::guest ) return 3494400000ull;   // tm_nt time.tsc (P42)
+		std::string dir, err;
+		emu::cpuid_profile p;
+		if ( !emu::default_data_dir( dir, err ) || !emu::load_cpuid_profile_file( ( std::filesystem::path( dir ) / emu::profile_file_name( prof ) ).string(), p, err ) ) return 0;
+		for ( const auto& row : p.leaves )
+			if ( row.leaf == 0x15 && row.subleaf == 0 && row.eax && row.ebx && row.ecx ) return m6_muldiv( row.ecx, row.ebx, row.eax );
+		return 0;
+	}
+
+	void m6_check_consistency( emu::cpu_profile_choice prof )
+	{
+		const std::string tag = prof == emu::cpu_profile_choice::host ? "--host: " : "--guest: ";
+		const uint64_t hz = m6_expected_hz( prof );
+		CHECK( hz != 0, tag + "the expected TSC rate is known" );
+		const auto a = m6_run( prof ), b = m6_run( prof );
+		CHECK( a.ran, tag + "the consistency program ran to NtTerminateProcess( 2AH ): " + a.why );
+		CHECK( b.ran, tag + "the second run: " + b.why );
+		if ( !a.ran || !b.ran || !hz ) return;
+		const auto& o = a.out;
+		// deterministic run-to-run (--seeded): every value equal
+		CHECK( a.out == b.out, tag + "deterministic: two runs give the same RDTSC / KUSER / QPC / system time values" );
+		auto conv = [ & ]( uint64_t tsc ) { return m6_muldiv( tsc, 10000000, hz ); };   // TSC -> 100 ns (= QPC at 10 MHz)
+		uint64_t lag_lo = 0, lag_hi = ~0ull, bias0 = 0, step0 = 0;
+		for ( int i = 0; i < 4; i++ )
+		{
+			const size_t s = size_t( i ) * 64;
+			const uint64_t ta = m6_u64( o, s ), it = m6_u64( o, s + 8 ), st = m6_u64( o, s + 16 ), tc = m6_u64( o, s + 24 ), qpc = m6_u64( o, s + 32 ),
+						   f = m6_u64( o, s + 40 ), tb = m6_u64( o, s + 48 ), tp = m6_u64( o, s + 56 );
+			const std::string at = tag + "sample " + std::to_string( i ) + ": ";
+			// monotonic
+			CHECK( ta < tb && tb < tp, at + "RDTSC < RDTSC after the system call < RDTSCP" );
+			if ( i ) CHECK( m6_u64( o, s - 64 + 56 ) < ta, at + "monotonic across samples" );
+			// the frequency and QPC against RDTSC
+			CHECK( f == 10000000, at + "NtQueryPerformanceCounter frequency 10 MHz (measured tm_nt time.nqpc)" );
+			CHECK( conv( ta ) <= qpc && qpc <= conv( tb ), at + "QPC between the RDTSCs before and after it, converted at the TSC rate" );
+			// KUSER: InterruptTime = the TSC rate minus a constant lag; SystemTime - InterruptTime constant; TickCountQuad and GetTickCount
+			CHECK( it && it <= conv( ta ), at + "KUSER InterruptTime non-zero and behind the QPC time" );
+			if ( it && it <= conv( ta ) )
+			{
+				// the read lies between the two RDTSCs: QPC time - InterruptTime of that moment is in [conv( ta ) - it, conv( tb ) - it]
+				lag_lo = std::max( lag_lo, conv( ta ) - it );
+				lag_hi = std::min( lag_hi, conv( tb ) - it );
+			}
+			CHECK( lag_lo <= lag_hi, at + "KUSER InterruptTime advances at the TSC rate (one constant lag behind QPC fits every sample)" );
+			if ( i == 0 ) bias0 = st - it;
+			CHECK( st - it == bias0 && st > 0x01D5000000000000ull, at + "KUSER SystemTime - InterruptTime constant, SystemTime a FILETIME after 2019" );
+			CHECK( tc == it / 156250, at + "KUSER TickCountQuad = InterruptTime / 156250 (the clock tick, tm_nt time.res / time.tick)" );
+			const uint64_t ms = ( ( tc & 0xFFFFFFFF ) * 0x0FA00000ull >> 24 ) + ( ( tc >> 32 ) * 0x0FA00000ull << 8 );
+			CHECK( ms <= it / 10000 && it / 10000 - ms < 16, at + "GetTickCount64 ( TickCountQuad * TickCountMultiplier >> 24 ) within one tick of InterruptTime" );
+			// rates consistent: the same code between samples takes the same number of TSC ticks
+			if ( i == 1 ) step0 = ta - m6_u64( o, 0 );
+			if ( i >= 2 ) CHECK( ta - m6_u64( o, s - 64 ) == step0, at + "the same instructions take the same TSC ticks (one time base advanced by instructions)" );
+		}
+		const size_t e = 4 * 64;
+		const uint64_t qst = m6_u64( o, e ), qst_status = m6_u64( o, e + 8 ), t0 = m6_u64( o, e + 16 ), dst = m6_u64( o, e + 32 ), t1 = m6_u64( o, e + 40 );
+		CHECK( qst_status == 0 && qst >= m6_u64( o, 3 * 64 + 16 ) && qst - m6_u64( o, 3 * 64 + 16 ) <= conv( t0 ) - conv( m6_u64( o, 3 * 64 ) ),
+			   tag + "NtQuerySystemTime: STATUS_SUCCESS, the KUSER SystemTime of that moment" );
+		CHECK( dst == 0 && t1 - t0 >= m6_muldiv( 100000, hz, 10000000 ) && t1 - t0 < m6_muldiv( 100000, hz, 10000000 ) + 1000,
+			   tag + "NtDelayExecution( relative 10 ms ): STATUS_SUCCESS, the TSC advanced by 10 ms (+ the few instructions)" );
+		// the clock starts at the documented uptime (1 h, emu/vclock.hpp): InterruptTime of sample 0 just above 36000000000
+		CHECK( m6_u64( o, 8 ) >= 36000000000ull && m6_u64( o, 8 ) < 36000000000ull + 10000000, tag + "InterruptTime at the start = the documented uptime (1 h)" );
+	}
+
+	void t_vclock_consistency()
+	{
+		m6_check_consistency( emu::cpu_profile_choice::host );
+		m6_check_consistency( emu::cpu_profile_choice::guest );
+		// --HostSeed changes only RDRAND / RDSEED: the times stay deterministic
+		const auto a = m6_run( emu::cpu_profile_choice::host, emu::rng_source::host_seed ), b = m6_run( emu::cpu_profile_choice::host, emu::rng_source::host_seed );
+		CHECK( a.ran && b.ran && a.out == b.out, "--HostSeed: the times are deterministic too (the host DRNG serves RDRAND / RDSEED only)" );
+	}
+
+	// U2093 (plan 3.M6 / 1.K.11 P14): the Emulator lib's own CTR_DRBG (emu/ctr_drbg.hpp) - FIPS 197 C.1 AES-128 known answer, the model's
+	// known answers (ref_ctr_drbg.py, P42: 'cryptography' AES), and the same sequence as the fork's seeded RDRAND (U2091, QEMU's AES):
+	// two independent implementations of one definition
+	void t_ctr_drbg_kat()
+	{
+		const uint8_t key[ 16 ] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+		const uint8_t pt[ 16 ] = { 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF };
+		const uint8_t want[ 16 ] = { 0x69, 0xC4, 0xE0, 0xD8, 0x6A, 0x7B, 0x04, 0x30, 0xD8, 0xCD, 0xB7, 0x80, 0x70, 0xB4, 0xC5, 0x5A };
+		uint8_t ct[ 16 ];
+		emu::aes128_encrypt( key, pt, ct );
+		CHECK( std::memcmp( ct, want, 16 ) == 0, "AES-128 FIPS 197 Appendix C.1 known answer" );
+		emu::ctr_drbg d0( 0 );
+		CHECK( d0.next() == 0xBA68F086D3250ED4ull && d0.next() == 0x744359FBB1126FBCull && d0.next() == 0x6D3C7FD031E91FE5ull,
+			   "CTR_DRBG seed 0: the first three values = ref_ctr_drbg.py" );
+		emu::ctr_drbg d1( 0x1234 );
+		CHECK( d1.next() == 0x880DB7BEEF281D0Aull && d1.draws() == 1, "CTR_DRBG seed 1234H: the first value = ref_ctr_drbg.py" );
+		// the fork's seeded RDRAND (U2091) gives the same sequence
+		for ( uint64_t seed : { 0ull, 0x5eedull, 0xFFFFFFFFFFFFFFFFull } )
+		{
+			auto e = open_engine( emu::cpu_profile_choice::host, emu::rng_source::seeded, seed );
+			if ( !e || !put_code( *e, { 0x48, 0x0F, 0xC7, 0xF0 } ) ) return;   // RDRAND RAX
+			emu::ctr_drbg ref( seed );
+			for ( int n = 1; n <= 4; n++ )
+			{
+				CHECK( e->emulate( st_code, st_code + 4, 1 ) == UC_ERR_OK, "RDRAND executed" );
+				CHECK( get64( *e, UC_X86_REG_RAX ) == ref.next(), "seed " + std::to_string( seed ) + " value " + std::to_string( n ) + ": the fork = emu::ctr_drbg" );
+			}
+		}
+		// the environment's own source: another personalization, another sequence
+		emu::ctr_drbg env( 0, emu::environment_personalization );
+		CHECK( env.next() != 0xBA68F086D3250ED4ull, "the environment's CTR_DRBG differs from the CPU's (personalization \"NoVmp environment\")" );
+	}
+
+	// U2094 (plan 3.M6): the time services of the kernel layer on the virtual time base (tm_nt case time): statuses as measured, the
+	// waits advance the clock, an infinite wait stops loudly
+	void t_nt_time_services()
+	{
+		std::string err;
+		auto facts = m6_facts();
+		emu::engine_config ec;
+		ec.profile = emu::cpu_profile_choice::host;
+		emu::win::process_options po;
+		po.max_insns = 1000;
+		po.image_name = "m6s";
+		std::vector<std::string> log;
+		auto p = emu::win::process::create( ec, facts, po, w5_build( { w5_trivial }, err ), log, err );
+		CHECK( p != nullptr, "process: " + err );
+		if ( !p ) return;
+		namespace N = emu::nt;
+		const uint64_t S = w5_scratch;
+		auto rd = [ & ]( uint64_t va ) { return w4_read( *p, va, 8 ); };
+		auto qpc = [ & ]() {
+			w5_call( *p, "NtQueryPerformanceCounter", { S + 0x100, 0 } );
+			return rd( S + 0x100 );
+		};
+		const uint64_t hz = m6_expected_hz( emu::cpu_profile_choice::host );
+		CHECK( p->tsc_hz() == hz, "the process' TSC rate = the --host profile's CPUID.15H" );
+		auto r = w5_call( *p, "NtQueryPerformanceCounter", { S, S + 8 } );
+		CHECK( w5_ok( r ) && rd( S + 8 ) == 10000000 && rd( S ) >= 36000000000ull + 1500000 - 1, "NtQueryPerformanceCounter( &c, &f ): the virtual time base, 10 MHz: " + r.text );
+		CHECK( w5_ok( w5_call( *p, "NtQueryPerformanceCounter", { S, 0 } ) ), "NtQueryPerformanceCounter( &c, NULL ): STATUS_SUCCESS (tm_nt time.nqpc.nofreq)" );
+		CHECK( w5_status( w5_call( *p, "NtQueryPerformanceCounter", { 0, S + 8 } ), N::status::access_violation ), "NtQueryPerformanceCounter( NULL, &f ): STATUS_ACCESS_VIOLATION (time.nqpc.null)" );
+		CHECK( w5_ok( w5_call( *p, "NtQuerySystemTime", { S + 0x10 } ) ) && rd( S + 0x10 ) > 0x01D5000000000000ull, "NtQuerySystemTime: STATUS_SUCCESS, a FILETIME (time.st)" );
+		CHECK( w5_status( w5_call( *p, "NtQuerySystemTime", { 0 } ), N::status::access_violation ), "NtQuerySystemTime( NULL ): STATUS_ACCESS_VIOLATION (time.st.null)" );
+		// NtDelayExecution: relative / zero / absolute past / absolute future / NULL / infinite
+		uint64_t q0 = qpc();
+		w5_put( *p, S + 0x20, uint64_t( -100000ll ) );
+		CHECK( w5_ok( w5_call( *p, "NtDelayExecution", { 0, S + 0x20 } ) ) && qpc() - q0 >= 100000 && qpc() - q0 <= 100001, "NtDelayExecution( relative 10 ms ): the clock advanced 10 ms (time.delay)" );
+		q0 = qpc();
+		w5_put( *p, S + 0x20, 0 );
+		CHECK( w5_status( w5_call( *p, "NtDelayExecution", { 0, S + 0x20 } ), 0x40000024 ) && qpc() == q0,
+			   "NtDelayExecution( FALSE, 0 ): STATUS_NO_YIELD_PERFORMED (one thread), no time passes (time.delay.zero)" );
+		w5_put( *p, S + 0x20, uint64_t( -1ll ) );
+		CHECK( w5_ok( w5_call( *p, "NtDelayExecution", { 1, S + 0x20 } ) ) && qpc() - q0 <= 1, "NtDelayExecution( TRUE, relative 100 ns ), no APC: STATUS_SUCCESS (time.delay.alert)" );
+		q0 = qpc();
+		w5_put( *p, S + 0x20, 1 );
+		CHECK( w5_ok( w5_call( *p, "NtDelayExecution", { 0, S + 0x20 } ) ) && qpc() == q0, "NtDelayExecution( absolute 1 ): STATUS_SUCCESS at once (time.delay.past)" );
+		w5_call( *p, "NtQuerySystemTime", { S + 0x10 } );
+		w5_put( *p, S + 0x20, rd( S + 0x10 ) + 100000 );
+		CHECK( w5_ok( w5_call( *p, "NtDelayExecution", { 0, S + 0x20 } ) ) && qpc() - q0 >= 100000 && qpc() - q0 <= 100001, "NtDelayExecution( absolute + 10 ms ): until then (time.delay.abs)" );
+		CHECK( w5_status( w5_call( *p, "NtDelayExecution", { 0, 0 } ), N::status::access_violation ), "NtDelayExecution( NULL ): STATUS_ACCESS_VIOLATION (time.delay.null)" );
+		w5_put( *p, S + 0x20, 0x8000000000000000ull );
+		CHECK( w5_stop( w5_call( *p, "NtDelayExecution", { 0, S + 0x20 } ) ), "NtDelayExecution( INFINITE ): a loud stop (one thread: nothing ends the wait)" );
+		// NtWaitForSingleObject on a non-signaled notification event with a time-out: STATUS_TIMEOUT after the time-out (time.wait*)
+		auto ce = w5_call( *p, "NtCreateEvent", { S + 0x28, 0x1F0003, 0, 0, 0 } );
+		CHECK( w5_ok( ce ), "NtCreateEvent: " + ce.text );
+		const uint64_t ev = rd( S + 0x28 );
+		q0 = qpc();
+		w5_put( *p, S + 0x20, uint64_t( -100000ll ) );
+		CHECK( w5_status( w5_call( *p, "NtWaitForSingleObject", { ev, 0, S + 0x20 } ), 0x102 ) && qpc() - q0 >= 100000 && qpc() - q0 <= 100001,
+			   "NtWaitForSingleObject( event, relative 10 ms ): STATUS_TIMEOUT, the clock advanced 10 ms (time.wait)" );
+		q0 = qpc();
+		w5_put( *p, S + 0x20, 1 );
+		CHECK( w5_status( w5_call( *p, "NtWaitForSingleObject", { ev, 0, S + 0x20 } ), 0x102 ) && qpc() == q0, "NtWaitForSingleObject( event, absolute 1 ): STATUS_TIMEOUT at once (time.wait.past)" );
+		CHECK( w5_stop( w5_call( *p, "NtWaitForSingleObject", { ev, 0, 0 } ) ), "NtWaitForSingleObject( event, no time-out ): a loud stop (deadlock)" );
+	}
+
 	struct test_case { const char* name; void ( *fn )(); };
 	const test_case cases[] = {
 		{ "options_oep_defaults", t_options_oep_defaults },
@@ -3360,6 +3649,9 @@ namespace
 		{ "nt_measured_loader", t_nt_measured_loader },
 		{ "nt_measured_csr", t_nt_measured_csr },
 		{ "nt_measured_console", t_nt_measured_console },
+		{ "vclock_consistency", t_vclock_consistency },
+		{ "ctr_drbg_kat", t_ctr_drbg_kat },
+		{ "nt_time_services", t_nt_time_services },
 	};
 }
 

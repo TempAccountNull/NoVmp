@@ -22,6 +22,10 @@
 # ids as zero / non-zero; WNF state 418A073AA3BC1C75H (WIL feature usage, no identity) GROWS - recorded as its shape (size, header);
 # the emulator answers the 44CH snapshot of the measurement. ETW provider 0A27EFF1-... (etw.reg5) is ENABLED by a session of this guest: its enable fields are environment
 # state at the time of the measurement. Case term ends with the process exit code 2BH (NtTerminateProcess( NULL, 2BH ) fixes it).
+# P42 (U2102, plan 3.M6 - the one virtual time base): case time measures what a process reads as time - the KUSER constants
+# (QpcFrequency, TickCountMultiplier), QueryPerformanceFrequency / NtQueryPerformanceCounter, NtQueryTimerResolution, the relations
+# of QPC / InterruptTime / SystemTime / TickCount (signs, constancy - never a time value), NtQuerySystemTime, NtDelayExecution and
+# NtWaitForSingleObject time-outs, the TSC rate the hypervisor page states (to 0.1 MHz) and IA32_TSC_AUX.
 tm_nt sat.0: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 330H) -> status C0000225H, ReturnLength 0H, written 0H
 tm_nt sat.1: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 0H) -> status C0000225H, ReturnLength 0H, written 0H
 tm_nt sat.2: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 8H) -> status C0000225H, ReturnLength 0H, written 0H
@@ -323,3 +327,24 @@ tm_nt t2s.close: NtClose -> 00000000H
 tm_nt hku.safer: NtOpenKey(&h, 1H, "\REGISTRY\USER\<the user SID>\Software\Policies\Microsoft\Windows\Safer\CodeIdentifiers" OBJ_CASE_INSENSITIVE) -> status C0000034H, handle NULL
 tm_nt alert: NtTestAlert() -> status 00000000H; again -> status 00000000H
 tm_nt term.null: NtTerminateProcess(NULL, 2BH) -> status 00000000H; the calling thread continues: yes
+tm_nt time.qpf: QueryPerformanceFrequency -> TRUE, frequency 989680H; KUSER QpcFrequency 989680H; equal yes
+tm_nt time.nqpc: NtQueryPerformanceCounter(&c, &f) -> status 00000000H, frequency 989680H, counter non-zero yes
+tm_nt time.nqpc.nofreq: NtQueryPerformanceCounter(&c, NULL) -> status 00000000H
+tm_nt time.nqpc.null: NtQueryPerformanceCounter(NULL, &f) -> status C0000005H
+tm_nt time.res: NtQueryTimerResolution -> status 00000000H, MaximumTime 2625AH, MinimumTime 1388H, CurrentTime in [MinimumTime, MaximumTime] yes; KUSER TickCountMultiplier 0FA00000H = (MaximumTime << 24) / 10000 yes
+tm_nt time.kuser: TickCountLowDeprecated 0, TimeZoneBias non-zero, QpcData 0083H, QpcShift 00H
+tm_nt time.tick: GetTickCount64() = (TickCountQuad * TickCountMultiplier) >> 24 yes; TickCountQuad = InterruptTime / MaximumTime (within 1) yes
+tm_nt time.qpc.it: QueryPerformanceCounter - KUSER InterruptTime (10 MHz both): positive yes, constant within 1 ms over 5 reads 20 ms apart yes
+tm_nt time.qpc.sys: QueryPerformanceCounter <= NtQueryPerformanceCounter <= QueryPerformanceCounter (5 times) yes
+tm_nt time.st: NtQuerySystemTime(&t) -> status 00000000H, t in [KUSER SystemTime before, after] yes; GetSystemTimeAsFileTime >= that yes; SystemTime - InterruptTime constant within 1 ms over 50 ms yes
+tm_nt time.st.null: NtQuerySystemTime(NULL) -> status C0000005H
+tm_nt time.delay: NtDelayExecution(FALSE, relative 10 ms) -> status 00000000H, InterruptTime advanced >= 10 ms yes
+tm_nt time.delay.zero: NtDelayExecution(FALSE, 0) -> status 00000000H or 40000024H (STATUS_NO_YIELD_PERFORMED: no other thread ready) yes
+tm_nt time.delay.alert: NtDelayExecution(TRUE, relative 100 ns), no APC queued -> status 00000000H
+tm_nt time.delay.past: NtDelayExecution(FALSE, absolute 1) -> status 00000000H
+tm_nt time.delay.abs: NtDelayExecution(FALSE, absolute SystemTime + 10 ms) -> status 00000000H, InterruptTime advanced >= 9 ms yes
+tm_nt time.delay.null: NtDelayExecution(FALSE, NULL) -> status C0000005H
+tm_nt time.wait: NtWaitForSingleObject(a non-signaled notification event, FALSE, relative 10 ms) -> status 00000102H, InterruptTime advanced >= 10 ms yes
+tm_nt time.wait.past: NtWaitForSingleObject(the event, FALSE, absolute 1) -> status 00000102H
+tm_nt time.tsc: hypervisor page QpcMultiplier non-zero, QpcBias 0; TSC frequency = QpcFrequency * 2^64 / QpcMultiplier = 3494.4 MHz (to 0.1 MHz); RDTSC / QPC over 100 ms agrees within 0.1% yes
+tm_nt time.tscaux: RDTSCP ECX (IA32_TSC_AUX) = GetCurrentProcessorNumber() yes, bits 31:12 0

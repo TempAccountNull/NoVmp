@@ -2199,6 +2199,7 @@ namespace at
 			uc.cpl3 = cpl3;
 			uc.cr4_cet = cr4cet;   // U1830
 			uc.ts_hooks = true;   // U1200: CR0.TS (--cr0) acts on the snippet only, never on the thunk
+			uc.vclock = expect;   // U2096 (plan 3.M6): expected-value lines on the virtual time base, hardware lines on the host's TSC
 			const dbg_regs dbg_uc = dbg_resolve( dspec, p_uc ), dbg_hw = dbg_resolve( dspec, p );   // U1740
 			uc.dbg = dbg_uc;
 			start_capture cap;   // U1977

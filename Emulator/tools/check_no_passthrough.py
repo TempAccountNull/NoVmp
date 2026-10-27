@@ -21,11 +21,20 @@ The NEW "no host pass-through" scan of milestone 3.M4, beside no_native_check (w
        pt_host_query      host facts a guest could be shown: GetSystemInfo, GetNativeSystemInfo, GlobalMemoryStatus*,
                           GetVersion*, RtlGetVersion, VerifyVersionInfo*, IsProcessorFeaturePresent, GetComputerName*,
                           firmware tables, GetModuleHandle*, Get(System|Windows)Directory*, environment variables (getenv ...),
-                          processor counts, time zone, locale, GetProductInfo, GetTickCount* - exemptions with an exact count
-                          below (EXEMPT)
+                          processor counts, time zone, locale, GetProductInfo - exemptions with an exact count below (EXEMPT)
+       pt_host_clock      (U2098, plan 3.M6: "never the host clock at runtime") host time and sleep: QueryPerformanceCounter /
+                          Frequency, GetSystemTime* / GetLocalTime / GetTickCount* / timeGetTime / timeGetSystemTime /
+                          QueryInterruptTime* / QueryUnbiasedInterruptTime* / GetProcessTimes / GetThreadTimes / GetSystemTimes,
+                          Sleep / SleepEx, RDTSC / RDTSCP executed natively (__rdtsc / __rdtscp / _rdtsc / __builtin_ia32_rdtsc*),
+                          the C / C++ clocks (time( / clock( / _time32 / _time64 / _ftime* / gettimeofday / clock_gettime,
+                          std::chrono::*_clock) - every guest-visible time comes from emu/vclock.hpp
      and, on the code with comments blanked but strings kept:
        pt_live_system_dir a path into the running machine's system directory (System32, SysWOW64, %SystemRoot%, %windir%,
                           \\Windows\\): the emulator reads only the environment's capture (decision 3.0.8)
+  T  (U2098) the time path: unicorn/qemu/hw/i386/x86.c cpu_get_tsc returns uc_vclock_base( ... ) for UC_X86_VCLOCK_VIRTUAL before
+     the stock cpu_get_ticks() (the host TSC), and Emulator/src/engine.cpp opens every engine with uc_ctl_set_x86_vclock(
+     UC_X86_VCLOCK_VIRTUAL ) - no emulator engine reads the host TSC for a guest value (runtime: emu-selftest vclock_consistency,
+     deterministic RDTSC run to run)
   R  runtime: (1) emu-selftest win_env_no_passthrough_runtime; (2) emu-oep runs T1 with the REAL NtTerminateProcess number of
      the guest environment (the same number the host kernel of this VMware guest uses) and ProcessHandle NtCurrentProcess():
      forwarded to the host it would end emu-oep itself with exit code 2AH - instead emu-oep must report the guest's exit
@@ -65,7 +74,12 @@ PT_RULES = [
                       r'IsProcessorFeaturePresent|GetComputerName\w*|GetSystemFirmwareTable|EnumSystemFirmwareTables|GetModuleHandle\w*|GetSystemDirectory\w*|'
                       r'GetWindowsDirectory\w*|GetSystemWindowsDirectory\w*|GetEnvironmentStrings\w*|GetEnvironmentVariable\w*|getenv|_wgetenv|_dupenv_s|_wdupenv_s|'
                       r'GetLogicalProcessorInformation\w*|GetActiveProcessorCount|GetMaximumProcessorCount|GetTimeZoneInformation|GetDynamicTimeZoneInformation|'
-                      r'GetSystemDefault\w*|GetUserDefault\w*|GetProductInfo|GetTickCount\w*)\b'),
+                      r'GetSystemDefault\w*|GetUserDefault\w*|GetProductInfo)\b'),
+    # U2098 (plan 3.M6): the host clock
+    ('pt_host_clock', r'\b(?:QueryPerformanceCounter|QueryPerformanceFrequency|GetSystemTime\w*|GetLocalTime|GetTickCount\w*|timeGetTime|timeGetSystemTime|'
+                      r'QueryInterruptTime\w*|QueryUnbiasedInterruptTime\w*|GetProcessTimes|GetThreadTimes|GetSystemTimes|SleepEx|Sleep|__rdtscp?|_rdtscp?|'
+                      r'__builtin_ia32_rdtscp?|_time32|_time64|_ftime\w*|gettimeofday|clock_gettime|steady_clock|system_clock|high_resolution_clock|'
+                      r'utc_clock|tai_clock|gps_clock|file_clock)\b|(?<![\w.>:])(?:time|clock)\s*\(|\bstd::(?:time|clock)\s*\('),
 ]
 STRING_RULES = [
     ('pt_live_system_dir', r'(?i)system32|syswow64|%systemroot%|%windir%|\\\\windows\\\\'),
@@ -165,6 +179,16 @@ MUST_HIT = [
     ('pt_host_query', 'SYSTEM_INFO si; GetNativeSystemInfo( &si );'),
     ('pt_host_query', 'const char* r = getenv( "SystemRoot" );'),
     ('pt_host_query', 'auto b = (uint64_t)GetModuleHandleA( "ntdll.dll" );'),
+    ('pt_host_clock', 'LARGE_INTEGER q; QueryPerformanceCounter( &q );'),
+    ('pt_host_clock', 'FILETIME ft; GetSystemTimeAsFileTime( &ft );'),
+    ('pt_host_clock', 'const uint64_t t = __rdtsc();'),
+    ('pt_host_clock', 'unsigned a; auto t = __rdtscp( &a );'),
+    ('pt_host_clock', 'auto ms = GetTickCount64();'),
+    ('pt_host_clock', 'DWORD t = timeGetTime();'),
+    ('pt_host_clock', 'auto n = std::chrono::steady_clock::now();'),
+    ('pt_host_clock', 'Sleep( 10 );'),
+    ('pt_host_clock', 'time_t now = time( nullptr );'),
+    ('pt_host_clock', 'auto c = std::clock();'),
     ('pt_live_system_dir', 'std::string p = "C:\\\\Windows\\\\System32\\\\ntdll.dll";'),
     ('pt_live_system_dir', 'auto d = std::string( "%SystemRoot%" ) + "\\\\x";'),
 ]
@@ -175,6 +199,8 @@ MUST_PASS = [
     'uint64_t kuser_nt_major_version = 0x26C; const char* n = "NT_TIB"; auto t = offsetof( NT_TIB, Self );',
     'constexpr uint64_t page = 0x7FFE1000; uint64_t big = 21473525760;',
     'const char* root = "C:\\\\Windows"; /* System32 */',
+    'vclock::read( uc, hz, rd, why ); r = kern.time_now( q, st, why ); // QueryPerformanceCounter, __rdtsc in a comment',
+    'std::string n = "NtQuerySystemTime"; const char* q = "QueryPerformanceCounter"; x.time( 1 ); p->clock( 2 );',
 ]
 
 
@@ -231,6 +257,21 @@ def runtime(root, build, report):
     return fails
 
 
+def time_path(root):
+    """U2098 check T: the fork's cpu_get_tsc takes the virtual time base before the host ticks; engine.cpp sets the virtual mode."""
+    fails = []
+    x86 = open(os.path.join(root, 'unicorn', 'qemu', 'hw', 'i386', 'x86.c'), encoding='utf-8', errors='replace').read()
+    body = x86[x86.find('uint64_t cpu_get_tsc(CPUX86State *env)'):]
+    v = body.find('if (env->uc->vclock_mode == UC_X86_VCLOCK_VIRTUAL)')
+    h = body.find('return cpu_get_ticks();')
+    if v < 0 or h < 0 or v > h or 'return uc_vclock_base(env->uc);' not in body[v:h]:
+        fails.append('T  unicorn/qemu/hw/i386/x86.c cpu_get_tsc: no virtual-time-base branch before the host ticks (U2090)')
+    eng = CNN.strip_code(open(os.path.join(root, 'Emulator', 'src', 'engine.cpp'), encoding='utf-8', errors='replace').read())
+    if not re.search(r'uc_ctl_set_x86_vclock\s*\(\s*e->uc_\s*,\s*UC_X86_VCLOCK_VIRTUAL\s*,', eng):
+        fails.append('T  Emulator/src/engine.cpp does not open the engine with uc_ctl_set_x86_vclock( UC_X86_VCLOCK_VIRTUAL )')
+    return fails
+
+
 def main(argv):
     if len(argv) != 3 or argv[1] != '--build':
         print(__doc__.strip().splitlines()[-1])
@@ -258,6 +299,9 @@ def main(argv):
     for (rel, rid), ex in sorted(EXEMPT.items()):
         if (rel, rid) not in found:
             fails.append('exemption %s %s no longer found - remove it' % (rel, rid))
+    tf = time_path(root)
+    report.append('T  the time path: fork cpu_get_tsc virtual branch before the host ticks, engine.cpp UC_X86_VCLOCK_VIRTUAL: %s' % ('ok' if not tf else 'FAIL'))
+    fails += tf
     fails += runtime(root, build, report)
     for l in report:
         print(l)
@@ -266,7 +310,8 @@ def main(argv):
     if fails:
         print('no_host_passthrough: FAIL (%d problem(s))' % len(fails))
         return 1
-    print('no_host_passthrough: PASS (static: no Nt* / syscall / process-memory / host-KUSER / host-query / live System32 path in %d emulator files; '
+    print('no_host_passthrough: PASS (static: no Nt* / syscall / process-memory / host-KUSER / host-query / host-clock / live System32 path in %d emulator files; '
+          'the TSC of every emulator engine on the virtual time base; '
           'runtime: the emulated system call never reached the host)' % len(files))
     return 0
 

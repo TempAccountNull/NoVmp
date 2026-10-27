@@ -6,6 +6,7 @@
 #include <emu/input_file.hpp>
 #include <emu/output_file.hpp>
 #include <emu/win_fields.hpp>
+#include <emu/vclock.hpp>   // U2095 (plan 3.M6)
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -541,6 +542,18 @@ namespace emu::win
 			if ( c.counting || c.trace ) instrument( uc, address, size, c );
 		}
 
+		// U2095 (plan 3.M6): a guest read of KUSER_SHARED_DATA's time fields - they are rewritten from the one virtual time base first
+		// (the hook runs before the load; the page stays read-only for the guest). A clock that cannot be read stops the run loudly.
+		void on_kuser_time( uc_engine* uc, uc_mem_type, uint64_t, int, int64_t, void* user )
+		{
+			auto& c = *static_cast<process::hook_ctx*>( user );
+			if ( !c.p->refresh_kuser_time( uc ) )
+			{
+				c.stop( stop_kind::error, "KUSER_SHARED_DATA time fields: the virtual time base could not be read" );
+				uc_emu_stop( uc );
+			}
+		}
+
 		// U2020: a guest read of PEB / TEB / KUSER_SHARED_DATA (and the other structures the environment builds), named per member
 		void on_env_read( uc_engine*, uc_mem_type, uint64_t address, int size, int64_t, void* user )
 		{
@@ -845,6 +858,26 @@ namespace emu::win
 		return p;
 	}
 
+	// U2095 (plan 3.M6): KUSER_SHARED_DATA's time fields from the one virtual time base (emu/vclock.hpp), written into the page buffer the
+	// engine maps for the guest: InterruptTime (8H) and SystemTime (14H) as KSYSTEM_TIME {LowPart, High1Time, High2Time}, TickCount (320H,
+	// the TickCountQuad + High2Time); TickCountLowDeprecated (0H) stays 0 (measured tm_nt time.kuser)
+	bool process::refresh_kuser_time( uc_engine* uc )
+	{
+		vclock::reading rd;
+		std::string why;
+		if ( !kuser_page_ || !vclock::read( uc, tsc_hz_, rd, why ) ) return false;
+		auto ksystem_time = [ & ]( uint64_t off, uint64_t v ) {
+			const uint32_t lo = uint32_t( v ), hi = uint32_t( v >> 32 );
+			std::memcpy( kuser_page_.get() + off + 8, &hi, 4 );   // High2Time, LowPart, High1Time (the writer's order; one instruction boundary here)
+			std::memcpy( kuser_page_.get() + off, &lo, 4 );
+			std::memcpy( kuser_page_.get() + off + 4, &hi, 4 );
+		};
+		ksystem_time( layout::kuser_interrupt_time, rd.interrupt_time );
+		ksystem_time( layout::kuser_system_time, rd.system_time );
+		ksystem_time( layout::kuser_tick_count, rd.tick_count );
+		return true;
+	}
+
 	bool process::build( const environment_facts& f, const process_options& po, const std::vector<uint8_t>& file, std::string& error )
 	{
 		auto refuse = [ & ]( const std::string& why ) {
@@ -913,9 +946,31 @@ namespace emu::win
 			if ( !e_->map( va, n, prot, name, err ) ) return refuse( err );
 			return true;
 		};
+		// U2095 (plan 3.M6): KUSER_SHARED_DATA in an emulator-owned page buffer (read-only for the guest): the time fields are written there
+		// directly when the guest reads them
+		auto map_kuser = [ & ]() {
+			kuser_page_.reset( new uint8_t[ page_size ]() );
+			if ( !e_->map( guest_kuser_va, page_size, UC_PROT_READ, "KUSER_SHARED_DATA (synthesized, read-only)", err, kuser_page_.get() ) ) return refuse( err );
+			return true;
+		};
+		// U2095 (plan 3.M6): the one virtual time base - its TSC rate from the CPU profile (CPUID.15H / 16H per the SDM, the VMware guest's
+		// measured rate for the --guest profile), started at the process start (1 h of uptime, emu/vclock.hpp)
+		{
+			vclock::tsc_rate rate;
+			std::string why;
+			const bool guest_prof = e_->config().profile == cpu_profile_choice::guest && e_->config().cpuid_file.empty();
+			if ( !vclock::tsc_rate_of( e_->profile(), guest_prof, rate, why ) ) return refuse( "the virtual time base: " + why );
+			if ( !vclock::start( e_->handle(), rate.hz, why ) ) return refuse( "the virtual time base: " + why );
+			tsc_hz_ = rate.hz;
+			tsc_source_ = rate.source;
+			log_.push_back( "time base (U2095, plan 3.M6, emu/vclock.hpp): TSC " + std::to_string( rate.hz ) + " Hz from " + rate.source + "; " +
+							 std::to_string( vclock::ticks_per_insn ) + " TSC tick per instruction started; the process starts at InterruptTime " +
+							 std::to_string( vclock::uptime_at_start_hns ) + " x 100 ns (1 h), QPC = InterruptTime + " + std::to_string( vclock::interrupt_time_lag_hns ) +
+							 ", SystemTime = FILETIME " + hex( vclock::system_time_at_interrupt_zero ) + " (2026-01-01T00:00:00Z) + InterruptTime; never the host clock" );
+		}
 		if ( !map( stack_low, reserve, UC_PROT_READ | UC_PROT_WRITE, "stack (main thread, fully committed)" ) ||
 			 !map( guest_peb_va, page_size, UC_PROT_READ | UC_PROT_WRITE, "PEB" ) || !map( guest_teb_va, guest_teb_size, UC_PROT_READ | UC_PROT_WRITE, "TEB (main thread)" ) ||
-			 !map( guest_kuser_va, page_size, UC_PROT_READ, "KUSER_SHARED_DATA (synthesized, read-only)" ) ||
+			 !map_kuser() ||
 			 !map( guest_kernel_gdt_va, page_size, UC_PROT_READ, "emulator kernel: GDT" ) ||
 			 !map( guest_kernel_entry_va, page_size, UC_PROT_READ | UC_PROT_EXEC, "emulator kernel: system-call entry (SYSRETQ) + start stub" ) ||
 			 !map( guest_kernel_stack_va, page_size, UC_PROT_READ | UC_PROT_WRITE, "emulator kernel: stack page (IRETQ frames, U2030)" ) )
@@ -981,9 +1036,16 @@ namespace emu::win
 			 !w64( k + layout::kuser_safe_boot_mode, 0, 1, "KUSER SafeBootMode (2ECH)" ) ||
 			 !w64( k + layout::kuser_system_call, 0, 4, "KUSER SystemCall (308H, 0 = the stubs use SYSCALL)" ) ||
 			 !w64( k + layout::kuser_active_processor_count, f.processors, 4, "KUSER ActiveProcessorCount (3C0H)" ) ||
-			 !w64( k + layout::kuser_active_group_count, 1, 1, "KUSER ActiveGroupCount (3C4H)" ) )
+			 !w64( k + layout::kuser_active_group_count, 1, 1, "KUSER ActiveGroupCount (3C4H)" ) ||
+			 // U2095 (plan 3.M6): the time constants MEASURED in the VMware guest (tm_nt case time) and the time zone of the model (UTC)
+			 !w64( k + layout::kuser_tick_count_multiplier, vclock::tick_count_multiplier, 4, "KUSER TickCountMultiplier (4H, tm_nt time.res)" ) ||
+			 !w64( k + layout::kuser_qpc_frequency, vclock::qpc_frequency, 8, "KUSER QpcFrequency (300H, tm_nt time.qpf)" ) ||
+			 !w64( k + layout::kuser_time_zone_bias, 0, 8, "KUSER TimeZoneBias (20H: UTC, the model's time zone; High2Time below)" ) ||
+			 !w64( k + layout::kuser_time_zone_bias + 8, 0, 4, "KUSER TimeZoneBias.High2Time (28H)" ) )
 			return false;
-		env_lines_.push_back( "KUSER TickCountMultiplier / InterruptTime / SystemTime / TimeZoneBias / TickCount = 0 (the virtual time base is milestone M6)" );
+		if ( !refresh_kuser_time( e_->handle() ) ) return refuse( "KUSER time fields: the virtual time base could not be read" );
+		env_lines_.push_back( "KUSER time (U2095, plan 3.M6): TickCountMultiplier 0FA00000H, QpcFrequency 989680H (10 MHz), TimeZoneBias 0 (UTC), "
+							  "TickCountLowDeprecated 0; InterruptTime / SystemTime / TickCount from the one virtual time base, rewritten at every guest read" );
 		env_lines_.push_back( "KUSER ProcessorFeatures[64] = 0 (from the CPUID profile with their first consumer; none in milestone M5)" );
 
 		// PEB
@@ -1040,6 +1102,7 @@ namespace emu::win
 		kf.total_phys = f.total_phys;   // U2032
 		kf.processors = f.processors;
 		kf.rng_seed = rng_seed_;   // P39 (U2052): the seeded model's seed (decision D8) - the process cookie
+		kf.tsc_hz = tsc_hz_;       // U2095 (plan 3.M6): the virtual time base's TSC rate (NtQueryPerformanceCounter, waits)
 		kf.registry = facts_.registry.get();   // U2034 (facts_ owns it for the process' lifetime)
 		kf.files = facts_.files.get();         // P39 (U2057): KnownDlls sections map the captured images
 		kf.image_dir = make_identity( f, po.image_file_name ).image_dir;   // P39 (U2058): the emulated file system's one directory
@@ -1273,6 +1336,15 @@ namespace emu::win
 					log_.push_back( "FAILED: " + error );
 					return false;
 				}
+		// U2095 (plan 3.M6): KUSER_SHARED_DATA's time fields are rewritten from the virtual time base at every guest read of them
+		for ( auto [ lo, n ] : { std::pair<uint64_t, uint64_t>{ guest_kuser_va + layout::kuser_tick_count_low_deprecated, 0x2C },
+								std::pair<uint64_t, uint64_t>{ guest_kuser_va + layout::kuser_tick_count, 0x10 } } )
+			if ( uc_hook_add( uc, &h, UC_HOOK_MEM_READ, (void*)on_kuser_time, hc_.get(), lo, lo + n - 1 ) != UC_ERR_OK )
+			{
+				error = "uc_hook_add (KUSER time fields) failed";
+				log_.push_back( "FAILED: " + error );
+				return false;
+			}
 		// U2020: instrumentation - counters (CPUID / RDTSC / RDTSCP / RDPID, environment reads, the tail) and the trace file
 		r.probes.enabled = po_.counters;
 		hc_->counting = po_.counters;

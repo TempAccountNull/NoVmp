@@ -27,7 +27,8 @@
 //                             ProcessWow64Information (26), ProcessBreakOnTermination (29) - the classes winternl.h
 //                             documents with their semantics; every other class (e.g. 1EH / 1FH) = stop
 // Plan 3.M5 part 2 (U2030-U2035; nt_kernel_sys.cpp, each with its source there): NtContinue (a resume of the CONTEXT),
-//   NtQueryPerformanceCounter (the virtual clock: one 100 ns tick per instruction, 10 MHz - a stand-in for milestone M6),
+//   NtQueryPerformanceCounter (U2094, plan 3.M6: the one virtual time base, emu/vclock.hpp; M5's stand-in counted one 100 ns tick
+//   per instruction), NtQuerySystemTime / NtDelayExecution / time-outs of NtWaitForSingleObject (U2094: tm_nt case time),
 //   NtProtectVirtualMemory, NtAllocateVirtualMemoryEx, NtCreateEvent / NtSetEvent / NtResetEvent / NtClearEvent /
 //   NtWaitForSingleObject (one thread), NtQuerySystemInformation 0 / 3EH / 72H (C0H answered STATUS_INVALID_INFO_CLASS: no layout
 //   source), NtQueryInformationProcess 22H / 24H, NtQueryVirtualMemory classes 4 / 6 and image / mapped views, NtOpenKey(Ex) /
@@ -115,6 +116,7 @@ namespace emu::nt
 		uint64_t total_phys = 0;             // U2032: the platform profile's TotalPhys
 		uint32_t processors = 0;             // U2032: dwNumberOfProcessors
 		uint64_t rng_seed = 0;               // P39 (U2052): engine_config::rng_seed (decision D8) - the deterministic process cookie
+		uint64_t tsc_hz = 0;                 // U2094 (plan 3.M6): the TSC rate of the one virtual time base (emu/vclock.hpp; 0 = no clock)
 	};
 
 	// one system call as the guest made it
@@ -297,5 +299,13 @@ namespace emu::nt
 		uint32_t exit_status_ = 0;
 		uint64_t wnf_event_ = 0;                                // P41: the process' WNF notification event (0 = none)
 		bool wil_name( const object_attributes& oa, std::string& full, std::string& why );   // P41: the measured WIL staging name shape
+		// U2094 (plan 3.M6): the one virtual time base - NtQueryPerformanceCounter / NtQuerySystemTime read it, waits that time out
+		// advance it (NtDelayExecution, NtWaitForSingleObject with a time-out; tm_nt case time)
+		reply svc_time( const call& c );
+		// the 100-ns interval a LARGE_INTEGER time-out / delay at GUEST pointer P waits (negative relative, positive absolute system
+		// time, 0 none); false = a reply to return (bad pointer, a wait that never ends, no clock) in R
+		bool wait_interval( uint64_t p, const std::string& what, uint64_t& hns, reply& r );
+		bool time_now( uint64_t& qpc, uint64_t& system_time, std::string& why );
+		bool time_advance( uint64_t hns, std::string& why );
 	};
 }

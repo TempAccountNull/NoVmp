@@ -116,8 +116,10 @@ function Add-Exp( [string]$Id, [string]$File, [string]$Groups, [string[]]$Extra 
 # specs suite $Of exported, after $Of has finished. Verdict (kind snip): every expected-value case line of $Of replayed (the
 # "snippets:" count = Get-ExpectedCases of $Of), "expect differing: 0", "errors: 0", and the Unicorn engine state of the line
 # ("reference") equal except the lines $SnipReferenceKnown names for $Of, by exact count: values that come from the host
-# (RDTSC / the TSC MSR read the host clock until the virtual time base of milestone M6; --HostSeed RDRAND) differ between two
-# engines by design (U2101: PBNDKB's random IV / key come from the seeded CTR_DRBG, U2091 - no longer pinned). Kind snipbad (expect_selftest_bad): every one of its 7 wrong expectations is a
+# differ between two engines by design: since U2096 (plan 3.M6) only --HostSeed RDRAND / RDSEED (the host DRNG) - RDTSC / the TSC
+# MSRs run on the one virtual time base in both engines (emu-alltest exports the clock at the snippet start, config.tsc_start) and
+# PBNDKB's random IV / key come from the seeded CTR_DRBG (U2091); until M6 those 38 lines were pinned too (tscadj 5 x 7, cases_sysmsr 1,
+# cases_sysins 2). Kind snipbad (expect_selftest_bad): every one of its 7 wrong expectations is a
 # DIFF in emu-snippet too. A passing suite removes its spec file (build\x64\<config>\tests\snippet_replay\<id>.jsonl).
 function SnipExport( [string]$Id ) { return @( '--snippet-export', ( Join-Path $T "snippet_replay\$Id.jsonl" ) ) }
 function Add-Snip( [string]$Of, [string]$Groups, [string]$Kind = 'snip' )
@@ -127,10 +129,7 @@ function Add-Snip( [string]$Of, [string]$Groups, [string]$Kind = 'snip' )
 	$Suites[ $Suites.Count - 1 ] | Add-Member -NotePropertyName SnipOf -NotePropertyValue $Of
 }
 $SnipReferenceKnown = @{
-	# cases_tscadj.txt: 7 lines read RDTSC / IA32_TIME_STAMP_COUNTER (the host clock) into a compared register
-	'tscadj_host_p' = 7; 'tscadj_host_e' = 7; 'tscadj_guest' = 7; 'tscadj_vm' = 7; 'tscadj_max' = 7
-	'cases_rdrand_host' = 3   # --HostSeed: the host DRNG
-	'cases_sysmsr' = 1        # RDMSR IA32_TIME_STAMP_COUNTER (10H)
+	'cases_rdrand_host' = 3   # --HostSeed: the host DRNG (by design; U2096 resolved the 38 time / PBNDKB lines)
 }
 # a model's self-test (python MODEL --selftest, exit status 0)
 function Add-PySelftest( [string]$Id, [string]$Groups, [string]$Model )

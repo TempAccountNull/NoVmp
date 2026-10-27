@@ -139,9 +139,23 @@ namespace emu
 			return nullptr;
 		}
 		e->log_line( cfg.rng == rng_source::host_seed
-						 ? std::string( "rng: --HostSeed (decision D8): RDRAND / RDSEED from the host DRNG, executed by the fork (U835)" )
+						 ? std::string( "rng: --HostSeed (decision D8): RDRAND / RDSEED from the host DRNG, executed by the fork (U835); the "
+										"environment's own random values stay the seeded CTR_DRBG (U2093)" )
 						 : "rng: --seeded (default, decision D8): deterministic model, seed " + hex( cfg.rng_seed ) +
-							   " (fork U835: value n = SplitMix64(seed + n * 9E3779B97F4A7C15H), CF = 1)" );
+							   " (fork U2091: value n = the n-th 64-bit output of a CTR_DRBG, NIST SP 800-90A Rev. 1 10.2.1, AES-128, no derivation "
+							   "function, entropy input = the seed || 24 zero bytes; CF = 1)" );
+
+		// 4b. U2092 (plan 3.M6): the one virtual time base, never the host clock
+		if ( !cfg.tsc_per_insn )
+		{
+			error = "tsc_per_insn 0: the virtual time base must advance";
+			e->log_line( "REFUSED: " + error );
+			return nullptr;
+		}
+		if ( !step( uc_ctl_set_x86_vclock( e->uc_, UC_X86_VCLOCK_VIRTUAL, cfg.tsc_start, cfg.tsc_per_insn ),
+					"virtual time base (fork U2090 UC_CTL_X86_VCLOCK): TSC = " + hex( cfg.tsc_start ) + " + " + std::to_string( cfg.tsc_per_insn ) +
+						" tick(s) per instruction started (never the host clock)" ) )
+			return nullptr;
 
 		// 3. the CPUID profile at uc_open (1.J.47.a), before any memory map / register access
 		if ( e->has_profile() )
@@ -235,9 +249,9 @@ namespace emu
 		return ue;
 	}
 
-	bool engine::map( uint64_t base, uint64_t size, uint32_t prot, const std::string& name, std::string& error )
+	bool engine::map( uint64_t base, uint64_t size, uint32_t prot, const std::string& name, std::string& error, void* backing )
 	{
-		const std::string what = "map " + name + " [" + hex( base ) + ", +" + hex( size ) + ") " + prot_text( prot );
+		const std::string what = "map " + name + " [" + hex( base ) + ", +" + hex( size ) + ") " + prot_text( prot ) + ( backing ? " (emulator-owned buffer, U2092)" : "" );
 		auto refuse = [ & ]( const std::string& why ) {
 			error = what + ": " + why;
 			log_line( "REFUSED " + error );
@@ -252,8 +266,8 @@ namespace emu
 			return refuse( "more than max_mapped_bytes " + hex( cfg_.max_mapped_bytes ) + " in total" );
 		for ( const auto& r : regions_ )
 			if ( base <= r.base + ( r.size - 1 ) && r.base <= last ) return refuse( "overlaps " + r.name );
-		const uc_err ue = uc_mem_map( uc_, base, size, prot );
-		if ( ue != UC_ERR_OK ) return refuse( std::string( "uc_mem_map: " ) + uc_strerror( ue ) );
+		const uc_err ue = backing ? uc_mem_map_ptr( uc_, base, size, prot, backing ) : uc_mem_map( uc_, base, size, prot );
+		if ( ue != UC_ERR_OK ) return refuse( std::string( backing ? "uc_mem_map_ptr: " : "uc_mem_map: " ) + uc_strerror( ue ) );
 		mapped_region r{ base, size, prot, name };
 		regions_.insert( std::upper_bound( regions_.begin(), regions_.end(), base, []( uint64_t b, const mapped_region& x ) { return b < x.base; } ), r );
 		mapped_bytes_ += size;

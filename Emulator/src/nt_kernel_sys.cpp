@@ -5,8 +5,11 @@
 // STOPPED loudly when no source states what Windows answers. Same rules as nt_kernel.cpp: guest pointers probed, OUT parameters
 // written only on success, nothing forwarded to the host.
 #include <emu/nt_kernel.hpp>
+#include <emu/ctr_drbg.hpp>   // U2093
+#include <emu/vclock.hpp>     // U2094
 
 #include <algorithm>
+#include <cstdint>
 #include <cctype>
 #include <cstdio>
 #include <cstring>
@@ -39,10 +42,93 @@ namespace emu::nt
 			return r;
 		}
 
-		// the virtual clock of milestone M5 part 2 (a stand-in for the one virtual time base of milestone M6): one tick of 100 ns
-		// per instruction executed; QPC frequency 10 MHz = TICKSPERSEC (Wine 11.0 dlls/ntdll/unix/sync.c:2470-2476
-		// NtQueryPerformanceCounter: the counter and, when asked, the frequency TICKSPERSEC)
-		constexpr uint64_t qpc_frequency = 10000000;
+		// U2094 (plan 3.M6): the counter comes from the one virtual time base (emu/vclock.hpp); M5 part 2's stand-in (one 100-ns tick
+		// per instruction) is gone. QPC frequency 10 MHz: MEASURED (tm_nt time.qpf / time.nqpc: QueryPerformanceFrequency = KUSER
+		// QpcFrequency = the frequency NtQueryPerformanceCounter writes = 989680H)
+		constexpr uint64_t qpc_frequency = vclock::qpc_frequency;
+	}
+
+	// ------------------------------------------------------------------------------------------------ time (U2094, plan 3.M6)
+	bool kernel::time_now( uint64_t& qpc, uint64_t& system_time, std::string& why )
+	{
+		vclock::reading rd;
+		if ( !vclock::read( e_.handle(), f_.tsc_hz, rd, why ) ) return false;
+		qpc = rd.qpc;
+		system_time = rd.system_time;
+		return true;
+	}
+
+	bool kernel::time_advance( uint64_t hns, std::string& why ) { return !hns || vclock::advance_hns( e_.handle(), f_.tsc_hz, hns, why ); }
+
+	// a LARGE_INTEGER time-out / interval (phnt ntexapi.h:26-47 NtDelayExecution: "A negative value specifies an interval relative to
+	// the current time. A positive value specifies an absolute time ... since January 1, 1601 (UTC). A value of zero causes the thread
+	// to relinquish the remainder of its time slice"; the same encoding for NtWaitForSingleObject's Timeout, km\wdm.h KeWaitForSingleObject)
+	bool kernel::wait_interval( uint64_t p, const std::string& what, uint64_t& hns, reply& r )
+	{
+		uint64_t t = 0;
+		if ( !user_buffer( p, 8, UC_PROT_READ ) || !get64( p, t ) )
+		{
+			r = done_( status::access_violation, what + " " + hex( p ) + " not readable (probe)" );
+			return false;
+		}
+		const int64_t v = int64_t( t );
+		std::string why;
+		uint64_t qpc = 0, now = 0;
+		if ( !time_now( qpc, now, why ) )
+		{
+			r = stop_( what + ": " + why );
+			return false;
+		}
+		if ( v == INT64_MIN )
+		{
+			// 8000000000000000H = the INFINITE interval kernelbase passes for Sleep( INFINITE ): one thread - nothing ends the wait
+			r = stop_( what + " " + hex( t ) + " (an infinite wait): the process has one thread - nothing can end it" );
+			return false;
+		}
+		hns = v < 0 ? uint64_t( -v ) : ( v > 0 && uint64_t( v ) > now ? uint64_t( v ) - now : 0 );
+		return true;
+	}
+
+	reply kernel::svc_time( const call& c )
+	{
+		const std::string& n = c.name;
+		std::string why;
+		uint64_t qpc = 0, st = 0;
+		if ( n == "NtQueryPerformanceCounter" )
+		{
+			// phnt ntexapi.h:2267-2284 (PerformanceCounter required, PerformanceFrequency optional); MEASURED tm_nt time.nqpc*: (&c, &f) and
+			// (&c, NULL) = STATUS_SUCCESS, (NULL, &f) = STATUS_ACCESS_VIOLATION; the counter = the virtual time base's QPC
+			const uint64_t pc = c.args[ 0 ], pf = c.args[ 1 ];
+			if ( !user_buffer( pc, 8, UC_PROT_WRITE ) || ( pf && !user_buffer( pf, 8, UC_PROT_WRITE ) ) )
+				return done_( status::access_violation, "PerformanceCounter " + hex( pc ) + " / PerformanceFrequency " + hex( pf ) + ": not writable user memory (probe)" );
+			if ( !time_now( qpc, st, why ) ) return stop_( "NtQueryPerformanceCounter: " + why );
+			reply r = done_( status::success, "the virtual time base: counter " + hex( qpc ) + ", frequency 10 MHz (emu/vclock.hpp)" );
+			if ( !put( pc, &qpc, 8, r ) || ( pf && !put( pf, &qpc_frequency, 8, r ) ) ) return stop_( "writing the result failed after the probe" );
+			return r;
+		}
+		if ( n == "NtQuerySystemTime" )
+		{
+			// um\winternl.h NtQuerySystemTime / phnt ntexapi.h:2194-2206; MEASURED tm_nt time.st*: STATUS_SUCCESS with the KUSER SystemTime
+			// of that moment; NULL = STATUS_ACCESS_VIOLATION
+			if ( !user_buffer( c.args[ 0 ], 8, UC_PROT_WRITE ) ) return done_( status::access_violation, "SystemTime " + hex( c.args[ 0 ] ) + " not writable (probe)" );
+			if ( !time_now( qpc, st, why ) ) return stop_( "NtQuerySystemTime: " + why );
+			reply r = done_( status::success, "the virtual time base: SystemTime " + hex( st ) + " (FILETIME, UTC)" );
+			if ( !put( c.args[ 0 ], &st, 8, r ) ) return stop_( "writing the result failed after the probe" );
+			return r;
+		}
+		// NtDelayExecution( Alertable, DelayInterval ): phnt ntexapi.h:26-47; MEASURED tm_nt time.delay*: STATUS_SUCCESS for a relative,
+		// absolute (future or past) and zero interval and for Alertable TRUE with no APC queued (none can be: one thread, no APC
+		// service); NULL = STATUS_ACCESS_VIOLATION; the time passes - the virtual time base advances by the interval
+		uint64_t hns = 0, raw = 1;
+		reply r;
+		if ( !wait_interval( c.args[ 1 ], "DelayInterval", hns, r ) ) return r;
+		if ( get64( c.args[ 1 ], raw ) && raw == 0 )
+			// a zero interval is a yield (phnt: "relinquish the remainder of its time slice"); MEASURED tm_nt time.delay.zero: SUCCESS or
+			// 40000024H STATUS_NO_YIELD_PERFORMED (shared\ntstatus.h) by whether another thread was ready - one thread here: none was
+			return done_( 0x40000024, "NtDelayExecution( 0 ): a yield with no other thread ready - STATUS_NO_YIELD_PERFORMED, no time passes" );
+		if ( !time_advance( hns, why ) ) return stop_( "NtDelayExecution: " + why );
+		return done_( status::success, "NtDelayExecution( Alertable " + std::to_string( c.args[ 0 ] & 0xFF ) + " ): " + std::to_string( hns ) +
+										   " x 100 ns passed on the virtual time base" );
 	}
 
 	uint64_t kernel::open_handle( const object& o )
@@ -56,18 +142,9 @@ namespace emu::nt
 	bool kernel::dispatch_more( const call& c, reply& r )
 	{
 		const std::string& n = c.name;
-		if ( n == "NtQueryPerformanceCounter" )
+		if ( n == "NtQueryPerformanceCounter" || n == "NtQuerySystemTime" || n == "NtDelayExecution" )
 		{
-			// no SDK / WDK prototype (KeQueryPerformanceCounter only, km\ntifs.h:21357); Wine sync.c:2470: Counter (required), Frequency (optional)
-			const uint64_t pc = c.args[ 0 ], pf = c.args[ 1 ];
-			if ( !user_buffer( pc, 8, UC_PROT_WRITE ) || ( pf && !user_buffer( pf, 8, UC_PROT_WRITE ) ) )
-			{
-				r = done_( status::access_violation, "PerformanceCounter " + hex( pc ) + " / PerformanceFrequency " + hex( pf ) + ": not writable user memory (probe)" );
-				return true;
-			}
-			const uint64_t v = c.insns;
-			r = done_( status::success, "the virtual clock: counter " + hex( v ) + " (one tick per instruction), frequency 10 MHz" );
-			if ( !put( pc, &v, 8, r ) || ( pf && !put( pf, &qpc_frequency, 8, r ) ) ) r = stop_( "writing the result failed after the probe" );
+			r = svc_time( c );   // U2094 (plan 3.M6)
 			return true;
 		}
 		if ( n == "NtProtectVirtualMemory" )
@@ -312,18 +389,16 @@ namespace emu::nt
 			{
 				// P39 (U2052): MEASURED natively (tm_nt qip.24*): a NON-ZERO 4-byte value, equal on every query in one process (a
 				// per-process secret: Windows picks it at random - the value itself is never recorded). Replaces Wine's stub 0 (P36). The
-				// emulator's value is deterministic: SplitMix64 (Steele / Lea / Flood, "Fast splittable pseudorandom number generators",
-				// OOPSLA 2014 - the finalizer constants of the published algorithm) of the seeded model's seed (decision D8), low 32 bits,
-				// never 0 - a model choice with the measured shape, not a Windows value
-				uint64_t z = f_.rng_seed + 0x9E3779B97F4A7C15ull * 0x24;
-				z = ( z ^ ( z >> 30 ) ) * 0xBF58476D1CE4E5B9ull;
-				z = ( z ^ ( z >> 27 ) ) * 0x94D049BB133111EBull;
-				z ^= z >> 31;
-				uint32_t v = uint32_t( z );
+				// emulator's value is deterministic: U2093 (plan 3.M6, "any emulated random source" of --seeded = CTR_DRBG) - the first
+				// 64-bit value of the environment's CTR_DRBG (emu/ctr_drbg.hpp: NIST SP 800-90A Rev. 1 10.2.1, AES-128, the seed of decision
+				// D8, personalization "NoVmp environment"), low 32 bits, never 0 - a model choice with the measured shape, not a Windows
+				// value (P39 used SplitMix64)
+				ctr_drbg env_rng( f_.rng_seed, environment_personalization );
+				uint32_t v = uint32_t( env_rng.next() );
 				if ( !v ) v = 1;
 				data.assign( 4, 0 );
 				std::memcpy( data.data(), &v, 4 );
-				what = "ProcessCookie " + hex( v ) + " (non-zero, per process - measured shape tm_nt qip.24; the value: SplitMix64 of the seed, a model choice)";
+				what = "ProcessCookie " + hex( v ) + " (non-zero, per process - measured shape tm_nt qip.24; the value: the environment's CTR_DRBG of the seed, a model choice)";
 				break;
 			}
 			case 0x31:
@@ -631,12 +706,17 @@ namespace emu::nt
 				if ( ev.kind == "event (synchronization)" ) ev.value = 0;   // a synchronization event is reset by a satisfied wait
 				return done_( status::success, "event " + hex( c.args[ 0 ] ) + " signaled: the wait is satisfied" );
 			}
-			uint64_t t = 1;
-			if ( c.args[ 2 ] && ( !user_buffer( c.args[ 2 ], 8, UC_PROT_READ ) || !get64( c.args[ 2 ], t ) ) )
-				return done_( status::access_violation, "Timeout " + hex( c.args[ 2 ] ) + " not readable" );
-			if ( c.args[ 2 ] && t == 0 ) return done_( 0x102, "event " + hex( c.args[ 0 ] ) + " not signaled, zero timeout: STATUS_TIMEOUT" );
-			return stop_( "NtWaitForSingleObject on the non-signaled event " + hex( c.args[ 0 ] ) + ( c.args[ 2 ] ? " with a timeout" : " without a timeout" ) +
-						  ": the process has one thread - nothing can signal it (time-outs need the virtual time base, milestone M6)" );
+			if ( !c.args[ 2 ] )
+				return stop_( "NtWaitForSingleObject on the non-signaled event " + hex( c.args[ 0 ] ) + " without a timeout: the process has one thread - nothing can signal it" );
+			// U2094 (plan 3.M6): the time-out passes on the one virtual time base, then STATUS_TIMEOUT (102H) - MEASURED tm_nt time.wait /
+			// time.wait.past (a relative 10 ms and an absolute past time-out on a non-signaled notification event: 102H); a zero time-out = 102H
+			uint64_t hns = 0;
+			reply wr;
+			if ( !wait_interval( c.args[ 2 ], "Timeout", hns, wr ) ) return wr;
+			std::string why;
+			if ( !time_advance( hns, why ) ) return stop_( "NtWaitForSingleObject: " + why );
+			return done_( 0x102, "event " + hex( c.args[ 0 ] ) + " not signaled: the time-out of " + std::to_string( hns ) +
+									 " x 100 ns passed on the virtual time base - STATUS_TIMEOUT" );
 		}
 		const uint64_t pprev = n == "NtClearEvent" ? 0 : c.args[ 1 ];
 		if ( pprev && !user_buffer( pprev, 4, UC_PROT_WRITE ) ) return done_( status::access_violation, "PreviousState " + hex( pprev ) + " not writable" );
