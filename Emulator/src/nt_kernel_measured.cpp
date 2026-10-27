@@ -11,6 +11,7 @@
 #include <emu/win_process.hpp>   // U2105: emu::win::system_image_slot (the KnownDlls slots)
 #include <emu/vclock.hpp>        // U2107: the model's boot time (the file-time placeholder)
 
+#include <algorithm>   // P45 (U2135): std::min / std::max
 #include <cstdio>
 #include <cstring>
 
@@ -227,7 +228,31 @@ namespace emu::nt
 			r = svc_query_attributes_file( c );   // P43 (U2107)
 			return true;
 		}
-		if ( c.name == "NtCreateFile" ) return svc_create_file_measured( c, r );
+		if ( c.name == "NtCreateFile" )
+		{
+			if ( !svc_create_file_measured( c, r ) ) r = vfs_create_file( c );   // P45 (U2129): the emulated file system (nt_kernel_vfs.cpp)
+			return true;
+		}
+		if ( c.name == "NtAddAtomEx" || c.name == "NtFindAtom" || c.name == "NtDeleteAtom" || c.name == "NtQueryInformationAtom" )
+		{
+			r = svc_add_atom( c );   // P45 (U2137): the atom table
+			return true;
+		}
+		if ( c.name == "NtReadVirtualMemory" )
+		{
+			r = svc_read_virtual_memory( c );   // P45 (U2135)
+			return true;
+		}
+		if ( c.name == "NtQueryFullAttributesFile" )
+		{
+			r = svc_query_full_attributes_file( c );   // P45 (U2129)
+			return true;
+		}
+		if ( c.name == "NtQueryDirectoryFile" || c.name == "NtQueryDirectoryFileEx" )
+		{
+			r = svc_query_directory_file( c, c.name == "NtQueryDirectoryFileEx" );   // P45 (U2129)
+			return true;
+		}
 		return false;
 	}
 
@@ -468,7 +493,13 @@ namespace emu::nt
 				// tm_nt etw.reg8 / .reg9 / .reg10: STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
 				{ { 0x2E, 0xCD, 0x5B, 0xF2, 0x90, 0x26, 0xDC, 0x55, 0x3B, 0xC4, 0x07, 0xB6, 0x5B, 0x1B, 0x41, 0xC9 }, 8, true, "tm_nt etw.reg8" },
 				{ { 0xAC, 0x5E, 0xB7, 0x5F, 0x0B, 0x9F, 0x0C, 0x55, 0x33, 0x9F, 0xFC, 0x21, 0xFD, 0xE9, 0x66, 0xCD }, 9, true, "tm_nt etw.reg9" },
-				{ { 0x25, 0x0E, 0x91, 0xE0, 0xCC, 0x6F, 0x32, 0x4F, 0x8F, 0x5E, 0xA4, 0x2C, 0xF7, 0xAC, 0xC5, 0xC3 }, 10, true, "tm_nt etw.reg10" } };
+				{ { 0x25, 0x0E, 0x91, 0xE0, 0xCC, 0x6F, 0x32, 0x4F, 0x8F, 0x5E, 0xA4, 0x2C, 0xF7, 0xAC, 0xC5, 0xC3 }, 10, true, "tm_nt etw.reg10" },
+				// P45 (U2139): dxgi's provider 03BBE5B8-C788-4D0B-B47E-5B5731398A89 (sample exploration x4 system call 601: RegType 3, LoggerId 11,
+				// ReplyCallback set) - MEASURED tm_nt etw.reg11: STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0xB8, 0xE5, 0xBB, 0x03, 0x88, 0xC7, 0x0B, 0x4D, 0xB4, 0x7E, 0x5B, 0x57, 0x31, 0x39, 0x8A, 0x89 }, 11, true, "tm_nt etw.reg11" },
+				// P45 (U2139): dxgi's second provider CA11C036-0102-4A2D-A6AD-F03CFED5D3C9 (sample exploration x6 system call 603: LoggerId 12,
+				// ReplyCallback set) - MEASURED tm_nt etw.reg12: STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0x36, 0xC0, 0x11, 0xCA, 0x02, 0x01, 0x2D, 0x4A, 0xA6, 0xAD, 0xF0, 0x3C, 0xFE, 0xD5, 0xD3, 0xC9 }, 12, true, "tm_nt etw.reg12" } };
 			uint8_t d[ 0xA0 ] = {};
 			std::string err, guid;
 			if ( ilen != 0xA0 || olen != 0xA0 || c.args[ 1 ] != c.args[ 3 ] || !user_buffer( c.args[ 1 ], 0xA0, UC_PROT_READ | UC_PROT_WRITE ) )
@@ -528,7 +559,9 @@ namespace emu::nt
 							   ( pn == "FE5EF905757FC749A99460A55CC09571" && sz == 0x39 ) || ( pn == "58446CE380EDD74AA8BE52DDA1EB5F1C" && sz == 0x39 ) ||
 							   // P44 (U2121): user32's three traits (tm_nt etwt8 / etwt9 / etwt10: STATUS_SUCCESS, ReturnLength 0, no output)
 							   ( pn == "2ECD5BF29026DC553BC407B65B1B41C9" && sz == 0x2E ) || ( pn == "AC5EB75F0B9F0C55339FFC21FDE966CD" && sz == 0x0C ) ||
-							   ( pn == "250E91E0CC6F324F8F5EA42CF7ACC5C3" && sz == 0x26 );
+							   ( pn == "250E91E0CC6F324F8F5EA42CF7ACC5C3" && sz == 0x26 ) ||
+							   // P45 (U2139): dxgi's traits (tm_nt etwt11: STATUS_SUCCESS, ReturnLength 0, no output)
+							   ( pn == "B8E5BB0388C70B4DB47E5B5731398A89" && sz == 0x35 );
 			if ( hr == handles_.end() || hr->second.kind != "etw registration" || !known || !user_buffer( blob, sz, UC_PROT_READ ) )
 				return stop_( what + " - EtwSetProviderTraitsCode for handle " + hex( h ) + ", traits size " + hex( sz ) + ": not measured (tm_nt etwt*: the four providers' blobs are)" );
 			if ( c.args[ 5 ] && !user_buffer( c.args[ 5 ], 4, UC_PROT_WRITE ) ) return done_( status::access_violation, what + ": ReturnLength not writable" );
@@ -813,11 +846,11 @@ namespace emu::nt
 
 	// NtOpenFile( *FileHandle, DesiredAccess, ObjectAttributes, IoStatusBlock, ShareAccess, OpenOptions ) - phnt ntioapi.h:2294-2301 (the
 	// WDK's ZwOpenFile documents the call). The emulated file system holds exactly what the environment presents: the process image's
-	// directory (the CurrentDirectory of its parameters) - every other path is a loud stop until the environment holds it. MEASURED
-	// (tm_nt of.*): the loader's call - access 100020H, "\??\<current directory>\" OBJ_CASE_INSENSITIVE, ShareAccess 3, OpenOptions 21H -
-	// = STATUS_SUCCESS, a handle (non-zero, multiple of 4), IoStatus {STATUS_SUCCESS, Information 1 = FILE_OPENED}; NtClose =
-	// STATUS_SUCCESS; a directory that does not exist = STATUS_OBJECT_NAME_NOT_FOUND, nothing written (not used: no path outside the
-	// environment is answered "absent" - it stops).
+	// directory (the CurrentDirectory of its parameters). MEASURED (tm_nt of.*): the loader's call - access 100020H, "\??\<current
+	// directory>\" OBJ_CASE_INSENSITIVE, ShareAccess 3, OpenOptions 21H - = STATUS_SUCCESS, a handle (non-zero, multiple of 4), IoStatus
+	// {STATUS_SUCCESS, Information 1 = FILE_OPENED}; NtClose = STATUS_SUCCESS. P45 (U2129, USER DECISION 2026-10-27 "virtual FS, measured
+	// misses"): every other path / argument set is answered by the emulated file system (nt_kernel_vfs.cpp): a miss with the measured status
+	// of its kind (tm_nt fs.* / of.missing), a path of the model with an operation that was not measured = a loud stop.
 	reply kernel::svc_open_file( const call& c )
 	{
 		if ( !c.stack_args ) return stop_( "NtOpenFile: the stack arguments are not readable" );
@@ -856,8 +889,7 @@ namespace emu::nt
 			if ( !put( ph, &h, 8, rs ) || !put( iosb, io, 16, rs ) ) return stop_( "writing the result failed after the probe" );
 			return rs;
 		}
-		if ( !curdir ) return stop_( what + " - the path is not in the emulated file system (it holds the image's directory and the system directory's captured files only) - not measured" );
-		if ( access != 0x100020 || share != 3 || options != 0x21 || !( oa.attributes & 0x40 ) ) return stop_( what + " - the image directory with other arguments: not measured (tm_nt of.curdir)" );
+		if ( !curdir || access != 0x100020 || share != 3 || options != 0x21 || oa.attributes != 0x40 ) return vfs_open_file( c, oa, what );   // P45 (U2129)
 		if ( !user_buffer( ph, 8, UC_PROT_WRITE ) || !user_buffer( iosb, 16, UC_PROT_WRITE ) ) return done_( status::access_violation, what + ": FileHandle / IoStatusBlock not writable" );
 		object o;
 		o.kind = "file (directory)";
@@ -1000,12 +1032,13 @@ namespace emu::nt
 												  "win32u.dll", "ucrtbase.dll", "msvcp_win.dll", "gdi32full.dll", "gdi32.dll", "user32.dll", "dxgi.dll", "d3d11.dll", "rpcrt4.dll",
 												  "combase.dll", "kernel.appcore.dll", "dcomp.dll", "ole32.dll", "shell32.dll", "ws2_32.dll", "bcrypt.dll", "sechost.dll",
 												  "advapi32.dll", "cfgmgr32.dll", "transparent_makimav2.exe",
-												  "t6_user32.exe", "imm32.dll" };   // P44 (U2121): ahc.33 test PE T6's image name, ahc.34 IMM32.DLL (user32 loads it)
+												  "t6_user32.exe", "imm32.dll",   // P44 (U2121): ahc.33 test PE T6's image name, ahc.34 IMM32.DLL (user32 loads it)
+												  "t7_vfs.exe" };   // P45 (U2129): ahc.35 test PE T7's image name
 		static const char* const measured80[] = { "msvcrt.dll", "oleaut32.dll", "dwmapi.dll", "setupapi.dll" };
 		uint32_t outv = 0xFFFFFFFF;
 		for ( const char* m : measured0 ) if ( ln == m ) outv = 0;
 		for ( const char* m : measured80 ) if ( ln == m ) outv = 0x80;
-		if ( outv == 0xFFFFFFFF ) return stop_( what + " - this module name is not measured (tm_nt ahc.0 .. ahc.34)" );
+		if ( outv == 0xFFFFFFFF ) return stop_( what + " - this module name is not measured (tm_nt ahc.0 .. ahc.35)" );
 		if ( !user_buffer( pout, 4, UC_PROT_WRITE ) ) return stop_( what + " - ParamsOut not writable: not measured" );
 		reply rr = done_( status::success, what + ": ParamsOut = " + hex( outv ) + ( outv ? " (as the guest's lookup answers this name)" : " (no compatibility-database entry)" ) + " (measured: tm_nt ahc)" );
 		if ( !put( pout, &outv, 4, rr ) ) return stop_( "writing ParamsOut failed after the probe" );
@@ -1075,10 +1108,10 @@ namespace emu::nt
 		const uint64_t out = c.args[ 1 ];
 		const std::string what = "NtQueryAttributesFile( \"" + oa.name + "\", attributes " + hex( oa.attributes ) + ( oa.root ? ", root " + hex( oa.root ) : std::string() ) +
 								 ", FileInformation " + hex( out ) + " )";
-		if ( oa.attributes != 0x840 ) return stop_( what + " - other attributes: not measured (tm_nt sp: 840H)" );
 		std::string file;
 		if ( sysdir_file( oa, file ) )
 		{
+			if ( oa.attributes != 0x840 ) return stop_( what + " - a captured system-directory file with other attributes: not measured (tm_nt sp.sys: 840H)" );
 			if ( !user_buffer( out, 0x28, UC_PROT_WRITE ) ) return done_( status::access_violation, what + ": FileInformation not writable" );
 			uint8_t b[ 0x28 ] = {};
 			for ( int k = 0; k < 4; k++ ) std::memcpy( b + 8 * k, &vclock::system_time_at_interrupt_zero, 8 );
@@ -1087,17 +1120,9 @@ namespace emu::nt
 			if ( !put( out, b, 0x28, rs ) ) return stop_( "writing the result failed after the probe" );
 			return rs;
 		}
-		std::string dir = lower( f_.image_dir );
-		while ( !dir.empty() && dir.back() == '\\' ) dir.pop_back();
-		const std::string n = lower( oa.name ), pre = "\\??\\" + dir + "\\";
-		const std::string img = lower( f_.image_name );
-		if ( !oa.root && !dir.empty() && n.size() > pre.size() && n.compare( 0, pre.size(), pre ) == 0 && n.find( '\\', pre.size() ) == std::string::npos && n.substr( pre.size() ) != img )
-		{
-			if ( !user_buffer( out, 0x24, UC_PROT_WRITE ) ) return done_( status::access_violation, what + ": FileInformation not writable" );
-			// P44 (U2111): the image's directory is on the system volume - nothing is written (measured: tm_nt sp.app from the system volume)
-			return done_( status::object_name_not_found, what + ": the image's directory holds only the image - STATUS_OBJECT_NAME_NOT_FOUND, nothing written (measured: tm_nt sp.app, system volume)" );
-		}
-		return stop_( what + " - the path is not answered by the emulated file system (the image's directory, the system directory's captured files) - not measured" );
+		// P45 (U2129): every other path - the emulated file system (nt_kernel_vfs.cpp): a name missing in the image's directory with 840H is
+		// tm_nt fs.dir.qa2 (= sp.app, P44 U2111: the image's directory lies on the system volume - nothing written)
+		return vfs_query_attributes( c, oa, false, what );
 	}
 
 	// NtCreateSection( *SectionHandle, DesiredAccess, ObjectAttributes, MaximumSize, SectionPageProtection, AllocationAttributes, FileHandle )
@@ -1464,7 +1489,7 @@ namespace emu::nt
 	{
 		const uint32_t cls = uint32_t( c.args[ 0 ] ), len = uint32_t( c.args[ 2 ] );
 		const uint64_t out = c.args[ 1 ], pret = c.args[ 3 ];
-		if ( cls != 0xC5 && cls != 0x37 && cls != 0xC0 && cls != 0x32 ) return false;
+		if ( cls != 0xC5 && cls != 0x37 && cls != 0xC0 && cls != 0x32 && cls != 1 ) return false;   // P45 (U2140): + class 1
 		if ( pret && !user_buffer( pret, 4, UC_PROT_WRITE ) )
 		{
 			r = done_( status::access_violation, "ReturnLength " + hex( pret ) + " not writable" );
@@ -1479,6 +1504,21 @@ namespace emu::nt
 			r = done_( st, what );
 			if ( ( !data.empty() && !put( out, data.data(), data.size(), r ) ) || ( pret && !put( pret, &rl, 4, r ) ) ) r = stop_( "writing the result failed after the probe" );
 		};
+		if ( cls == 1 )
+		{
+			// P45 (U2140): 1 SystemProcessorInformation (phnt ntexapi.h SYSTEM_INFORMATION_CLASS; SYSTEM_PROCESSOR_INFORMATION {USHORT
+			// ProcessorArchitecture, USHORT ProcessorLevel, USHORT ProcessorRevision, USHORT MaximumProcessors, ULONG ProcessorFeatureBits},
+			// CH bytes) - d3d11's DllMain (sample exploration x7 system call 632). MEASURED (tm_nt qsi.1*, the VMware guest): Length CH / 10H =
+			// STATUS_SUCCESS, the 12 bytes 09 00 06 00 01 B7 08 00 FF BD 9B BD (AMD64, family 6, model B7H stepping 1, 8 processors, the
+			// feature bits), ReturnLength CH; Length 0 / 8 = STATUS_INFO_LENGTH_MISMATCH, ReturnLength CH, nothing written. The environment
+			// (its CPUID profile: family 6 model B7H stepping 1; 8 processors) is the measured one; other lengths: stop.
+			if ( f_.processors != 8 ) { r = stop_( "SystemProcessorInformation: an environment with " + std::to_string( f_.processors ) + " processors - not measured (8 are)" ); return true; }
+			if ( len == 0 || len == 8 ) { finish( status::info_length_mismatch, "SystemProcessorInformation: Length " + hex( len ) + " - STATUS_INFO_LENGTH_MISMATCH, ReturnLength CH (measured: tm_nt qsi.1.0 / .8)", {}, 0xC ); return true; }
+			if ( len != 0xC && len != 0x10 ) { r = stop_( "SystemProcessorInformation: Length " + hex( len ) + " - not measured (0, 8, CH, 10H are)" ); return true; }
+			const std::vector<uint8_t> d = { 0x09, 0x00, 0x06, 0x00, 0x01, 0xB7, 0x08, 0x00, 0xFF, 0xBD, 0x9B, 0xBD };
+			finish( status::success, "SystemProcessorInformation: AMD64, level 6, revision B701H, 8 processors, feature bits BD9BBDFFH (measured: tm_nt qsi.1)", d, 0xC );
+			return true;
+		}
 		if ( cls == 0x32 )
 		{
 			// 32H SystemRangeStartInformation (phnt ntexapi.h SYSTEM_INFORMATION_CLASS; ULONG_PTR). MEASURED (tm_nt qsi.32*): Length 8 =
@@ -2221,5 +2261,150 @@ namespace emu::nt
 			return stop_( what + " - not measured (tm_nt t2s: a timer2, a relative DueTime, no Period, Parameters Version 0)" );
 		it->second.value = uint64_t( due );
 		return done_( status::success, what + ": armed (relative " + std::to_string( -due / 10000000 ) + " s; never expires in the emulated run - virtual time is M6) (measured: tm_nt t2s.set)" );
+	}
+
+	// P45 (U2137): the atom table - NtAddAtomEx( AtomName, Length, Atom, Flags ) phnt ntexapi.h:10140-10146, NtFindAtom( AtomName, Length, Atom )
+	// :10163, NtDeleteAtom( Atom ) :10183, NtQueryInformationAtom( Atom, AtomInformationClass, AtomInformation, Length, ReturnLength )
+	// (AtomBasicInformation 0 {USHORT UsageCount, USHORT Flags, USHORT NameLength, WCHAR Name[]}). Sample exploration x3 system call 599:
+	// dxgi's DllMain -> kernel32 GlobalAddAtomW -> NtAddAtomEx( a 27-character name, 36H, &atom, Flags 0 ). MEASURED (tm_nt atom.*, a name
+	// of its own): in a process whose user32 is NOT loaded = STATUS_ACCESS_DENIED, the atom not written (atom.nouser32); once user32 is
+	// loaded (its start connects the process to its window station - here: the USERSRV connection of user32's DllMain was made, U2119):
+	// add = STATUS_SUCCESS, an atom in C000H..FFFFH; the same name again = the same atom (also with Atom NULL); the query = STATUS_SUCCESS,
+	// ReturnLength 6 + NameLength + 2, UsageCount = the adds, Flags 0, NameLength 2 x characters, the name and a NUL; NtFindAtom = the same
+	// atom; each NtDeleteAtom = STATUS_SUCCESS (one per add), then NtFindAtom = STATUS_OBJECT_NAME_NOT_FOUND, the atom not written. The model
+	// is the table of the emulated window station holding only the atoms this process added (the session's other atoms are not measured);
+	// the atom value is a placeholder of the measured range (C100H + n; Windows' value depends on the atoms the session holds). Not measured -
+	// stop: Flags other than 0, an integer atom ("#..."), a name differing only in case from a held one, another class / length, an atom
+	// this process did not add.
+	reply kernel::svc_add_atom( const call& c )
+	{
+		const bool add = c.name == "NtAddAtomEx", find = c.name == "NtFindAtom";
+		auto read_name = [ & ]( uint64_t pn, uint64_t len, std::string& name, std::vector<uint16_t>& w ) {
+			if ( !len || len > 0x1FE || ( len & 1 ) || !user_buffer( pn, len, UC_PROT_READ ) ) return false;
+			w.assign( size_t( len / 2 ), 0 );
+			std::string err;
+			e_.read( pn, w.data(), len, err );
+			name.clear();
+			for ( uint16_t ch : w ) name += ( ch >= 0x20 && ch < 0x7F ) ? char( ch ) : '?';
+			return true;
+		};
+		if ( add || find )
+		{
+			if ( !c.stack_args && add ) return stop_( c.name + ": the stack arguments are not readable" );
+			const uint64_t pn = c.args[ 0 ], len = uint32_t( c.args[ 1 ] ), pa = c.args[ 2 ];
+			const uint32_t flags = add ? uint32_t( c.args[ 3 ] ) : 0;
+			std::string name;
+			std::vector<uint16_t> w;
+			const bool ok = read_name( pn, len, name, w );
+			const std::string what = c.name + "( \"" + name + "\" (" + hex( len ) + " bytes), Atom " + hex( pa ) + ( add ? ", Flags " + hex( flags ) : std::string() ) + " )";
+			if ( !ok ) return stop_( what + " - a name that is empty, longer than 255 characters or not readable: not measured" );
+			if ( flags ) return stop_( what + " - Flags other than 0: not measured (tm_nt atom: 0)" );
+			if ( name[ 0 ] == '#' ) return stop_( what + " - an integer atom: not measured" );
+			if ( name.find( '?' ) != std::string::npos ) return stop_( what + " - a character outside printable ASCII (or '?'): not modelled" );
+			if ( pa && !user_buffer( pa, 2, UC_PROT_WRITE ) ) return stop_( what + " - the Atom pointer is not writable: not measured" );
+			if ( !user_connected_ && find ) return stop_( what + " - before user32's start: not measured (only NtAddAtomEx is: atom.nouser32)" );
+			if ( !user_connected_ ) return done_( 0xC0000022, what + ": the process is not connected to a window station (user32 not started) - STATUS_ACCESS_DENIED, the atom not written (measured: tm_nt atom.nouser32)" );
+			auto it = atoms_.begin();
+			for ( ; it != atoms_.end(); ++it )
+				if ( lower( it->second.name ) == lower( name ) ) break;
+			if ( it != atoms_.end() && it->second.name != name ) return stop_( what + " - a name differing only in case from a held atom: not measured" );
+			if ( find )
+			{
+				if ( it == atoms_.end() ) return done_( status::object_name_not_found, what + ": no such atom - STATUS_OBJECT_NAME_NOT_FOUND, the atom not written (measured: tm_nt atom.gone)" );
+				reply rf = done_( status::success, what + ": atom " + hex( it->first ) + " (measured: tm_nt atom.find)" );
+				const uint16_t av = uint16_t( it->first );
+				if ( pa && !put( pa, &av, 2, rf ) ) return stop_( "writing the atom failed after the probe" );
+				return rf;
+			}
+			uint32_t av = 0;
+			if ( it != atoms_.end() )
+			{
+				it->second.usage++;
+				av = it->first;
+			}
+			else
+			{
+				av = 0xC100 + uint32_t( atoms_next_++ );
+				if ( av > 0xFFFF ) return stop_( what + " - more atoms than the placeholder range holds" );
+				atoms_[ av ] = { name, 1 };
+			}
+			reply ra = done_( status::success, what + ": atom " + hex( av ) + " (a placeholder of the measured range C000H..FFFFH), usage " + std::to_string( atoms_[ av ].usage ) +
+												   " (measured: tm_nt atom.add1 / add2 / add3)" );
+			const uint16_t a16 = uint16_t( av );
+			if ( pa && !put( pa, &a16, 2, ra ) ) return stop_( "writing the atom failed after the probe" );
+			return ra;
+		}
+		const uint32_t av = uint16_t( c.args[ 0 ] );
+		const auto it = atoms_.find( av );
+		const std::string what = c.name + "( " + hex( av ) + ( it != atoms_.end() ? " \"" + it->second.name + "\"" : std::string() ) + " )";
+		if ( it == atoms_.end() ) return stop_( what + " - an atom this process did not add: not measured" );
+		if ( c.name == "NtDeleteAtom" )
+		{
+			if ( --it->second.usage == 0 ) atoms_.erase( it );
+			return done_( status::success, what + ": STATUS_SUCCESS (one reference less; measured: tm_nt atom.del*)" );
+		}
+		// NtQueryInformationAtom
+		if ( !c.stack_args ) return stop_( what + ": the stack argument ReturnLength is not readable" );
+		const uint32_t cls = uint32_t( c.args[ 1 ] ), len = uint32_t( c.args[ 3 ] );
+		const uint64_t out = c.args[ 2 ], pret = c.args[ 4 ];
+		const uint32_t nl = uint32_t( it->second.name.size() * 2 );
+		if ( cls != 0 || len < 6 + nl + 2 || len > 0x1000 ) return stop_( what + " - class " + std::to_string( cls ) + ", Length " + hex( len ) + ": not measured (tm_nt atom.query: 0, 100H)" );
+		if ( !user_buffer( out, 6 + nl + 2, UC_PROT_WRITE ) || ( pret && !user_buffer( pret, 4, UC_PROT_WRITE ) ) ) return stop_( what + " - an output pointer is not writable: not measured" );
+		std::vector<uint8_t> b( 6 + nl + 2, 0 );
+		const uint16_t hdr[ 3 ] = { uint16_t( it->second.usage ), 0, uint16_t( nl ) };
+		std::memcpy( b.data(), hdr, 6 );
+		for ( size_t i = 0; i < it->second.name.size(); i++ ) b[ 6 + 2 * i ] = uint8_t( it->second.name[ i ] );
+		const uint32_t rl = 6 + nl + 2;
+		reply rq = done_( status::success, what + ": UsageCount " + std::to_string( it->second.usage ) + ", Flags 0, NameLength " + hex( nl ) + ", the name and a NUL, ReturnLength " + hex( rl ) +
+											  " (measured: tm_nt atom.query)" );
+		if ( !put( out, b.data(), b.size(), rq ) || ( pret && !put( pret, &rl, 4, rq ) ) ) return stop_( "writing the result failed after the probe" );
+		return rq;
+	}
+
+	// P45 (U2135): NtReadVirtualMemory( ProcessHandle, BaseAddress, Buffer, NumberOfBytesToRead, NumberOfBytesRead ) - phnt ntmmapi.h:840-846
+	// (the service of the documented ReadProcessMemory: "Copies the data in the specified address range from the address space of the
+	// specified process into the specified buffer"). Sample exploration x1 system call 573: NtCurrentProcess(), PEB + 18H, a stack buffer, 8,
+	// &read. MEASURED (tm_nt rvm.*, this process' own memory): a readable source into a writable destination = STATUS_SUCCESS, the bytes
+	// copied, *NumberOfBytesRead = the size (ldr; NumberOfBytesRead NULL: the same, nothing else written - ldr.nocount); 0 bytes =
+	// STATUS_SUCCESS, count 0 (zero); a source that is reserved only / PAGE_NOACCESS / readable for its first 4 bytes only, or a read-only
+	// destination = STATUS_PARTIAL_COPY (8000000DH), count 0, NOTHING copied (reserved / noaccess / edge / rodst). Another process handle, a
+	// destination writable in part, an unwritable count pointer, more than 16 MiB: not measured - stop.
+	reply kernel::svc_read_virtual_memory( const call& c )
+	{
+		if ( !c.stack_args ) return stop_( "NtReadVirtualMemory: the stack argument NumberOfBytesRead is not readable" );
+		const uint64_t src = c.args[ 1 ], dst = c.args[ 2 ], n = c.args[ 3 ], pcount = c.args[ 4 ];
+		const std::string what = "NtReadVirtualMemory( " + hex( c.args[ 0 ] ) + ", " + hex( src ) + ", " + hex( dst ) + ", " + hex( n ) + ", " + hex( pcount ) + " )";
+		if ( c.args[ 0 ] != current_process ) return stop_( what + " - another process: not measured (tm_nt rvm: NtCurrentProcess())" );
+		if ( pcount && !user_buffer( pcount, 8, UC_PROT_WRITE ) ) return stop_( what + " - NumberOfBytesRead is not writable: not measured" );
+		if ( n > ( 16ull << 20 ) ) return stop_( what + " - more than 16 MiB: not measured" );
+		const uint64_t zero = 0;
+		if ( !n )
+		{
+			reply rz = done_( status::success, what + ": 0 bytes - STATUS_SUCCESS, count 0 (measured: tm_nt rvm.zero)" );
+			if ( pcount && !put( pcount, &zero, 8, rz ) ) return stop_( "writing the count failed after the probe" );
+			return rz;
+		}
+		const bool src_ok = user_buffer( src, n, UC_PROT_READ ), dst_ok = user_buffer( dst, n, UC_PROT_WRITE );
+		if ( !dst_ok && dst <= UINT64_MAX - n )
+		{
+			// a destination writable in part only was not measured (rodst: wholly read-only)
+			for ( uint64_t pg = dst & ~0xFFFull; pg < dst + n; pg += 0x1000 )
+				if ( user_buffer( std::max( pg, dst ), std::min( pg + 0x1000, dst + n ) - std::max( pg, dst ), UC_PROT_WRITE ) )
+					return stop_( what + " - a destination writable in part: not measured (tm_nt rvm.rodst: wholly read-only)" );
+		}
+		if ( !src_ok || !dst_ok )
+		{
+			reply rp = done_( 0x8000000D, what + ": the " + std::string( !src_ok ? "source is not readable (in whole or in part)" : "destination is not writable" ) +
+											  " - STATUS_PARTIAL_COPY, count 0, nothing copied (measured: tm_nt rvm." + ( !src_ok ? "reserved / noaccess / edge" : "rodst" ) + ")" );
+			if ( pcount && !put( pcount, &zero, 8, rp ) ) return stop_( "writing the count failed after the probe" );
+			return rp;
+		}
+		std::vector<uint8_t> b( size_t( n ), 0 );
+		std::string err;
+		if ( !e_.read( src, b.data(), n, err ) ) return stop_( what + " - reading the source failed after the probe: " + err );
+		reply rr = done_( status::success, what + ": " + std::to_string( n ) + " bytes copied, STATUS_SUCCESS (measured: tm_nt rvm.ldr" + ( pcount ? "" : ".nocount" ) + ")" );
+		if ( !put( dst, b.data(), n, rr ) ) return stop_( "writing the destination failed after the probe" );
+		if ( pcount && !put( pcount, &n, 8, rr ) ) return stop_( "writing the count failed after the probe" );
+		return rr;
 	}
 }

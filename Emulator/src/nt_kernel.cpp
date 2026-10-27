@@ -369,7 +369,16 @@ namespace emu::nt
 	}
 
 	// ------------------------------------------------------------------------------------------------ the services
+	// P45 (U2128): every file-system service is recorded (fs_log: the program's file-system accesses, observation only) with its answer
 	reply kernel::dispatch( const call& c )
+	{
+		if ( !fs_service( c.name ) ) return dispatch_one( c );
+		const reply r = dispatch_one( c );
+		fs_record( c, r );
+		return r;
+	}
+
+	reply kernel::dispatch_one( const call& c )
 	{
 		if ( c.name.empty() ) return stopped( "unknown system service " + hex( c.number ) );
 		if ( c.name == "NtTerminateProcess" ) return svc_terminate_process( c );

@@ -32,6 +32,10 @@
 //   WriteConsoleA / W( 0, ... )  FALSE, LastError 6, the written count NOT written (tm_nt con.api.wcon); another handle = stop
 //   GetLastError()               the TEB's LastErrorValue (68H)
 // Each WriteFile / WriteConsole call is an output ATTEMPT that win_env records in the console capture (its text decoded; observation only).
+// P45 (U2131, USER DECISION 2026-10-27 "virtual FS, measured misses"): ntdll.dll's file-system system-service exports NtOpenFile, NtCreateFile,
+// NtQueryAttributesFile, NtQueryFullAttributesFile, NtQueryDirectoryFile(Ex), NtClose (prototypes phnt ntioapi.h / ntobapi.h) - their code is a
+// system-call stub, so the stub here IS the kernel layer's service of that name with the stub's arguments (test PE T7: the same answers as
+// under --Sys, from the emulated file system of nt_kernel_vfs.cpp).
 // The TLS start (U2010): under --HLE the loader's part of process start for TLS - the index, the thread's TLS block from the
 // template, the callbacks with DLL_PROCESS_ATTACH before the entry point - is done by emu::win (win_env.cpp) with a user-mode
 // trampoline in this page (start_trampoline).
@@ -56,7 +60,8 @@ namespace emu::hle
 
 	enum class api { unknown, get_current_process_id, get_current_thread_id, exit_process, get_module_handle_w, get_module_handle_a,
 					 get_std_handle, write_file, write_console_a, write_console_w, get_last_error,   // P41 (U2083): the last five
-					 char_upper_w };   // P44 (U2123): user32.dll CharUpperW
+					 char_upper_w,   // P44 (U2123): user32.dll CharUpperW
+					 nt_file_service };   // P45 (U2131): ntdll.dll's file-system system-service exports (the kernel layer's service of that name)
 
 	struct binding
 	{
@@ -93,7 +98,7 @@ namespace emu::hle
 		bool mapped() const { return mapped_; }
 
 		// the stub at ADDRESS was reached: run the API (arguments from the engine's registers)
-		result call( uint64_t address, uc_engine* uc, nt::kernel& k, uint64_t image_base, std::string& api_label, std::array<uint64_t, 4>& args );
+		result call( uint64_t address, uc_engine* uc, nt::kernel& k, uint64_t image_base, std::string& api_label, std::array<uint64_t, 4>& args, uint64_t insns = 0 );
 
 	private:
 		bool map_page( engine& e, std::string& error );

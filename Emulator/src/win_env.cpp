@@ -245,6 +245,10 @@ namespace emu::win
 		std::string con_dir;
 		uint64_t con_max = 0;
 		bool con_failed = false;
+		// P45 (U2128): the file-system access log <out dir>\fs_access.txt (the console capture's folder) - created at the first access
+		std::unique_ptr<output_file> fs;
+		size_t fs_written = 0;
+		bool fs_failed = false;
 
 		void stop( stop_kind k, const std::string& detail )
 		{
@@ -660,8 +664,45 @@ namespace emu::win
 			return false;
 		}
 
+		// P45 (U2128): the kernel layer's new file-system accesses -> <out dir>\fs_access.txt (observation only; created at the first one)
+		void fs_flush( process::hook_ctx& c )
+		{
+			const auto& log = c.p->kern().fs_log();
+			c.r->fs_accesses = log.size();
+			if ( c.fs_written >= log.size() || c.con_dir.empty() || c.fs_failed ) return;
+			if ( !c.fs )
+			{
+				c.fs = std::make_unique<output_file>();
+				std::string err;
+				const std::string path = c.con_dir + "\\fs_access.txt";
+				if ( !c.fs->create( path, c.con_max, err ) )
+				{
+					c.fs.reset();
+					c.fs_failed = true;
+					c.r->fs_file = "(not written: " + err + ")";
+					return;
+				}
+				c.r->fs_file = path;
+				c.fs->write( "# fs_access (P45, emu::nt / emu::win): every file-system access of the emulated program, in order - observation only. The emulated file system holds "
+							 "the image, the environment's captured system files and the folders on the way; every other path is a miss answered with the measured status of its kind "
+							 "(tm_nt fs). Columns: #index, insn (the instruction count = the virtual time), service, path (<image dir> / <user profile> placeholders), arguments, answer\n" );
+			}
+			for ( ; c.fs_written < log.size(); c.fs_written++ )
+			{
+				const auto& a = log[ c.fs_written ];
+				if ( !c.fs->write( "#" + std::to_string( a.index ) + " insn " + std::to_string( a.insns ) + " " + a.service + " \"" + a.path + "\" " + a.args + " -> " + a.answer + "\n" ) )
+					c.r->fs_truncated = true;
+			}
+		}
+
 		// the emulated kernel: runs after the SDM SYSCALL transition (fork U901), in the kernel-entry state
+		void on_syscall_body( uc_engine* uc, void* user );
 		void on_syscall( uc_engine* uc, void* user )
+		{
+			on_syscall_body( uc, user );
+			fs_flush( *static_cast<process::hook_ctx*>( user ) );   // P45 (U2128)
+		}
+		void on_syscall_body( uc_engine* uc, void* user )
 		{
 			auto& c = *static_cast<process::hook_ctx*>( user );
 			run_result& r = *c.r;
@@ -867,7 +908,13 @@ namespace emu::win
 		}
 
 		// plan 3.M5 (U2012): an --HLE API stub was reached (emu::hle)
-		void on_hle( uc_engine* uc, uint64_t address, uint32_t, void* user )
+		void on_hle_body( uc_engine* uc, uint64_t address, uint32_t size, void* user );
+		void on_hle( uc_engine* uc, uint64_t address, uint32_t size, void* user )
+		{
+			on_hle_body( uc, address, size, user );
+			fs_flush( *static_cast<process::hook_ctx*>( user ) );   // P45 (U2128): an --HLE file service (the same kernel layer)
+		}
+		void on_hle_body( uc_engine* uc, uint64_t address, uint32_t, void* user )
 		{
 			auto& c = *static_cast<process::hook_ctx*>( user );
 			if ( c.stopped ) return;
@@ -876,7 +923,7 @@ namespace emu::win
 			api_record a;
 			a.index = r.api_calls.size() + 1;
 			a.stub = address;
-			const hle::result res = c.p->hle().call( address, uc, c.p->kern(), c.p->image_base(), a.api, a.args );
+			const hle::result res = c.p->hle().call( address, uc, c.p->kern(), c.p->image_base(), a.api, a.args, r.insns );   // P45 (U2131): + the virtual time
 			a.outcome = res.text;
 			if ( res.console )   // P41 (U2084): an output attempt through the API stubs
 			{
@@ -1494,6 +1541,9 @@ namespace emu::win
 		hc_->con_dir = po_.console_dir;
 		hc_->con_max = po_.console_max_bytes;
 		hc_->con_failed = false;
+		hc_->fs.reset();   // P45 (U2128)
+		hc_->fs_written = 0;
+		hc_->fs_failed = false;
 		if ( loader_start_ && facts_.files && facts_.files->count( "kernelbase.dll" ) )
 		{
 			const auto& kb = facts_.files->at( "kernelbase.dll" );
@@ -1942,6 +1992,13 @@ namespace emu::win
 		for ( const auto& a : r.console )
 			o.push_back( "console capture #" + std::to_string( a.index ) + ": insn " + std::to_string( a.insn ) + " " + a.via + " handle " + hex( a.handle ) + " length " + std::to_string( a.length ) +
 						 " text \"" + a.text + "\" -> " + a.result );
+		// P45 (U2128): the file-system accesses (observation only)
+		o.push_back( "file-system accesses: " + std::to_string( r.fs_accesses ) +
+					 ( r.fs_file.empty() ? std::string( r.fs_accesses ? " (no file: no output folder)" : " (no file: nothing was accessed)" ) : "; file " + r.fs_file ) +
+					 ( r.fs_truncated ? " (truncated at the size bound)" : "" ) );
+		if ( kernel_ )
+			for ( const auto& a : kernel_->fs_log() )
+				o.push_back( "fs access #" + std::to_string( a.index ) + ": insn " + std::to_string( a.insns ) + " " + a.service + " \"" + a.path + "\" " + a.args + " -> " + a.answer );
 		// the process parameters' console fields as the process left them (the model starts detached: ConsoleHandle -1, no standard
 		// handles; a native detached process reads ConsoleHandle 0 after its kernelbase start - tm_nt con.pp)
 		uc_engine* uc = e_->handle();

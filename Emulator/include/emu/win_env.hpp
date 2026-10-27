@@ -261,6 +261,10 @@ namespace emu::win
 		std::vector<console_attempt> console;  // P41 (U2084): the output attempts, in order
 		std::string console_file;              // the capture file written ("" = none: no attempt, or no folder)
 		bool console_truncated = false;
+		// P45 (U2128): the file-system accesses of the emulated program (emu::nt::kernel::fs_log) and their file <out dir>\fs_access.txt
+		uint64_t fs_accesses = 0;
+		std::string fs_file;                   // "" = none: no access, or no folder
+		bool fs_truncated = false;
 	};
 
 	class process

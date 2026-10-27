@@ -43,6 +43,11 @@ namespace emu::hle
 								   { "WriteConsoleW", api::write_console_w }, { "GetLastError", api::get_last_error } };
 		// P44 (U2123): user32.dll APIs (test PE T6)
 		const known user32[] = { { "CharUpperW", api::char_upper_w } };
+		// P45 (U2131): ntdll.dll's file-system system-service exports (test PE T7) - each IS the kernel layer's service of that name (D3: one
+		// implementation; the export's own code is a system-call stub: its arguments are the stub's - RCX, RDX, R8, R9, [RSP+28H] ...)
+		const known ntdll[] = { { "NtOpenFile", api::nt_file_service }, { "NtCreateFile", api::nt_file_service }, { "NtQueryAttributesFile", api::nt_file_service },
+								{ "NtQueryFullAttributesFile", api::nt_file_service }, { "NtQueryDirectoryFile", api::nt_file_service },
+								{ "NtQueryDirectoryFileEx", api::nt_file_service }, { "NtClose", api::nt_file_service } };
 	}
 
 	std::string binding::label() const
@@ -66,7 +71,7 @@ namespace emu::hle
 		if ( !map_page( e, error ) ) return false;
 		for ( const auto& m : mods )
 		{
-			const bool is_k32 = lower( m.dll ) == "kernel32.dll", is_u32 = lower( m.dll ) == "user32.dll";
+			const bool is_k32 = lower( m.dll ) == "kernel32.dll", is_u32 = lower( m.dll ) == "user32.dll", is_nt = lower( m.dll ) == "ntdll.dll";
 			for ( const auto& en : m.entries )
 			{
 				if ( b_.size() >= max_stubs )
@@ -83,6 +88,9 @@ namespace emu::hle
 						if ( en.name == k.name ) b.id = k.id;
 				if ( is_u32 && !en.name.empty() )
 					for ( const auto& k : user32 )
+						if ( en.name == k.name ) b.id = k.id;
+				if ( is_nt && !en.name.empty() )   // P45 (U2131)
+					for ( const auto& k : ntdll )
 						if ( en.name == k.name ) b.id = k.id;
 				b.stub = module_va + stub_size * b_.size();
 				if ( image_base > UINT64_MAX - en.iat_rva )
@@ -130,7 +138,7 @@ namespace emu::hle
 		return true;
 	}
 
-	result module::call( uint64_t address, uc_engine* uc, nt::kernel& k, uint64_t image_base, std::string& api_label, std::array<uint64_t, 4>& args )
+	result module::call( uint64_t address, uc_engine* uc, nt::kernel& k, uint64_t image_base, std::string& api_label, std::array<uint64_t, 4>& args, uint64_t insns )
 	{
 		result r;
 		args = { reg( uc, UC_X86_REG_RCX ), reg( uc, UC_X86_REG_RDX ), reg( uc, UC_X86_REG_R8 ), reg( uc, UC_X86_REG_R9 ) };
@@ -331,9 +339,41 @@ namespace emu::hle
 				r.text = "CharUpperW( " + hex( p ) + " ): no NUL within 1000H characters - not modelled";
 				return r;
 			}
+			case api::nt_file_service:
+			{
+				// P45 (U2131): the kernel layer's service of the export's name with the stub's arguments (RCX, RDX, R8, R9, then [RSP+28H] ..
+				// [RSP+60H]: at the stub RSP holds the return address, as at the SYSCALL of the real stub) - the same answer as under --Sys
+				nt::call c;
+				c.name = b.name;
+				c.args[ 0 ] = args[ 0 ];
+				c.args[ 1 ] = args[ 1 ];
+				c.args[ 2 ] = args[ 2 ];
+				c.args[ 3 ] = args[ 3 ];
+				c.insns = insns;
+				const uint64_t rsp = reg( uc, UC_X86_REG_RSP );
+				uint64_t st[ 8 ] = {};
+				if ( rsp <= UINT64_MAX - 0x68 && uc_mem_read( uc, rsp + 0x28, st, sizeof( st ) ) == UC_ERR_OK )
+				{
+					for ( int i = 0; i < 8; i++ ) c.args[ size_t( 4 + i ) ] = st[ i ];
+					c.stack_args = true;
+				}
+				const nt::reply rep = k.dispatch( c );
+				if ( rep.kind != nt::reply_kind::done )
+				{
+					r.text = b.label() + ": the kernel layer did not answer: " + rep.text;
+					return r;
+				}
+				char s[ 16 ];
+				std::snprintf( s, sizeof( s ), "%08X", rep.status );
+				r.kind = result_kind::returned;
+				r.rax = rep.status;
+				r.text = b.label() + " -> the kernel layer: status " + s + "H: " + rep.text;
+				return r;
+			}
 			default:
 				r.text = b.label() + " is not implemented in milestone M5 (the --HLE APIs of M5: kernel32.dll GetCurrentProcessId, GetCurrentThreadId, ExitProcess, "
-									 "GetModuleHandleW / A( NULL ); P41: GetStdHandle, WriteFile, WriteConsoleA / W, GetLastError; P44: user32.dll CharUpperW)";
+									 "GetModuleHandleW / A( NULL ); P41: GetStdHandle, WriteFile, WriteConsoleA / W, GetLastError; P44: user32.dll CharUpperW; "
+									 "P45: ntdll.dll NtOpenFile, NtCreateFile, NtQueryAttributesFile, NtQueryFullAttributesFile, NtQueryDirectoryFile(Ex), NtClose)";
 				return r;
 		}
 	}

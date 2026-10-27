@@ -50,6 +50,7 @@
 # BasepIsServiceSidBlocked: token 0AH, DuplicateToken, NtAccessCheck of the service-SID SD; HKLM's root + NtQueryKey 7; ThreadZeroTlsCell;
 # ntdll's LdrpFindLoadedDllByMappingFile for the IMM file: open 100001H, data section, read-only view, unmap); etw.reg8-10 / etwt8-10 =
 # user32's three ETW providers and traits; ahc.33 / ahc.34 = the LookupCdb names t6_user32.exe / IMM32.DLL; mit.6 = policy 6.
+# P45 (U2125, USER DECISION 2026-10-27 "virtual FS, measured misses"): case fs - the status Windows gives for each KIND of file-system miss (a missing file / folder / stream / device name, in the image's directory, System32 and <SystemRoot>), with the argument sets of the emulated traces; tm_nt names only its own temporary names (<a missing name> = tm_nt_fs_<its process id>_absent, never printed); fs.dq: a listing of its own directory with such a name; ahc.35 = test PE T7's image name. Case rvm (U2134, sample exploration x1 system call 573): NtReadVirtualMemory of the process' own memory (the PEB's Ldr; a reserved / PAGE_NOACCESS / half-readable source, a read-only destination, 0 bytes) - status, count, bytes copied; never an address or a value. Case atom (U2137, sample exploration x3 system call 599, dxgi's GlobalAddAtomW): the atom table with a name of its own (tm_nt_atom_<the process id>, never printed) - before user32 is loaded, then after LoadLibraryW of user32 (the sample's state); the atom value only as its range. Case etw: + etw.reg11 (U2139, sample exploration x4 system call 601: dxgi's provider). Case qsi: + class 1 SystemProcessorInformation (U2140, sample exploration x7 system call 632: d3d11's DllMain). Case etwt: + etwt11 (U2139, dxgi's traits, x5 system call 602). Case etw: + etw.reg12 (U2139, dxgi's second provider, x6 system call 603). Case pii (U2141, sample exploration x8 system call 633, d3d11's DllMain): ProcessImageInformation of this process, every field as its relation to the own PE header / file (this image relocated by ASLR).
 tm_nt sat.0: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 330H) -> status C0000225H, ReturnLength 0H, written 0H
 tm_nt sat.1: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 0H) -> status C0000225H, ReturnLength 0H, written 0H
 tm_nt sat.2: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 8H) -> status C0000225H, ReturnLength 0H, written 0H
@@ -80,6 +81,11 @@ tm_nt qsi.c0.0: NtQuerySystemInformation(C0H, Length 0H, ReturnLength set) -> st
 tm_nt qsi.c0.10: NtQuerySystemInformation(C0H, Length 10H, ReturnLength set) -> status C0000004H, ReturnLength 20H, written 0H
 tm_nt qsi.c0.1f: NtQuerySystemInformation(C0H, Length 1FH, ReturnLength set) -> status C0000004H, ReturnLength 20H, written 0H
 tm_nt qsi.c0.28: NtQuerySystemInformation(C0H, Length 28H, ReturnLength set) -> status 00000000H, ReturnLength 20H, written 20H; bytes 07 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+tm_nt qsi.1: NtQuerySystemInformation(1H, Length CH, ReturnLength NULL) -> status 00000000H, ReturnLength CCCCCCCCH, written CH; bytes 09 00 06 00 01 B7 08 00 FF BD 9B BD
+tm_nt qsi.1r: NtQuerySystemInformation(1H, Length CH, ReturnLength set) -> status 00000000H, ReturnLength CH, written CH; bytes 09 00 06 00 01 B7 08 00 FF BD 9B BD
+tm_nt qsi.1.0: NtQuerySystemInformation(1H, Length 0H, ReturnLength set) -> status C0000004H, ReturnLength CH, written 0H
+tm_nt qsi.1.8: NtQuerySystemInformation(1H, Length 8H, ReturnLength set) -> status C0000004H, ReturnLength CH, written 0H
+tm_nt qsi.1.10: NtQuerySystemInformation(1H, Length 10H, ReturnLength set) -> status 00000000H, ReturnLength CH, written CH; bytes 09 00 06 00 01 B7 08 00 FF BD 9B BD
 tm_nt qsi.32: NtQuerySystemInformation(32H, Length 8H, ReturnLength NULL) -> status 00000000H, ReturnLength CCCCCCCCH, written 8H; bytes 00 00 00 00 00 80 FF FF
 tm_nt qsi.32r: NtQuerySystemInformation(32H, Length 8H, ReturnLength set) -> status 00000000H, ReturnLength 8H, written 8H; bytes 00 00 00 00 00 80 FF FF
 tm_nt qsi.32.4: NtQuerySystemInformation(32H, Length 4H, ReturnLength set) -> status C0000004H, ReturnLength 8H, written 0H
@@ -204,6 +210,14 @@ tm_nt etw.reg10: NtTraceControl(0FH, the loader's A0H bytes (provider 10, Logger
 tm_nt etw.reg10.fields: RegType 3, LoggerId 10, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
 tm_nt etw.reg10.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
 tm_nt etw.reg10.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg11: NtTraceControl(0FH, the loader's A0H bytes (provider 11, LoggerId 11, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg11.fields: RegType 3, LoggerId 11, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg11.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg11.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg12: NtTraceControl(0FH, the loader's A0H bytes (provider 12, LoggerId 12, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg12.fields: RegType 3, LoggerId 12, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg12.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg12.close: NtClose(ReplyHandle) -> 00000000H
 tm_nt kd.open: NtOpenDirectoryObject(&h, 3, "\KnownDlls" OBJ_CASE_INSENSITIVE) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
 tm_nt kd.list: kernel32.dll:Section ucrtbase.dll:Section WS2_32.dll:Section MSCTF.dll:Section SHLWAPI.dll:Section kernelbase.dll:Section wow64.dll:Section msvcp_win.dll:Section gdiplus.dll:Section KnownDllPath:SymbolicLink user32.dll:Section bcrypt.dll:Section COMCTL32.dll:Section cfgmgr32.dll:Section combase.dll:Section IMM32.dll:Section rpcrt4.dll:Section bcryptPrimitives.dll:Section ntdll.dll:Section coml2.dll:Section win32u.dll:Section wow64cpu.dll:Section COMDLG32.dll:Section gdi32full.dll:Section IMAGEHLP.dll:Section SHELL32.dll:Section sechost.dll:Section WINTRUST.dll:Section NORMALIZ.dll:Section difxapi.dll:Section Setupapi.dll:Section CRYPT32.dll:Section gdi32.dll:Section MSVCRT.dll:Section advapi32.dll:Section wow64win.dll:Section PSAPI.DLL:Section NSI.dll:Section WLDAP32.dll:Section OLEAUT32.dll:Section SHCORE.dll:Section ole32.dll:Section clbcatq.dll:Section; 43 entries, end status 8000001AH
 tm_nt kd.section.0: NtOpenSection(&s, 0DH, root \KnownDlls, "KERNEL32.DLL" OBJ_CASE_INSENSITIVE) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
@@ -261,6 +275,7 @@ tm_nt ahc.31: NtApphelpCacheControl(6 LookupCdb, Name "SETUPAPI.dll", ParamsOut 
 tm_nt ahc.32: NtApphelpCacheControl(6 LookupCdb, Name "transparent_makimav2.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
 tm_nt ahc.33: NtApphelpCacheControl(6 LookupCdb, Name "t6_user32.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
 tm_nt ahc.34: NtApphelpCacheControl(6 LookupCdb, Name "IMM32.DLL", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.35: NtApphelpCacheControl(6 LookupCdb, Name "t7_vfs.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
 tm_nt vmi.fresh: NtSetInformationVirtualMemory(-1, 4, 1, {a fresh image view's base, 1000H}, &1, 4) -> status C00000BBH
 tm_nt vmi.again: the same call again -> status C00000BBH
 tm_nt vmi.loaded: the same call on this process' kernelbase.dll base -> status C00000BBH
@@ -322,17 +337,21 @@ tm_nt etwt7.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 39H, 6 zero 
 tm_nt etwt7.in: input after the call: handle unchanged, blob pointer unchanged, size 39H
 tm_nt etwt7.close: NtClose(ReplyHandle) -> 00000000H
 tm_nt etwt8.reg: NtTraceControl(0FH, provider 8 as etw.reg8) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
-tm_nt etwt8.blob: user32's traits (as bytes), 2EH bytes: first USHORT (the traits size) 2EH, non-zero bytes 43
+tm_nt etwt8.blob: the traits (as bytes), 2EH bytes: first USHORT (the traits size) 2EH, non-zero bytes 43
 tm_nt etwt8.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 2EH, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
 tm_nt etwt8.close: NtClose(ReplyHandle) -> 00000000H
 tm_nt etwt9.reg: NtTraceControl(0FH, provider 9 as etw.reg9) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
-tm_nt etwt9.blob: user32's traits (as bytes), CH bytes: first USHORT (the traits size) CH, non-zero bytes 10
+tm_nt etwt9.blob: the traits (as bytes), CH bytes: first USHORT (the traits size) CH, non-zero bytes 10
 tm_nt etwt9.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, CH, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
 tm_nt etwt9.close: NtClose(ReplyHandle) -> 00000000H
 tm_nt etwt10.reg: NtTraceControl(0FH, provider 10 as etw.reg10) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
-tm_nt etwt10.blob: user32's traits (as bytes), 26H bytes: first USHORT (the traits size) 26H, non-zero bytes 36
+tm_nt etwt10.blob: the traits (as bytes), 26H bytes: first USHORT (the traits size) 26H, non-zero bytes 36
 tm_nt etwt10.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 26H, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
 tm_nt etwt10.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt11.reg: NtTraceControl(0FH, provider 11 as etw.reg11) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt11.blob: the traits (as bytes), 35H bytes: first USHORT (the traits size) 35H, non-zero bytes 50
+tm_nt etwt11.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 35H, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt11.close: NtClose(ReplyHandle) -> 00000000H
 tm_nt tok.pt.1d: NtQueryInformationToken(NtCurrentProcessToken(), 1DH, Length 4H) -> status 00000000H, ReturnLength 4H, written 4H; value 0H
 tm_nt tok.pt.1d.0: NtQueryInformationToken(NtCurrentProcessToken(), 1DH, Length 0H) -> status C0000023H, ReturnLength 4H, written 0H
 tm_nt tok.pt.1d.8: NtQueryInformationToken(NtCurrentProcessToken(), 1DH, Length 8H) -> status 00000000H, ReturnLength 4H, written 4H; value 0H
@@ -523,3 +542,159 @@ tm_nt u32k.fl.open: NtOpenFile(&h, 100001H, "\??\<SystemRoot>\system32\IMM32.DLL
 tm_nt u32k.fl.sec: NtCreateSection(&s, 4, NULL, NULL, PAGE_READONLY, SEC_COMMIT, the file) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
 tm_nt u32k.fl.map: NtMapViewOfSection(it, -1, &base (0), 0, 0, NULL, &size (0), ViewShare, 0, PAGE_READONLY) -> status 00000000H, base 64K-aligned yes, ViewSize = the file size rounded up to pages yes (2E000H), the bytes = the file's start yes (MZ); MBI AllocationProtect 2H, State 1000H, Protect 2H, Type 40000H, RegionSize 2E000H; NtUnmapViewOfSection -> 00000000H
 tm_nt u32k.fl.close: NtClose(the section) -> 00000000H, NtClose(the file) -> 00000000H
+tm_nt fs.dir.of1: NtOpenFile(&h, 100001H, "\??\<the image's directory>\<a missing name>" 40H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.dir.of2: NtOpenFile(&h, 100021H, "\??\<the image's directory>\<a missing name>" 840H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.dir.of3: NtOpenFile(&h, 100001H, "\??\<the image's directory>\<a missing name>" 840H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.dir.of4: NtOpenFile(&h, 100020H, "\??\<the image's directory>\<a missing name>" 40H, &iosb, 3, 21H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.dir.cf1: NtCreateFile(&h, 80100080H, "\??\<the image's directory>\<a missing name>" 40H, &iosb, NULL, 80H, 1, FILE_OPEN 1, 60H, NULL, 0) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.dir.cf2: NtCreateFile(&h, 80100080H, "\??\<the image's directory>\<a missing name>" 40H, &iosb, NULL, 80H, 7, FILE_OPEN 1, 60H, NULL, 0) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.dir.qa1: NtQueryAttributesFile("\??\<the image's directory>\<a missing name>" 40H, buf) -> status C0000034H, written 0
+tm_nt fs.dir.qa2: NtQueryAttributesFile("\??\<the image's directory>\<a missing name>" 840H, buf) -> status C0000034H, written 0
+tm_nt fs.dir.qf1: NtQueryFullAttributesFile("\??\<the image's directory>\<a missing name>" 40H, buf) -> status C0000034H, written 0
+tm_nt fs.dir.qf2: NtQueryFullAttributesFile("\??\<the image's directory>\<a missing name>" 840H, buf) -> status C0000034H, written 0
+tm_nt fs.sub.of1: NtOpenFile(&h, 100001H, "\??\<the image's directory>\SystemResources\tm_nt.exe.mun" 40H, &iosb, 5, 60H) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.sub.of2: NtOpenFile(&h, 100021H, "\??\<the image's directory>\SystemResources\tm_nt.exe.mun" 840H, &iosb, 5, 60H) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.sub.of3: NtOpenFile(&h, 100001H, "\??\<the image's directory>\SystemResources\tm_nt.exe.mun" 840H, &iosb, 5, 60H) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.sub.of4: NtOpenFile(&h, 100020H, "\??\<the image's directory>\SystemResources\tm_nt.exe.mun" 40H, &iosb, 3, 21H) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.sub.cf1: NtCreateFile(&h, 80100080H, "\??\<the image's directory>\SystemResources\tm_nt.exe.mun" 40H, &iosb, NULL, 80H, 1, FILE_OPEN 1, 60H, NULL, 0) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.sub.cf2: NtCreateFile(&h, 80100080H, "\??\<the image's directory>\SystemResources\tm_nt.exe.mun" 40H, &iosb, NULL, 80H, 7, FILE_OPEN 1, 60H, NULL, 0) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.sub.qa1: NtQueryAttributesFile("\??\<the image's directory>\SystemResources\tm_nt.exe.mun" 40H, buf) -> status C000003AH, written 0
+tm_nt fs.sub.qa2: NtQueryAttributesFile("\??\<the image's directory>\SystemResources\tm_nt.exe.mun" 840H, buf) -> status C000003AH, written 0
+tm_nt fs.sub.qf1: NtQueryFullAttributesFile("\??\<the image's directory>\SystemResources\tm_nt.exe.mun" 40H, buf) -> status C000003AH, written 0
+tm_nt fs.sub.qf2: NtQueryFullAttributesFile("\??\<the image's directory>\SystemResources\tm_nt.exe.mun" 840H, buf) -> status C000003AH, written 0
+tm_nt fs.sys.of1: NtOpenFile(&h, 100001H, "\??\<SystemRoot>\System32\<a missing name>" 40H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.sys.of2: NtOpenFile(&h, 100021H, "\??\<SystemRoot>\System32\<a missing name>" 840H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.sys.of3: NtOpenFile(&h, 100001H, "\??\<SystemRoot>\System32\<a missing name>" 840H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.sys.of4: NtOpenFile(&h, 100020H, "\??\<SystemRoot>\System32\<a missing name>" 40H, &iosb, 3, 21H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.sys.cf1: NtCreateFile(&h, 80100080H, "\??\<SystemRoot>\System32\<a missing name>" 40H, &iosb, NULL, 80H, 1, FILE_OPEN 1, 60H, NULL, 0) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.sys.cf2: NtCreateFile(&h, 80100080H, "\??\<SystemRoot>\System32\<a missing name>" 40H, &iosb, NULL, 80H, 7, FILE_OPEN 1, 60H, NULL, 0) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.sys.qa1: NtQueryAttributesFile("\??\<SystemRoot>\System32\<a missing name>" 40H, buf) -> status C0000034H, written 0
+tm_nt fs.sys.qa2: NtQueryAttributesFile("\??\<SystemRoot>\System32\<a missing name>" 840H, buf) -> status C0000034H, written 0
+tm_nt fs.sys.qf1: NtQueryFullAttributesFile("\??\<SystemRoot>\System32\<a missing name>" 40H, buf) -> status C0000034H, written 0
+tm_nt fs.sys.qf2: NtQueryFullAttributesFile("\??\<SystemRoot>\System32\<a missing name>" 840H, buf) -> status C0000034H, written 0
+tm_nt fs.syssub.of1: NtOpenFile(&h, 100001H, "\??\<SystemRoot>\System32\<a missing name>\<a missing name>" 40H, &iosb, 5, 60H) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.syssub.of2: NtOpenFile(&h, 100021H, "\??\<SystemRoot>\System32\<a missing name>\<a missing name>" 840H, &iosb, 5, 60H) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.syssub.of3: NtOpenFile(&h, 100001H, "\??\<SystemRoot>\System32\<a missing name>\<a missing name>" 840H, &iosb, 5, 60H) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.syssub.of4: NtOpenFile(&h, 100020H, "\??\<SystemRoot>\System32\<a missing name>\<a missing name>" 40H, &iosb, 3, 21H) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.syssub.cf1: NtCreateFile(&h, 80100080H, "\??\<SystemRoot>\System32\<a missing name>\<a missing name>" 40H, &iosb, NULL, 80H, 1, FILE_OPEN 1, 60H, NULL, 0) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.syssub.cf2: NtCreateFile(&h, 80100080H, "\??\<SystemRoot>\System32\<a missing name>\<a missing name>" 40H, &iosb, NULL, 80H, 7, FILE_OPEN 1, 60H, NULL, 0) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.syssub.qa1: NtQueryAttributesFile("\??\<SystemRoot>\System32\<a missing name>\<a missing name>" 40H, buf) -> status C000003AH, written 0
+tm_nt fs.syssub.qa2: NtQueryAttributesFile("\??\<SystemRoot>\System32\<a missing name>\<a missing name>" 840H, buf) -> status C000003AH, written 0
+tm_nt fs.syssub.qf1: NtQueryFullAttributesFile("\??\<SystemRoot>\System32\<a missing name>\<a missing name>" 40H, buf) -> status C000003AH, written 0
+tm_nt fs.syssub.qf2: NtQueryFullAttributesFile("\??\<SystemRoot>\System32\<a missing name>\<a missing name>" 840H, buf) -> status C000003AH, written 0
+tm_nt fs.ads.of1: NtOpenFile(&h, 100001H, "\??\<the image's directory>\<a missing name>:s" 40H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.ads.of2: NtOpenFile(&h, 100021H, "\??\<the image's directory>\<a missing name>:s" 840H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.ads.of3: NtOpenFile(&h, 100001H, "\??\<the image's directory>\<a missing name>:s" 840H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.ads.of4: NtOpenFile(&h, 100020H, "\??\<the image's directory>\<a missing name>:s" 40H, &iosb, 3, 21H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.ads.cf1: NtCreateFile(&h, 80100080H, "\??\<the image's directory>\<a missing name>:s" 40H, &iosb, NULL, 80H, 1, FILE_OPEN 1, 60H, NULL, 0) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.ads.cf2: NtCreateFile(&h, 80100080H, "\??\<the image's directory>\<a missing name>:s" 40H, &iosb, NULL, 80H, 7, FILE_OPEN 1, 60H, NULL, 0) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.ads.qa1: NtQueryAttributesFile("\??\<the image's directory>\<a missing name>:s" 40H, buf) -> status C0000034H, written 0
+tm_nt fs.ads.qa2: NtQueryAttributesFile("\??\<the image's directory>\<a missing name>:s" 840H, buf) -> status C0000034H, written 0
+tm_nt fs.ads.qf1: NtQueryFullAttributesFile("\??\<the image's directory>\<a missing name>:s" 40H, buf) -> status C0000034H, written 0
+tm_nt fs.ads.qf2: NtQueryFullAttributesFile("\??\<the image's directory>\<a missing name>:s" 840H, buf) -> status C0000034H, written 0
+tm_nt fs.adsimg.of1: NtOpenFile(&h, 100001H, "\??\<the image's directory>\tm_nt.exe:<a missing name>" 40H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.adsimg.of2: NtOpenFile(&h, 100021H, "\??\<the image's directory>\tm_nt.exe:<a missing name>" 840H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.adsimg.of3: NtOpenFile(&h, 100001H, "\??\<the image's directory>\tm_nt.exe:<a missing name>" 840H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.adsimg.of4: NtOpenFile(&h, 100020H, "\??\<the image's directory>\tm_nt.exe:<a missing name>" 40H, &iosb, 3, 21H) -> status C0000103H, handle not written, IoStatus not written
+tm_nt fs.adsimg.cf1: NtCreateFile(&h, 80100080H, "\??\<the image's directory>\tm_nt.exe:<a missing name>" 40H, &iosb, NULL, 80H, 1, FILE_OPEN 1, 60H, NULL, 0) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.adsimg.cf2: NtCreateFile(&h, 80100080H, "\??\<the image's directory>\tm_nt.exe:<a missing name>" 40H, &iosb, NULL, 80H, 7, FILE_OPEN 1, 60H, NULL, 0) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.adsimg.qa1: NtQueryAttributesFile("\??\<the image's directory>\tm_nt.exe:<a missing name>" 40H, buf) -> status C0000034H, written 0
+tm_nt fs.adsimg.qa2: NtQueryAttributesFile("\??\<the image's directory>\tm_nt.exe:<a missing name>" 840H, buf) -> status C0000034H, written 0
+tm_nt fs.adsimg.qf1: NtQueryFullAttributesFile("\??\<the image's directory>\tm_nt.exe:<a missing name>" 40H, buf) -> status C0000034H, written 0
+tm_nt fs.adsimg.qf2: NtQueryFullAttributesFile("\??\<the image's directory>\tm_nt.exe:<a missing name>" 840H, buf) -> status C0000034H, written 0
+tm_nt fs.dev.of1: NtOpenFile(&h, 100001H, "\Device\<a missing name>" 40H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.dev.of2: NtOpenFile(&h, 100021H, "\Device\<a missing name>" 840H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.dev.of3: NtOpenFile(&h, 100001H, "\Device\<a missing name>" 840H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.dev.of4: NtOpenFile(&h, 100020H, "\Device\<a missing name>" 40H, &iosb, 3, 21H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.dev.cf1: NtCreateFile(&h, 80100080H, "\Device\<a missing name>" 40H, &iosb, NULL, 80H, 1, FILE_OPEN 1, 60H, NULL, 0) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.dev.cf2: NtCreateFile(&h, 80100080H, "\Device\<a missing name>" 40H, &iosb, NULL, 80H, 7, FILE_OPEN 1, 60H, NULL, 0) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.dev.qa1: NtQueryAttributesFile("\Device\<a missing name>" 40H, buf) -> status C0000034H, written 0
+tm_nt fs.dev.qa2: NtQueryAttributesFile("\Device\<a missing name>" 840H, buf) -> status C0000034H, written 0
+tm_nt fs.dev.qf1: NtQueryFullAttributesFile("\Device\<a missing name>" 40H, buf) -> status C0000034H, written 0
+tm_nt fs.dev.qf2: NtQueryFullAttributesFile("\Device\<a missing name>" 840H, buf) -> status C0000034H, written 0
+tm_nt fs.win.of1: NtOpenFile(&h, 100001H, "\??\<SystemRoot>\<a missing name>" 40H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.win.of2: NtOpenFile(&h, 100021H, "\??\<SystemRoot>\<a missing name>" 840H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.win.of3: NtOpenFile(&h, 100001H, "\??\<SystemRoot>\<a missing name>" 840H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.win.of4: NtOpenFile(&h, 100020H, "\??\<SystemRoot>\<a missing name>" 40H, &iosb, 3, 21H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.win.cf1: NtCreateFile(&h, 80100080H, "\??\<SystemRoot>\<a missing name>" 40H, &iosb, NULL, 80H, 1, FILE_OPEN 1, 60H, NULL, 0) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.win.cf2: NtCreateFile(&h, 80100080H, "\??\<SystemRoot>\<a missing name>" 40H, &iosb, NULL, 80H, 7, FILE_OPEN 1, 60H, NULL, 0) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.win.qa1: NtQueryAttributesFile("\??\<SystemRoot>\<a missing name>" 40H, buf) -> status C0000034H, written 0
+tm_nt fs.win.qa2: NtQueryAttributesFile("\??\<SystemRoot>\<a missing name>" 840H, buf) -> status C0000034H, written 0
+tm_nt fs.win.qf1: NtQueryFullAttributesFile("\??\<SystemRoot>\<a missing name>" 40H, buf) -> status C0000034H, written 0
+tm_nt fs.win.qf2: NtQueryFullAttributesFile("\??\<SystemRoot>\<a missing name>" 840H, buf) -> status C0000034H, written 0
+tm_nt fs.winsub.of1: NtOpenFile(&h, 100001H, "\??\<SystemRoot>\<a missing name>\<a missing name>.mun" 40H, &iosb, 5, 60H) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.winsub.of2: NtOpenFile(&h, 100021H, "\??\<SystemRoot>\<a missing name>\<a missing name>.mun" 840H, &iosb, 5, 60H) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.winsub.of3: NtOpenFile(&h, 100001H, "\??\<SystemRoot>\<a missing name>\<a missing name>.mun" 840H, &iosb, 5, 60H) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.winsub.of4: NtOpenFile(&h, 100020H, "\??\<SystemRoot>\<a missing name>\<a missing name>.mun" 40H, &iosb, 3, 21H) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.winsub.cf1: NtCreateFile(&h, 80100080H, "\??\<SystemRoot>\<a missing name>\<a missing name>.mun" 40H, &iosb, NULL, 80H, 1, FILE_OPEN 1, 60H, NULL, 0) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.winsub.cf2: NtCreateFile(&h, 80100080H, "\??\<SystemRoot>\<a missing name>\<a missing name>.mun" 40H, &iosb, NULL, 80H, 7, FILE_OPEN 1, 60H, NULL, 0) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.winsub.qa1: NtQueryAttributesFile("\??\<SystemRoot>\<a missing name>\<a missing name>.mun" 40H, buf) -> status C000003AH, written 0
+tm_nt fs.winsub.qa2: NtQueryAttributesFile("\??\<SystemRoot>\<a missing name>\<a missing name>.mun" 840H, buf) -> status C000003AH, written 0
+tm_nt fs.winsub.qf1: NtQueryFullAttributesFile("\??\<SystemRoot>\<a missing name>\<a missing name>.mun" 40H, buf) -> status C000003AH, written 0
+tm_nt fs.winsub.qf2: NtQueryFullAttributesFile("\??\<SystemRoot>\<a missing name>\<a missing name>.mun" 840H, buf) -> status C000003AH, written 0
+tm_nt fs.par.of1: NtOpenFile(&h, 100001H, "\??\<the parent of the image's directory>\<a missing name>" 40H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.par.of2: NtOpenFile(&h, 100021H, "\??\<the parent of the image's directory>\<a missing name>" 840H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.par.of3: NtOpenFile(&h, 100001H, "\??\<the parent of the image's directory>\<a missing name>" 840H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.par.of4: NtOpenFile(&h, 100020H, "\??\<the parent of the image's directory>\<a missing name>" 40H, &iosb, 3, 21H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.par.cf1: NtCreateFile(&h, 80100080H, "\??\<the parent of the image's directory>\<a missing name>" 40H, &iosb, NULL, 80H, 1, FILE_OPEN 1, 60H, NULL, 0) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.par.cf2: NtCreateFile(&h, 80100080H, "\??\<the parent of the image's directory>\<a missing name>" 40H, &iosb, NULL, 80H, 7, FILE_OPEN 1, 60H, NULL, 0) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.par.qa1: NtQueryAttributesFile("\??\<the parent of the image's directory>\<a missing name>" 40H, buf) -> status C0000034H, written 0
+tm_nt fs.par.qa2: NtQueryAttributesFile("\??\<the parent of the image's directory>\<a missing name>" 840H, buf) -> status C0000034H, written 0
+tm_nt fs.par.qf1: NtQueryFullAttributesFile("\??\<the parent of the image's directory>\<a missing name>" 40H, buf) -> status C0000034H, written 0
+tm_nt fs.par.qf2: NtQueryFullAttributesFile("\??\<the parent of the image's directory>\<a missing name>" 840H, buf) -> status C0000034H, written 0
+tm_nt fs.parsub.of1: NtOpenFile(&h, 100001H, "\??\<the parent of the image's directory>\SystemResources\tm_nt.exe.mun" 40H, &iosb, 5, 60H) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.parsub.of2: NtOpenFile(&h, 100021H, "\??\<the parent of the image's directory>\SystemResources\tm_nt.exe.mun" 840H, &iosb, 5, 60H) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.parsub.of3: NtOpenFile(&h, 100001H, "\??\<the parent of the image's directory>\SystemResources\tm_nt.exe.mun" 840H, &iosb, 5, 60H) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.parsub.of4: NtOpenFile(&h, 100020H, "\??\<the parent of the image's directory>\SystemResources\tm_nt.exe.mun" 40H, &iosb, 3, 21H) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.parsub.cf1: NtCreateFile(&h, 80100080H, "\??\<the parent of the image's directory>\SystemResources\tm_nt.exe.mun" 40H, &iosb, NULL, 80H, 1, FILE_OPEN 1, 60H, NULL, 0) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.parsub.cf2: NtCreateFile(&h, 80100080H, "\??\<the parent of the image's directory>\SystemResources\tm_nt.exe.mun" 40H, &iosb, NULL, 80H, 7, FILE_OPEN 1, 60H, NULL, 0) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.parsub.qa1: NtQueryAttributesFile("\??\<the parent of the image's directory>\SystemResources\tm_nt.exe.mun" 40H, buf) -> status C000003AH, written 0
+tm_nt fs.parsub.qa2: NtQueryAttributesFile("\??\<the parent of the image's directory>\SystemResources\tm_nt.exe.mun" 840H, buf) -> status C000003AH, written 0
+tm_nt fs.parsub.qf1: NtQueryFullAttributesFile("\??\<the parent of the image's directory>\SystemResources\tm_nt.exe.mun" 40H, buf) -> status C000003AH, written 0
+tm_nt fs.parsub.qf2: NtQueryFullAttributesFile("\??\<the parent of the image's directory>\SystemResources\tm_nt.exe.mun" 840H, buf) -> status C000003AH, written 0
+tm_nt fs.dq.open: NtOpenFile(&h, 100001H, "\??\<the image's directory>\" 40H, &iosb, 7, 4021H) -> status 00000000H, handle <handle> (non-zero, multiple of 4), IoStatus 00000000H / 1H (upper half not written)
+tm_nt fs.dq.c1: NtQueryDirectoryFile(the directory, NULL, NULL, NULL, &iosb, buf, 1000H, class 1, TRUE, "<a missing name>", TRUE) -> status C000000FH, IoStatus not written, written 0
+tm_nt fs.dq.c2: NtQueryDirectoryFile(the directory, NULL, NULL, NULL, &iosb, buf, 1000H, class 2, TRUE, "<a missing name>", TRUE) -> status C000000FH, IoStatus not written, written 0
+tm_nt fs.dq.c3: NtQueryDirectoryFile(the directory, NULL, NULL, NULL, &iosb, buf, 1000H, class 3, TRUE, "<a missing name>", TRUE) -> status C000000FH, IoStatus not written, written 0
+tm_nt fs.dq.c12: NtQueryDirectoryFile(the directory, NULL, NULL, NULL, &iosb, buf, 1000H, class 12, TRUE, "<a missing name>", TRUE) -> status C000000FH, IoStatus C000000FH / 0H (upper half not written), written 0
+tm_nt fs.dq.c37: NtQueryDirectoryFile(the directory, NULL, NULL, NULL, &iosb, buf, 1000H, class 37, TRUE, "<a missing name>", TRUE) -> status C000000FH, IoStatus not written, written 0
+tm_nt fs.dq.c38: NtQueryDirectoryFile(the directory, NULL, NULL, NULL, &iosb, buf, 1000H, class 38, TRUE, "<a missing name>", TRUE) -> status C000000FH, IoStatus not written, written 0
+tm_nt fs.dq.x1: NtQueryDirectoryFileEx(the directory, NULL, NULL, NULL, &iosb, buf, 1000H, class 1, SL_RESTART_SCAN | SL_RETURN_SINGLE_ENTRY 3, "<a missing name>") -> status C000000FH, IoStatus not written, written 0
+tm_nt fs.dq.x2: NtQueryDirectoryFileEx(the directory, NULL, NULL, NULL, &iosb, buf, 1000H, class 2, SL_RESTART_SCAN | SL_RETURN_SINGLE_ENTRY 3, "<a missing name>") -> status C000000FH, IoStatus not written, written 0
+tm_nt fs.dq.x3: NtQueryDirectoryFileEx(the directory, NULL, NULL, NULL, &iosb, buf, 1000H, class 3, SL_RESTART_SCAN | SL_RETURN_SINGLE_ENTRY 3, "<a missing name>") -> status C000000FH, IoStatus not written, written 0
+tm_nt fs.dq.x12: NtQueryDirectoryFileEx(the directory, NULL, NULL, NULL, &iosb, buf, 1000H, class 12, SL_RESTART_SCAN | SL_RETURN_SINGLE_ENTRY 3, "<a missing name>") -> status C000000FH, IoStatus C000000FH / 0H (upper half not written), written 0
+tm_nt fs.dq.x37: NtQueryDirectoryFileEx(the directory, NULL, NULL, NULL, &iosb, buf, 1000H, class 37, SL_RESTART_SCAN | SL_RETURN_SINGLE_ENTRY 3, "<a missing name>") -> status C000000FH, IoStatus not written, written 0
+tm_nt fs.dq.x38: NtQueryDirectoryFileEx(the directory, NULL, NULL, NULL, &iosb, buf, 1000H, class 38, SL_RESTART_SCAN | SL_RETURN_SINGLE_ENTRY 3, "<a missing name>") -> status C000000FH, IoStatus not written, written 0
+tm_nt rvm.ldr: NtReadVirtualMemory(NtCurrentProcess(), PEB + 18H (Ldr), buf, 8H, &read) -> status 00000000H, NumberOfBytesRead written (the .count line), destination bytes changed 8, equal to the source
+tm_nt rvm.ldr.count: 8H
+tm_nt rvm.ldr.nocount: NtReadVirtualMemory(NtCurrentProcess(), PEB + 18H (Ldr), buf, 8H, NULL) -> status 00000000H, NumberOfBytesRead -, destination bytes changed 8, equal to the source
+tm_nt rvm.reserved: NtReadVirtualMemory(NtCurrentProcess(), a reserved page, buf, 8H, &read) -> status 8000000DH, NumberOfBytesRead written (the .count line), destination bytes changed 0
+tm_nt rvm.reserved.count: 0H
+tm_nt rvm.edge: NtReadVirtualMemory(NtCurrentProcess(), the last 4 bytes of a committed page + 4 of the reserved page after it, buf, 8H, &read) -> status 8000000DH, NumberOfBytesRead written (the .count line), destination bytes changed 0
+tm_nt rvm.edge.count: 0H
+tm_nt rvm.noaccess: NtReadVirtualMemory(NtCurrentProcess(), a PAGE_NOACCESS page, buf, 8H, &read) -> status 8000000DH, NumberOfBytesRead written (the .count line), destination bytes changed 0
+tm_nt rvm.noaccess.count: 0H
+tm_nt rvm.rodst: NtReadVirtualMemory(NtCurrentProcess(), PEB + 18H into a PAGE_READONLY destination, buf, 8H, &read) -> status 8000000DH, NumberOfBytesRead written (the .count line), destination bytes changed 0
+tm_nt rvm.rodst.count: 0H
+tm_nt rvm.zero: NtReadVirtualMemory(NtCurrentProcess(), PEB + 18H, 0 bytes, buf, 0H, &read) -> status 00000000H, NumberOfBytesRead written (the .count line), destination bytes changed 0
+tm_nt rvm.zero.count: 0H
+tm_nt atom.nouser32: NtAddAtomEx("<a name of its own>", Flags 0) before user32 is loaded -> status C0000022H, atom not written
+tm_nt atom.user32: LoadLibraryW("user32.dll") -> loaded
+tm_nt atom.add1: NtAddAtomEx("<a name of its own>", 2 x characters bytes, &atom, Flags 0) -> status 00000000H, atom in C000H..FFFFH
+tm_nt atom.add2: the same name again -> status 00000000H, atom the same
+tm_nt atom.add3: the same name, Atom NULL -> status 00000000H
+tm_nt atom.query: NtQueryInformationAtom(atom, AtomBasicInformation 0, buf, 100H, &ret) -> status 00000000H, ReturnLength = 6 + NameLength + 2: yes, UsageCount 3, Flags 0, NameLength = 2 x characters: yes, the name equal, the NUL after it written
+tm_nt atom.find: NtFindAtom(the name) -> status 00000000H, atom the same
+tm_nt atom.del1: NtDeleteAtom(atom) -> status 00000000H
+tm_nt atom.del2: NtDeleteAtom(atom) -> status 00000000H
+tm_nt atom.del3: NtDeleteAtom(atom) -> status 00000000H
+tm_nt atom.gone: NtFindAtom(the name) after the deletes -> status C0000034H, atom not written
+tm_nt pii: NtQueryInformationProcess(NtCurrentProcess(), 25H, buf, 40H, NULL) -> status 00000000H, ReturnLength CCCCCCCCH, written 40H
+tm_nt pii.fields: TransferAddress = the mapped base + AddressOfEntryPoint, ZeroBits 0, bytes +0CH..+0FH 00 00 00 00, MaximumStackSize = SizeOfStackReserve, CommittedStackSize = SizeOfStackCommit, SubSystemType = Subsystem, SubSystemVersion = MajorSubsystemVersion << 16 | MinorSubsystemVersion, OperatingSystemVersion = MinorOperatingSystemVersion << 16 | MajorOperatingSystemVersion, ImageCharacteristics = FileHeader.Characteristics, DllCharacteristics = DllCharacteristics, Machine = FileHeader.Machine, ImageContainsCode 1, ImageFlags 04H, LoaderFlags = LoaderFlags, ImageFileSize = the file's size, CheckSum = CheckSum
+tm_nt pii.image: this image mapped at its header ImageBase yes, mapped base below 4 GB no, its DllCharacteristics DYNAMIC_BASE yes
+tm_nt pii.r: NtQueryInformationProcess(NtCurrentProcess(), 25H, buf, 40H, &ret) -> status 00000000H, ReturnLength 40H, written 40H
+tm_nt pii.r.fields: TransferAddress = the mapped base + AddressOfEntryPoint, ZeroBits 0, bytes +0CH..+0FH 00 00 00 00, MaximumStackSize = SizeOfStackReserve, CommittedStackSize = SizeOfStackCommit, SubSystemType = Subsystem, SubSystemVersion = MajorSubsystemVersion << 16 | MinorSubsystemVersion, OperatingSystemVersion = MinorOperatingSystemVersion << 16 | MajorOperatingSystemVersion, ImageCharacteristics = FileHeader.Characteristics, DllCharacteristics = DllCharacteristics, Machine = FileHeader.Machine, ImageContainsCode 1, ImageFlags 04H, LoaderFlags = LoaderFlags, ImageFileSize = the file's size, CheckSum = CheckSum
+tm_nt pii.r.image: this image mapped at its header ImageBase yes, mapped base below 4 GB no, its DllCharacteristics DYNAMIC_BASE yes
+tm_nt pii.0: NtQueryInformationProcess(NtCurrentProcess(), 25H, buf, 0H, &ret) -> status C0000004H, ReturnLength CCCCCCCCH, written 0H
+tm_nt pii.3f: NtQueryInformationProcess(NtCurrentProcess(), 25H, buf, 3FH, &ret) -> status C0000004H, ReturnLength CCCCCCCCH, written 0H
+tm_nt pii.48: NtQueryInformationProcess(NtCurrentProcess(), 25H, buf, 48H, &ret) -> status C0000004H, ReturnLength CCCCCCCCH, written 0H

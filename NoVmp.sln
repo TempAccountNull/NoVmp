@@ -69,6 +69,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "t6_user32", "Emulator\tests
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "tm_u32", "Emulator\tests\pe\tm_u32\tm_u32.vcxproj", "{3F6B9D24-8E1A-4C57-B2D0-7A4E5C9F1B63}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "t7_vfs", "Emulator\tests\pe\t7_vfs\t7_vfs.vcxproj", "{5A9D3C68-2E7B-4B14-9F06-D8C1A4E73B25}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -191,6 +193,10 @@ Global
 		{3F6B9D24-8E1A-4C57-B2D0-7A4E5C9F1B63}.Debug|x64.Build.0 = Debug|x64
 		{3F6B9D24-8E1A-4C57-B2D0-7A4E5C9F1B63}.Release|x64.ActiveCfg = Release|x64
 		{3F6B9D24-8E1A-4C57-B2D0-7A4E5C9F1B63}.Release|x64.Build.0 = Release|x64
+		{5A9D3C68-2E7B-4B14-9F06-D8C1A4E73B25}.Debug|x64.ActiveCfg = Debug|x64
+		{5A9D3C68-2E7B-4B14-9F06-D8C1A4E73B25}.Debug|x64.Build.0 = Debug|x64
+		{5A9D3C68-2E7B-4B14-9F06-D8C1A4E73B25}.Release|x64.ActiveCfg = Release|x64
+		{5A9D3C68-2E7B-4B14-9F06-D8C1A4E73B25}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -223,6 +229,7 @@ Global
 		{5E0A6C1F-7B2D-4C83-9E41-2F6D8A3B9C57} = {6D6705D5-B7A9-4922-A499-776CB8835031}
 		{8C3E2A71-4D5B-4F96-A1E7-6B0C9D2F3E48} = {6D6705D5-B7A9-4922-A499-776CB8835031}
 		{3F6B9D24-8E1A-4C57-B2D0-7A4E5C9F1B63} = {6D6705D5-B7A9-4922-A499-776CB8835031}
+		{5A9D3C68-2E7B-4B14-9F06-D8C1A4E73B25} = {6D6705D5-B7A9-4922-A499-776CB8835031}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {43AEF470-2FF3-5242-923F-C62C32A8EAE1}

@@ -182,6 +182,17 @@ namespace emu::nt
 		std::vector<std::pair<uint64_t, uint64_t>> known;   // [offset, offset + length): measured / modelled bytes
 		bool active = true;
 	};
+	// P45 (U2128): one file-system access of the emulated program (observation only; win_env writes them to <out dir>\fs_access.txt)
+	struct fs_access
+	{
+		uint64_t index = 0;                  // 1, 2, ... in the order of the calls
+		uint64_t insns = 0;                  // the instruction count at the call (the virtual time)
+		std::string service;                 // "NtOpenFile", ...
+		std::string path;                    // the path (the image's directory / the user profile as placeholders) or "<handle ...>"
+		std::string args;                    // access / attributes / share / options / class ...
+		std::string answer;                  // "status C0000034H" or "STOP (not answered: ...)"
+	};
+
 	// P44: the window holding every watched win32k view (fixed placeholder bases inside it; the process layer hooks it once)
 	inline constexpr uint64_t win32k_view_window = 0x00007FF000000000ull, win32k_view_window_size = 0x10000000ull;
 
@@ -212,6 +223,9 @@ namespace emu::nt
 		size_t callback_depth() const { return callbacks_.size(); }
 		// P44 (U2122): the partly measured regions (the process layer checks every guest read of them)
 		const std::vector<watch>& watches() const { return watches_; }
+		// P45 (U2128): every file-system access of the emulated program, in order (observation only)
+		const std::vector<fs_access>& fs_log() const { return fs_log_; }
+		static bool fs_service( const std::string& name );   // a service that names a file / a file handle (recorded in fs_log)
 
 	private:
 		reply svc_terminate_process( const call& c );
@@ -291,6 +305,27 @@ namespace emu::nt
 		reply svc_set_information_virtual_memory( const call& c );
 		reply svc_create_section( const call& c );
 		reply svc_query_attributes_file( const call& c );                              // P43 (U2107)
+		// P45 (U2126-U2130): the emulated file system (nt_kernel_vfs.cpp) - the image, the captured system files, measured misses
+		reply dispatch_one( const call& c );                                           // the services (dispatch() records the file-system ones)
+		std::vector<fs_access> fs_log_;
+		void fs_record( const call& c, const reply& r );
+		std::string fs_shown( const std::string& path ) const;
+		bool vfs_classify( const object_attributes& oa, std::string& kind, std::string& ctx, std::string& why ) const;
+		reply vfs_answer( const object_attributes& oa, const std::string& op, uint64_t ph, uint64_t iosb, uint64_t info, uint64_t info_len, const std::string& what );
+		reply vfs_open_file( const call& c, const object_attributes& oa, const std::string& what );
+		reply vfs_create_file( const call& c );
+		reply vfs_query_attributes( const call& c, const object_attributes& oa, bool full, const std::string& what );
+		reply svc_query_full_attributes_file( const call& c );
+		reply svc_query_directory_file( const call& c, bool ex );
+		reply svc_read_virtual_memory( const call& c );                                // P45 (U2135): NtReadVirtualMemory of the own process (tm_nt rvm)
+		reply svc_add_atom( const call& c );                                           // P45 (U2137): NtAddAtomEx (tm_nt atom)
+		struct atom_entry
+		{
+			std::string name;                                  // as first added (printable ASCII; other characters as ?)
+			uint32_t usage = 0;                                // the adds not yet deleted
+		};
+		std::map<uint32_t, atom_entry> atoms_;                  // P45 (U2137): the emulated window station's atom table (this process' atoms only)
+		uint64_t atoms_next_ = 0;
 		bool sysdir_file( const object_attributes& oa, std::string& file ) const;     // P43 (U2107): a captured file of the emulated system directory
 		reply svc_connect_port( const call& c );
 		reply svc_query_volume_information_file( const call& c );

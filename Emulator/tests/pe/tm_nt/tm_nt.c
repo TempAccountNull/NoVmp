@@ -201,6 +201,14 @@ static void case_qsi( void )
 	tm_qsi( "qsi.c0.28", 0xC0, 0x28, 0 );
 	/* class 32H SystemRangeStartInformation (phnt ntexapi.h SYSTEM_INFORMATION_CLASS; q: ULONG_PTR): kernelbase's call (P39 trace i33,
 	 * system call 94: Length 8, ReturnLength NULL) - the start of the kernel's address range (a system constant, printed raw) */
+	/* P45 (U2140): class 1 SystemProcessorInformation (phnt ntexapi.h SYSTEM_INFORMATION_CLASS; SYSTEM_PROCESSOR_INFORMATION {USHORT
+	 * ProcessorArchitecture, ProcessorLevel, ProcessorRevision, MaximumProcessors, ULONG ProcessorFeatureBits}): d3d11's DllMain (sample
+	 * exploration x7 system call 632: Length CH, ReturnLength NULL) - the processor's architecture / family / model-stepping (no identity) */
+	tm_qsi( "qsi.1", 1, 0xC, 1 );
+	tm_qsi( "qsi.1r", 1, 0xC, 0 );
+	tm_qsi( "qsi.1.0", 1, 0, 0 );
+	tm_qsi( "qsi.1.8", 1, 8, 0 );
+	tm_qsi( "qsi.1.10", 1, 0x10, 0 );
 	tm_qsi( "qsi.32", 0x32, 8, 1 );
 	tm_qsi( "qsi.32r", 0x32, 8, 0 );
 	tm_qsi( "qsi.32.4", 0x32, 4, 0 );
@@ -515,7 +523,7 @@ static void case_etw( void )
 		 * (as bytes; RegType 3, LoggerId 4, ReplyCallback = a kernelbase function) - tag etw.reg4 */
 		/* P41 exploration x4 (system calls 137 / 139 / 143): three more providers of the start in a process without a console -
 		 * 0A27EFF1-..., FE5EF905-... (kernelbase) and 58446CE3-... (kernel32), RegType 3, LoggerId 5 / 6 / 7, ReplyCallback set */
-		static const unsigned char guids[ 10 ][ 16 ] = {
+		static const unsigned char guids[ 12 ][ 16 ] = {
 			{ 0x5C, 0xAB, 0x95, 0x35, 0x2A, 0x04, 0x8E, 0x4C, 0xB9, 0x42, 0x2D, 0x05, 0x9B, 0xFE, 0xB1, 0xB1 },
 			{ 0x7B, 0xC8, 0x5F, 0x30, 0x2A, 0x00, 0x26, 0x5E, 0xD2, 0x97, 0x60, 0x22, 0x30, 0x12, 0xCA, 0x9C },
 			{ 0xFA, 0x2A, 0x1D, 0x90, 0xF6, 0x4F, 0xD7, 0x46, 0x8D, 0x0E, 0x53, 0x64, 0x5E, 0x1A, 0x47, 0xF5 },
@@ -527,11 +535,17 @@ static void case_etw( void )
 			 * AC5EB75F-... (InputCore), 250E91E0-... (Microsoft.Windows.OneCoreTransforms) - RegType 3, LoggerId 8 / 9 / 10, ReplyCallback set */
 			{ 0x2E, 0xCD, 0x5B, 0xF2, 0x90, 0x26, 0xDC, 0x55, 0x3B, 0xC4, 0x07, 0xB6, 0x5B, 0x1B, 0x41, 0xC9 },
 			{ 0xAC, 0x5E, 0xB7, 0x5F, 0x0B, 0x9F, 0x0C, 0x55, 0x33, 0x9F, 0xFC, 0x21, 0xFD, 0xE9, 0x66, 0xCD },
-			{ 0x25, 0x0E, 0x91, 0xE0, 0xCC, 0x6F, 0x32, 0x4F, 0x8F, 0x5E, 0xA4, 0x2C, 0xF7, 0xAC, 0xC5, 0xC3 } };
-		static const USHORT logger[ 10 ] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
-		static const int with_cb[ 10 ] = { 0, 1, 1, 1, 1, 1, 1, 1, 1, 1 };
+			{ 0x25, 0x0E, 0x91, 0xE0, 0xCC, 0x6F, 0x32, 0x4F, 0x8F, 0x5E, 0xA4, 0x2C, 0xF7, 0xAC, 0xC5, 0xC3 },
+			/* P45 (U2139; sample exploration x4 system call 601): dxgi's provider 03BBE5B8-C788-4D0B-B47E-5B5731398A89 (as bytes) - RegType 3,
+			 * LoggerId 11, ReplyCallback set */
+			{ 0xB8, 0xE5, 0xBB, 0x03, 0x88, 0xC7, 0x0B, 0x4D, 0xB4, 0x7E, 0x5B, 0x57, 0x31, 0x39, 0x8A, 0x89 },
+			/* P45 (U2139; sample exploration x6 system call 603): dxgi's second provider CA11C036-0102-4A2D-A6AD-F03CFED5D3C9 (as bytes) - RegType 3,
+			 * LoggerId 12, ReplyCallback set (no traits follow it) */
+			{ 0x36, 0xC0, 0x11, 0xCA, 0x02, 0x01, 0x2D, 0x4A, 0xA6, 0xAD, 0xF0, 0x3C, 0xFE, 0xD5, 0xD3, 0xC9 } };
+		static const USHORT logger[ 12 ] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 };
+		static const int with_cb[ 12 ] = { 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 };
 		int g;
-		for ( g = 0; g < 10; g++ )
+		for ( g = 0; g < 12; g++ )
 		{
 			unsigned char io[ 0xA0 ], in0[ 0xA0 ];
 			size_t k;
@@ -613,6 +627,16 @@ static void case_etwt( void )
 		tm_etwt_bytes( "etwt9", g9, 9, (const unsigned char*)t9, 0x0C );
 		tm_etwt_bytes( "etwt10", g10, 10, (const unsigned char*)t10, 0x26 );
 	}
+	{
+		/* P45 (U2139; sample exploration x5 system call 602): dxgi's traits for its provider 03BBE5B8-... (etw.reg11): 35H bytes - the size,
+		 * "Microsoft.Windows.Graphics.DXGI", the provider-group trait (13H, type 1, the group GUID of user32's provider) - the bytes of the
+		 * capture's dxgi.dll (file offset AEA42H), passed from a buffer of this program */
+		static const unsigned char g11[ 16 ] = { 0xB8, 0xE5, 0xBB, 0x03, 0x88, 0xC7, 0x0B, 0x4D, 0xB4, 0x7E, 0x5B, 0x57, 0x31, 0x39, 0x8A, 0x89 };
+		static const unsigned char t11[ 0x35 ] = { 0x35, 0x00, 0x4D, 0x69, 0x63, 0x72, 0x6F, 0x73, 0x6F, 0x66, 0x74, 0x2E, 0x57, 0x69, 0x6E, 0x64, 0x6F, 0x77, 0x73, 0x2E,
+												   0x47, 0x72, 0x61, 0x70, 0x68, 0x69, 0x63, 0x73, 0x2E, 0x44, 0x58, 0x47, 0x49, 0x00, 0x13, 0x00, 0x01, 0x1A, 0x73, 0x50,
+												   0x4F, 0xCF, 0x89, 0x82, 0x47, 0xB3, 0xE0, 0xDC, 0xE8, 0xC9, 0x04, 0x76, 0xBA };
+		tm_etwt_bytes( "etwt11", g11, 11, t11, 0x35 );
+	}
 }
 
 static void tm_etwt( const char* pfx, const unsigned char* guid, USHORT loggerid, const wchar_t* module, ULONG rva, USHORT size, int trace_tail )
@@ -680,7 +704,7 @@ static void tm_etwt_bytes( const char* pfx, const unsigned char* guid, USHORT lo
 	printf( "tm_nt %s.reg: NtTraceControl(0FH, provider %u as etw.reg%u) -> status %08lXH, ReplyHandle %s\n", pfx, loggerid, loggerid, (unsigned long)st, tm_hshape( h ) );
 	if ( st < 0 ) return;
 	for ( k = 0; k < size; k++ ) nz += blob[ k ] != 0;
-	printf( "tm_nt %s.blob: user32's traits (as bytes), %XH bytes: first USHORT (the traits size) %XH, non-zero bytes %zu\n", pfx, size, *(const USHORT*)blob, nz );
+	printf( "tm_nt %s.blob: the traits (as bytes), %XH bytes: first USHORT (the traits size) %XH, non-zero bytes %zu\n", pfx, size, *(const USHORT*)blob, nz );
 	memset( in, 0, sizeof( in ) );
 	*(HANDLE*)in = h;
 	*(const void**)( in + 8 ) = blob;
@@ -1040,7 +1064,8 @@ static void case_ahc( void )
 											L"d3d11.dll", L"RPCRT4.dll", L"combase.dll", L"kernel.appcore.dll", L"dcomp.dll", L"ole32.dll", L"OLEAUT32.dll", L"SHELL32.dll",
 											L"dwmapi.dll", L"WS2_32.dll", L"bcrypt.dll", L"sechost.dll", L"ADVAPI32.dll", L"cfgmgr32.dll", L"SETUPAPI.dll",
 											L"transparent_makimav2.exe",
-											L"t6_user32.exe", L"IMM32.DLL" };   /* P44 (U2116): ahc.34 - user32 loads the IMM file (its _InitializeImmEntryTable) */   /* P44 (U2115): ahc.33 - test PE T6's image name (its loader's LookupCdb) */
+											L"t6_user32.exe", L"IMM32.DLL",   /* P44 (U2116): ahc.34 - user32 loads the IMM file (its _InitializeImmEntryTable) */   /* P44 (U2115): ahc.33 - test PE T6's image name (its loader's LookupCdb) */
+											L"t7_vfs.exe" };   /* P45 (U2125): ahc.35 - test PE T7's image name (its loader's LookupCdb) */
 	size_t q, k;
 	for ( q = 0; q < sizeof( names ) / sizeof( names[ 0 ] ); q++ )
 	{
@@ -2801,7 +2826,359 @@ static void case_u32k( void )
 	}
 }
 
-static const struct tm_case g_cases[] = { { "sat", case_sat }, { "qsi", case_qsi }, { "hvp", case_hvp }, { "qip", case_qip }, { "wcp", case_wcp }, { "qsix", case_qsix }, { "iocp", case_iocp }, { "wkf", case_wkf }, { "tmr2", case_tmr2 }, { "awcp", case_awcp }, { "swf", case_swf }, { "etw", case_etw }, { "kd", case_kd }, { "of", case_of }, { "tls", case_tls }, { "ahc", case_ahc }, { "vmi", case_vmi }, { "csr", case_csr }, { "sec", case_sec }, { "csrc", case_csrc }, { "nls", case_nls }, { "con", case_con }, { "etwt", case_etwt }, { "tok", case_tok }, { "acc", case_acc }, { "bno", case_bno }, { "mut", case_mut }, { "wil", case_wil }, { "wnf", case_wnf }, { "wnfe", case_wnfe }, { "wnfs", case_wnfs }, { "t2s", case_t2s }, { "hku", case_hku }, { "alert", case_alert }, { "term", case_term }, { "time", case_time }, { "sp", case_sp }, { "mit", case_mit }, { "u32", case_u32 }, { "u32k", case_u32k } };
+/* ------------------------------------------------------------------------------------------------ the file system's MISSES (P45, U2125)
+ * USER DECISION 2026-10-27 "virtual FS, measured misses": the emulated file system holds only the image (at its emulated path), the
+ * environment's captured system files (System32) and the captured NLS / API-set files; every other path is answered with the status
+ * Windows gives for that KIND of miss in that context - measured here, in this process, on OUR OWN names only: a name made of this
+ * process' id that no file has ("<a missing name>"), the subfolder SystemResources (the Windows 10 .mun side folder of an image - sample
+ * run 9 system call 539) and the System32 folder. Nothing is created, written or deleted; only opens / attribute queries that miss.
+ * Paths (placeholders printed, never a real path):
+ *   dir      "\??\<the image's directory>\<a missing name>"                 a missing file next to this image
+ *   sub      "\??\<the image's directory>\SystemResources\tm_nt.exe.mun"     a missing subfolder (the .mun case)
+ *   sys      "\??\<SystemRoot>\System32\<a missing name>"                    a missing file in System32
+ *   syssub   "\??\<SystemRoot>\System32\<a missing name>\<a missing name>"   a missing subfolder of System32
+ *   ads      "\??\<the image's directory>\<a missing name>:s"                a stream of a missing file
+ *   adsimg   "\??\<the image's directory>\tm_nt.exe:<a missing name>"        a missing stream of this (existing) image
+ *   dev      "\Device\<a missing name>"                                      a device name nothing created
+ *   win      "\??\<SystemRoot>\<a missing name>"                              a missing file in the Windows folder
+ *   winsub   "\??\<SystemRoot>\<a missing name>\<a missing name>.mun"   a missing subfolder of the Windows folder
+ *   par      "\??\<the parent of the image's directory>\<a missing name>"    a missing file beside the image's folder
+ *   parsub   "\??\<the parent of the image's directory>\SystemResources\tm_nt.exe.mun"   the .mun search of
+ *            an image (sample run 9 / red9: SystemResources is a sibling of the image's folder, like of System32); nt_measured.py runs
+ *            tm_nt from <a fresh folder>\img\tm_nt.exe, so this parent is a fresh folder of its own
+ * Operations (the argument sets of the emulated traces; phnt ntioapi.h:2194-2207 NtCreateFile, :2294-2301 NtOpenFile, :3053-3057
+ * NtQueryAttributesFile, :3070-3074 NtQueryFullAttributesFile; FILE_BASIC_INFORMATION 28H / FILE_NETWORK_OPEN_INFORMATION :703-712 38H):
+ *   of1 NtOpenFile( 100001H, 40H, 5, 60H )   ntdll LdrpMapResourceFile (sample run 9, the .mun open)
+ *   of2 NtOpenFile( 100021H, 840H, 5, 60H )  the loader's DLL open (tm_nt sp.open)
+ *   of3 NtOpenFile( 100001H, 840H, 5, 60H )  LdrpFindLoadedDllByMappingFile (tm_nt u32k.fl.open)
+ *   of4 NtOpenFile( 100020H, 40H, 3, 21H )   the loader's directory open (tm_nt of.curdir)
+ *   cf1 NtCreateFile( 80100080H, 40H, NULL, 80H, 1, FILE_OPEN, 60H, NULL, 0 )   CreateFileW( GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING )
+ *   cf2 NtCreateFile( 80100080H, 40H, NULL, 80H, 7, FILE_OPEN, 60H, NULL, 0 )   the same with every share mode
+ *   qa1 / qa2 NtQueryAttributesFile( 40H / 840H ), qf1 / qf2 NtQueryFullAttributesFile( 40H / 840H )
+ * Printed per call: the status, the handle (its shape, or "not written"), the IoStatusBlock (its two fields, or "not written"), the output
+ * bytes written (FileInformation pre-filled with CCH). Directory listing (dq.*): this image's directory opened as FindFirstFileExW opens a
+ * directory (100001H, 40H, 7, 4021H), then one query per class with a mask no file matches - a fresh handle per query (the mask is kept
+ * by the handle). */
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtCreateFile( PHANDLE FileHandle, ACCESS_MASK DesiredAccess, TM_OA* ObjectAttributes, PVOID IoStatusBlock, PLARGE_INTEGER AllocationSize,
+														ULONG FileAttributes, ULONG ShareAccess, ULONG CreateDisposition, ULONG CreateOptions, PVOID EaBuffer, ULONG EaLength );
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtQueryFullAttributesFile( TM_OA* ObjectAttributes, PVOID FileInformation );
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtQueryDirectoryFile( HANDLE FileHandle, HANDLE Event, PVOID ApcRoutine, PVOID ApcContext, PVOID IoStatusBlock, PVOID FileInformation,
+																ULONG Length, ULONG FileInformationClass, BOOLEAN ReturnSingleEntry, TM_USTR* FileName, BOOLEAN RestartScan );
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtQueryDirectoryFileEx( HANDLE FileHandle, HANDLE Event, PVOID ApcRoutine, PVOID ApcContext, PVOID IoStatusBlock, PVOID FileInformation,
+																  ULONG Length, ULONG FileInformationClass, ULONG QueryFlags, TM_USTR* FileName );
+
+/* "IoStatus not written" or "IoStatus <status>H / <information>H" */
+static const char* tm_iosb( const ULONG_PTR* iosb )
+{
+	static char b[ 64 ];
+	if ( iosb[ 0 ] == (ULONG_PTR)0xCCCCCCCCCCCCCCCCull && iosb[ 1 ] == (ULONG_PTR)0xCCCCCCCCCCCCCCCCull ) return "IoStatus not written";
+	snprintf( b, sizeof( b ), "IoStatus %08lXH / %llXH%s", (unsigned long)(ULONG)iosb[ 0 ], (unsigned long long)iosb[ 1 ], ( iosb[ 0 ] >> 32 ) == 0xCCCCCCCCull ? " (upper half not written)" : "" );
+	return b;
+}
+
+/* the output bytes written into FI (N bytes pre-filled CCH): "written 0" or "written K (offsets L..HH, non-zero Z)" */
+static const char* tm_fiw( const unsigned char* fi, size_t n )
+{
+	static char b[ 96 ];
+	size_t k, w = 0, lo = n, hi = 0, nz = 0;
+	for ( k = 0; k < n; k++ )
+		if ( fi[ k ] != 0xCC ) { w++; if ( k < lo ) lo = k; hi = k; nz += fi[ k ] != 0; }
+	if ( !w ) snprintf( b, sizeof( b ), "written 0" );
+	else snprintf( b, sizeof( b ), "written %zu (offsets %zXH..%zXH, non-zero %zu)", w, lo, hi, nz );
+	return b;
+}
+
+static void case_fs( void )
+{
+	static wchar_t app[ 600 ], par[ 600 ], win[ 300 ], miss[ 64 ], path[ 11 ][ 1000 ];
+	static const char* const tag[] = { "dir", "sub", "sys", "syssub", "ads", "adsimg", "dev", "win", "winsub", "par", "parsub" };
+	static const char* const shown[] = { "\\??\\<the image's directory>\\<a missing name>", "\\??\\<the image's directory>\\SystemResources\\tm_nt.exe.mun",
+										 "\\??\\<SystemRoot>\\System32\\<a missing name>", "\\??\\<SystemRoot>\\System32\\<a missing name>\\<a missing name>",
+										 "\\??\\<the image's directory>\\<a missing name>:s", "\\??\\<the image's directory>\\tm_nt.exe:<a missing name>",
+										 "\\Device\\<a missing name>", "\\??\\<SystemRoot>\\<a missing name>",
+										 "\\??\\<SystemRoot>\\<a missing name>\\<a missing name>.mun",
+										 "\\??\\<the parent of the image's directory>\\<a missing name>",
+										 "\\??\\<the parent of the image's directory>\\SystemResources\\tm_nt.exe.mun" };
+	DWORD al = GetModuleFileNameW( NULL, app, 600 );
+	UINT wl = GetWindowsDirectoryW( win, 300 );
+	size_t q;
+	const wchar_t* img;
+	while ( al && app[ al - 1 ] != L'\\' ) al--;
+	img = app + al;
+	if ( !al || !wl || _wcsicmp( img, L"tm_nt.exe" ) ) { printf( "tm_nt fs: no directory / not tm_nt.exe\n" ); return; }
+	app[ al - 1 ] = 0;   /* the directory without its final backslash */
+	swprintf_s( miss, 64, L"tm_nt_fs_%lu_absent", (unsigned long)GetCurrentProcessId() );
+	swprintf_s( path[ 0 ], 1000, L"\\??\\%s\\%s", app, miss );
+	swprintf_s( path[ 1 ], 1000, L"\\??\\%s\\SystemResources\\tm_nt.exe.mun", app );
+	swprintf_s( path[ 2 ], 1000, L"\\??\\%s\\System32\\%s", win, miss );
+	swprintf_s( path[ 3 ], 1000, L"\\??\\%s\\System32\\%s\\%s.mun", win, miss, miss );
+	swprintf_s( path[ 4 ], 1000, L"\\??\\%s\\%s:s", app, miss );
+	swprintf_s( path[ 5 ], 1000, L"\\??\\%s\\tm_nt.exe:%s", app, miss );
+	swprintf_s( path[ 6 ], 1000, L"\\Device\\%s", miss );
+	swprintf_s( path[ 7 ], 1000, L"\\??\\%s\\%s", win, miss );
+	swprintf_s( path[ 8 ], 1000, L"\\??\\%s\\%s\\%s.mun", win, miss, miss );
+	wcscpy_s( par, 600, app );
+	{
+		wchar_t* cut = wcsrchr( par, L'\\' );
+		if ( !cut || cut <= par + 2 ) { printf( "tm_nt fs: the image's directory has no parent\n" ); return; }
+		*cut = 0;
+	}
+	swprintf_s( path[ 9 ], 1000, L"\\??\\%s\\%s", par, miss );
+	swprintf_s( path[ 10 ], 1000, L"\\??\\%s\\SystemResources\\tm_nt.exe.mun", par );
+	for ( q = 0; q < 11; q++ )
+	{
+		TM_USTR n;
+		TM_OA oa;
+		HANDLE h;
+		ULONG_PTR iosb[ 2 ];
+		unsigned char fi[ 0x40 ];
+		TM_NTSTATUS st;
+		int k;
+		static const struct { const char* op; ULONG acc, attr, share, opt; } ofs[] = { { "of1", 0x100001, 0x40, 5, 0x60 }, { "of2", 0x100021, 0x840, 5, 0x60 },
+																						 { "of3", 0x100001, 0x840, 5, 0x60 }, { "of4", 0x100020, 0x40, 3, 0x21 } };
+		tm_ustr( &n, path[ q ] );
+		for ( k = 0; k < 4; k++ )
+		{
+			tm_oa( &oa, NULL, &n );
+			oa.Attributes = ofs[ k ].attr;
+			h = (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull;
+			iosb[ 0 ] = iosb[ 1 ] = (ULONG_PTR)0xCCCCCCCCCCCCCCCCull;
+			st = NtOpenFile( &h, ofs[ k ].acc, &oa, iosb, ofs[ k ].share, ofs[ k ].opt );
+			printf( "tm_nt fs.%s.%s: NtOpenFile(&h, %lXH, \"%s\" %lXH, &iosb, %lu, %lXH) -> status %08lXH, handle %s, %s\n", tag[ q ], ofs[ k ].op, (unsigned long)ofs[ k ].acc, shown[ q ],
+					(unsigned long)ofs[ k ].attr, (unsigned long)ofs[ k ].share, (unsigned long)ofs[ k ].opt, (unsigned long)st,
+					h == (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull ? "not written" : tm_hshape( h ), tm_iosb( iosb ) );
+			if ( st >= 0 ) NtClose( h );
+		}
+		for ( k = 1; k <= 2; k++ )
+		{
+			const ULONG share = k == 1 ? 1 : 7;
+			tm_oa( &oa, NULL, &n );
+			oa.Attributes = 0x40;
+			h = (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull;
+			iosb[ 0 ] = iosb[ 1 ] = (ULONG_PTR)0xCCCCCCCCCCCCCCCCull;
+			st = NtCreateFile( &h, 0x80100080, &oa, iosb, NULL, 0x80, share, 1, 0x60, NULL, 0 );
+			printf( "tm_nt fs.%s.cf%d: NtCreateFile(&h, 80100080H, \"%s\" 40H, &iosb, NULL, 80H, %lu, FILE_OPEN 1, 60H, NULL, 0) -> status %08lXH, handle %s, %s\n", tag[ q ], k, shown[ q ],
+					(unsigned long)share, (unsigned long)st, h == (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull ? "not written" : tm_hshape( h ), tm_iosb( iosb ) );
+			if ( st >= 0 ) NtClose( h );
+		}
+		for ( k = 0; k < 4; k++ )
+		{
+			const ULONG attr = ( k & 1 ) ? 0x840 : 0x40;
+			const int full = k >= 2;
+			tm_oa( &oa, NULL, &n );
+			oa.Attributes = attr;
+			memset( fi, 0xCC, sizeof( fi ) );
+			st = full ? NtQueryFullAttributesFile( &oa, fi ) : NtQueryAttributesFile( &oa, fi );
+			printf( "tm_nt fs.%s.%s%d: %s(\"%s\" %lXH, buf) -> status %08lXH, %s\n", tag[ q ], full ? "qf" : "qa", ( k & 1 ) + 1, full ? "NtQueryFullAttributesFile" : "NtQueryAttributesFile",
+					shown[ q ], (unsigned long)attr, (unsigned long)st, tm_fiw( fi, sizeof( fi ) ) );
+		}
+	}
+	/* the directory listing: this image's directory opened as FindFirstFileExW does, one fresh handle per query, a mask nothing matches */
+	{
+		static const ULONG cls[] = { 1, 2, 3, 12, 37, 38 };
+		static wchar_t dpath[ 700 ];
+		unsigned char* fi = g_buf;
+		size_t c;
+		int ex;
+		TM_USTR n, mask;
+		swprintf_s( dpath, 700, L"\\??\\%s\\", app );
+		tm_ustr( &n, dpath );
+		tm_ustr( &mask, miss );
+		for ( ex = 0; ex <= 1; ex++ )
+			for ( c = 0; c < sizeof( cls ) / sizeof( cls[ 0 ] ); c++ )
+			{
+				TM_OA oa;
+				HANDLE h = (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull;
+				ULONG_PTR iosb[ 2 ] = { (ULONG_PTR)0xCCCCCCCCCCCCCCCCull, (ULONG_PTR)0xCCCCCCCCCCCCCCCCull };
+				TM_NTSTATUS st;
+				tm_oa( &oa, NULL, &n );
+				oa.Attributes = 0x40;
+				st = NtOpenFile( &h, 0x100001, &oa, iosb, 7, 0x4021 );
+				if ( !ex && !c )
+					printf( "tm_nt fs.dq.open: NtOpenFile(&h, 100001H, \"\\??\\<the image's directory>\\\" 40H, &iosb, 7, 4021H) -> status %08lXH, handle %s, %s\n", (unsigned long)st,
+							tm_hshape( h ), tm_iosb( iosb ) );
+				if ( st < 0 ) { printf( "tm_nt fs.dq.%s%lu: the directory did not open\n", ex ? "x" : "c", (unsigned long)cls[ c ] ); continue; }
+				memset( fi, 0xCC, 0x1000 );
+				iosb[ 0 ] = iosb[ 1 ] = (ULONG_PTR)0xCCCCCCCCCCCCCCCCull;
+				if ( ex )
+				{
+					st = NtQueryDirectoryFileEx( h, NULL, NULL, NULL, iosb, fi, 0x1000, cls[ c ], 3, &mask );
+					printf( "tm_nt fs.dq.x%lu: NtQueryDirectoryFileEx(the directory, NULL, NULL, NULL, &iosb, buf, 1000H, class %lu, SL_RESTART_SCAN | SL_RETURN_SINGLE_ENTRY 3, \"<a missing name>\") -> "
+							"status %08lXH, %s, %s\n", (unsigned long)cls[ c ], (unsigned long)cls[ c ], (unsigned long)st, tm_iosb( iosb ), tm_fiw( fi, 0x1000 ) );
+				}
+				else
+				{
+					st = NtQueryDirectoryFile( h, NULL, NULL, NULL, iosb, fi, 0x1000, cls[ c ], TRUE, &mask, TRUE );
+					printf( "tm_nt fs.dq.c%lu: NtQueryDirectoryFile(the directory, NULL, NULL, NULL, &iosb, buf, 1000H, class %lu, TRUE, \"<a missing name>\", TRUE) -> status %08lXH, %s, %s\n",
+							(unsigned long)cls[ c ], (unsigned long)cls[ c ], (unsigned long)st, tm_iosb( iosb ), tm_fiw( fi, 0x1000 ) );
+				}
+				NtClose( h );
+			}
+	}
+}
+
+/* ------------------------------------------------------------------------------------------------ NtReadVirtualMemory (P45, U2134)
+ * phnt ntmmapi.h:840-846 NtReadVirtualMemory( ProcessHandle, BaseAddress, Buffer, NumberOfBytesToRead, NumberOfBytesRead ) (the documented
+ * ReadProcessMemory's service). Sample exploration x1 system call 573 (after the GUI conversion, a DLL's start): NtReadVirtualMemory(
+ * NtCurrentProcess(), PEB + 18H (Ldr), a stack buffer, 8, &read ) right after NtQueryInformationProcess( ProcessBasicInformation ). Here the
+ * same on THIS process' own memory only: the PEB's Ldr (8 bytes; with / without NumberOfBytesRead), a reserved page, a committed page
+ * followed by a reserved one (4 + 4 bytes), a PAGE_NOACCESS page, a read-only destination, 0 bytes. Printed: the status, the count (pre-set
+ * CCH), the destination bytes written and whether they equal the source; never an address or a value. */
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtReadVirtualMemory( HANDLE ProcessHandle, PVOID BaseAddress, PVOID Buffer, SIZE_T NumberOfBytesToRead, PSIZE_T NumberOfBytesRead );
+static void tm_rvm( const char* tag, const char* what, const void* src, SIZE_T n, unsigned char* dst, int with_count )
+{
+	SIZE_T got = (SIZE_T)0xCCCCCCCCCCCCCCCCull;
+	TM_NTSTATUS st;
+	size_t k, w = 0;
+	int same = 1;
+	unsigned char before[ 16 ];
+	if ( dst == g_buf ) memset( g_buf, 0xCC, 64 );
+	memcpy( before, dst, 16 );
+	st = NtReadVirtualMemory( (HANDLE)(LONG_PTR)-1, (PVOID)src, dst, n, with_count ? &got : NULL );
+	for ( k = 0; k < 16; k++ ) w += dst[ k ] != before[ k ];
+	if ( st >= 0 && n && n <= 16 ) same = !memcmp( dst, src, n );
+	printf( "tm_nt rvm.%s: NtReadVirtualMemory(NtCurrentProcess(), %s, buf, %zXH, %s) -> status %08lXH, NumberOfBytesRead %s, destination bytes changed %zu%s\n", tag, what, n,
+			with_count ? "&read" : "NULL", (unsigned long)st, !with_count ? "-" : got == (SIZE_T)0xCCCCCCCCCCCCCCCCull ? "not written" : ( got <= 0x1000 ? "written (the .count line)" : "<large>" ),
+			w, ( st >= 0 && n && n <= 16 ) ? ( same ? ", equal to the source" : ", NOT equal to the source" ) : "" );
+	if ( with_count && got != (SIZE_T)0xCCCCCCCCCCCCCCCCull && got <= 0x1000 ) printf( "tm_nt rvm.%s.count: %zXH\n", tag, got );
+}
+
+static void case_rvm( void )
+{
+	const unsigned char* peb = (const unsigned char*)__readgsqword( 0x60 );   /* TEB +60H ProcessEnvironmentBlock (the guest ntdll.pdb _TEB) */
+	unsigned char* res = (unsigned char*)VirtualAlloc( NULL, 0x10000, MEM_RESERVE, PAGE_READWRITE );
+	unsigned char *ro, *na;
+	if ( !res ) { printf( "tm_nt rvm: no reservation\n" ); return; }
+	VirtualAlloc( res, 0x1000, MEM_COMMIT, PAGE_READWRITE );   /* res: page 0 committed, page 1.. reserved */
+	memset( res, 0x5A, 0x1000 );
+	ro = (unsigned char*)VirtualAlloc( NULL, 0x1000, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE );
+	na = (unsigned char*)VirtualAlloc( NULL, 0x1000, MEM_COMMIT | MEM_RESERVE, PAGE_NOACCESS );
+	if ( !ro || !na ) { printf( "tm_nt rvm: no pages\n" ); return; }
+	memset( ro, 0xCC, 0x1000 );
+	{
+		DWORD old;
+		VirtualProtect( ro, 0x1000, PAGE_READONLY, &old );
+	}
+	tm_rvm( "ldr", "PEB + 18H (Ldr)", peb + 0x18, 8, g_buf, 1 );
+	tm_rvm( "ldr.nocount", "PEB + 18H (Ldr)", peb + 0x18, 8, g_buf, 0 );
+	tm_rvm( "reserved", "a reserved page", res + 0x1000, 8, g_buf, 1 );
+	tm_rvm( "edge", "the last 4 bytes of a committed page + 4 of the reserved page after it", res + 0xFFC, 8, g_buf, 1 );
+	tm_rvm( "noaccess", "a PAGE_NOACCESS page", na, 8, g_buf, 1 );
+	tm_rvm( "rodst", "PEB + 18H into a PAGE_READONLY destination", peb + 0x18, 8, ro, 1 );
+	tm_rvm( "zero", "PEB + 18H, 0 bytes", peb + 0x18, 0, g_buf, 1 );
+	VirtualFree( res, 0, MEM_RELEASE );
+	VirtualFree( ro, 0, MEM_RELEASE );
+	VirtualFree( na, 0, MEM_RELEASE );
+}
+
+/* ------------------------------------------------------------------------------------------------ the atom table (P45, U2137)
+ * phnt ntexapi.h:10140-10146 NtAddAtomEx( AtomName, Length, Atom, Flags ), :10163 NtFindAtom, :10183 NtDeleteAtom, NtQueryInformationAtom
+ * (AtomBasicInformation {USHORT UsageCount, USHORT Flags, USHORT NameLength, WCHAR Name[]}). Sample exploration x3 system call 599: dxgi's
+ * DllMain -> kernel32 GlobalAddAtomW -> NtAddAtomEx( a 27-character name, 36H bytes, &atom, Flags 0 ). Here with a name of OUR OWN
+ * (tm_nt_atom_<the process id>, never printed) - added three times, queried, deleted three times, looked up; the atom VALUE is printed only
+ * as its range (it depends on the atoms the session holds). Nothing else in the table is touched. */
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtAddAtomEx( PCWSTR AtomName, ULONG Length, USHORT* Atom, ULONG Flags );
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtFindAtom( PCWSTR AtomName, ULONG Length, USHORT* Atom );
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtDeleteAtom( USHORT Atom );
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtQueryInformationAtom( USHORT Atom, ULONG AtomInformationClass, PVOID AtomInformation, ULONG AtomInformationLength, PULONG ReturnLength );
+static void case_atom( void )
+{
+	static wchar_t name[ 64 ];
+	const ULONG len = (ULONG)( swprintf_s( name, 64, L"tm_nt_atom_%lu", (unsigned long)GetCurrentProcessId() ) * 2 );
+	USHORT a = 0xCCCC, b = 0xCCCC, f = 0xCCCC;
+	TM_NTSTATUS st;
+	ULONG rl = 0xCCCCCCCC;
+	int k;
+	/* the process without user32 (a console process that never connected to its window station): the first add */
+	st = NtAddAtomEx( name, len, &a, 0 );
+	printf( "tm_nt atom.nouser32: NtAddAtomEx(\"<a name of its own>\", Flags 0) before user32 is loaded -> status %08lXH, atom %s\n", (unsigned long)st, a == 0xCCCC ? "not written" : "written" );
+	if ( st >= 0 ) NtDeleteAtom( a );
+	/* the sample's state: user32 loaded (its DllMain connects the process to its window station; the sample's GUI conversion came before
+	 * dxgi's DllMain) - LoadLibraryW of the system's user32.dll in THIS process (our own native test PE) */
+	printf( "tm_nt atom.user32: LoadLibraryW(\"user32.dll\") -> %s\n", LoadLibraryW( L"user32.dll" ) ? "loaded" : "failed" );
+	a = 0xCCCC;
+	st = NtAddAtomEx( name, len, &a, 0 );
+	printf( "tm_nt atom.add1: NtAddAtomEx(\"<a name of its own>\", %s bytes, &atom, Flags 0) -> status %08lXH, atom %s\n", "2 x characters", (unsigned long)st,
+			a == 0xCCCC ? "not written" : ( a >= 0xC000 ? "in C000H..FFFFH" : "below C000H" ) );
+	st = NtAddAtomEx( name, len, &b, 0 );
+	printf( "tm_nt atom.add2: the same name again -> status %08lXH, atom %s\n", (unsigned long)st, b == a ? "the same" : "another" );
+	st = NtAddAtomEx( name, len, NULL, 0 );
+	printf( "tm_nt atom.add3: the same name, Atom NULL -> status %08lXH\n", (unsigned long)st );
+	memset( g_buf, 0xCC, 0x200 );
+	st = NtQueryInformationAtom( a, 0, g_buf, 0x100, &rl );
+	/* the name's length depends on the process id's digits: printed as relations only */
+	printf( "tm_nt atom.query: NtQueryInformationAtom(atom, AtomBasicInformation 0, buf, 100H, &ret) -> status %08lXH, ReturnLength = 6 + NameLength + 2: %s, UsageCount %u, Flags %u, "
+			"NameLength = 2 x characters: %s, the name %s, the NUL after it %s\n",
+			(unsigned long)st, rl == 6ul + *(USHORT*)( g_buf + 4 ) + 2 ? "yes" : "no", *(USHORT*)g_buf, *(USHORT*)( g_buf + 2 ), *(USHORT*)( g_buf + 4 ) == len ? "yes" : "no",
+			!memcmp( g_buf + 6, name, len ) ? "equal" : "different", *(USHORT*)( g_buf + 6 + len ) == 0 ? "written" : "not written" );
+	st = NtFindAtom( name, len, &f );
+	printf( "tm_nt atom.find: NtFindAtom(the name) -> status %08lXH, atom %s\n", (unsigned long)st, f == a ? "the same" : "another / not written" );
+	for ( k = 1; k <= 3; k++ ) printf( "tm_nt atom.del%d: NtDeleteAtom(atom) -> status %08lXH\n", k, (unsigned long)NtDeleteAtom( a ) );
+	f = 0xCCCC;
+	st = NtFindAtom( name, len, &f );
+	printf( "tm_nt atom.gone: NtFindAtom(the name) after the deletes -> status %08lXH, atom %s\n", (unsigned long)st, f == 0xCCCC ? "not written" : "written" );
+}
+
+/* ------------------------------------------------------------------------------------------------ ProcessImageInformation (P45, U2141)
+ * phnt ntpsapi.h PROCESSINFOCLASS 37 (25H) ProcessImageInformation (q: SECTION_IMAGE_INFORMATION, ntmmapi.h:1274-1320, 40H bytes on x64:
+ * TransferAddress +0, ZeroBits +8, MaximumStackSize +10H, CommittedStackSize +18H, SubSystemType +20H, SubSystemVersion +24H,
+ * OperatingSystemVersion +28H, ImageCharacteristics +2CH, DllCharacteristics +2EH, Machine +30H, ImageContainsCode +32H, ImageFlags +33H,
+ * LoaderFlags +34H, ImageFileSize +38H, CheckSum +3CH). Sample exploration x8 system call 633 (d3d11's DllMain): NtQueryInformationProcess(
+ * NtCurrentProcess(), 25H, buf, 40H, NULL). Here on THIS process; every field printed as its RELATION to this image's own PE header / file
+ * (an address never: TransferAddress as "= the mapped base + AddressOfEntryPoint" etc.); the image file's size from its own path. */
+static void tm_pii( const char* tag, ULONG len, int with_ret )
+{
+	const unsigned char* base = (const unsigned char*)GetModuleHandleW( NULL );
+	const unsigned char* nt = base + *(const LONG*)( base + 0x3C );
+	const unsigned char* oh = nt + 0x18;
+	ULONG rl = 0xCCCCCCCC;
+	TM_NTSTATUS st;
+	size_t k, w = 0;
+	memset( g_buf, 0xCC, 0x100 );
+	st = NtQueryInformationProcess( (HANDLE)(LONG_PTR)-1, 0x25, g_buf, len, with_ret ? &rl : NULL );
+	for ( k = 0; k < 0x100; k++ ) if ( g_buf[ k ] != 0xCC ) w = k + 1;
+	printf( "tm_nt %s: NtQueryInformationProcess(NtCurrentProcess(), 25H, buf, %lXH, %s) -> status %08lXH, ReturnLength %lXH, written %zXH\n", tag, (unsigned long)len,
+			with_ret ? "&ret" : "NULL", (unsigned long)st, (unsigned long)rl, w );
+	if ( st < 0 || len < 0x40 ) return;
+	{
+		const ULONGLONG ta = *(ULONGLONG*)( g_buf + 0 ), mx = *(ULONGLONG*)( g_buf + 0x10 ), cm = *(ULONGLONG*)( g_buf + 0x18 );
+		const ULONG entry = *(const ULONG*)( oh + 0x10 );
+		const ULONGLONG ib = *(const ULONGLONG*)( oh + 0x18 );
+		WIN32_FILE_ATTRIBUTE_DATA fa;
+		wchar_t self[ 600 ];
+		ULONG fsize = 0;
+		if ( GetModuleFileNameW( NULL, self, 600 ) && GetFileAttributesExW( self, GetFileExInfoStandard, &fa ) ) fsize = fa.nFileSizeLow;
+		printf( "tm_nt %s.fields: TransferAddress %s, ZeroBits %lu, bytes +0CH..+0FH %02X %02X %02X %02X, MaximumStackSize %s, CommittedStackSize %s, SubSystemType %s, "
+				"SubSystemVersion %s, OperatingSystemVersion %s, ImageCharacteristics %s, DllCharacteristics %s, Machine %s, ImageContainsCode %u, ImageFlags %02XH, "
+				"LoaderFlags %s, ImageFileSize %s, CheckSum %s\n",
+				tag, ta == (ULONGLONG)( ULONG_PTR )base + entry ? "= the mapped base + AddressOfEntryPoint" : ta == ib + entry ? "= the header ImageBase + AddressOfEntryPoint" : "<other>",
+				(unsigned long)*(ULONG*)( g_buf + 8 ), g_buf[ 0xC ], g_buf[ 0xD ], g_buf[ 0xE ], g_buf[ 0xF ],
+				mx == *(const ULONGLONG*)( oh + 0x48 ) ? "= SizeOfStackReserve" : "<other>", cm == *(const ULONGLONG*)( oh + 0x50 ) ? "= SizeOfStackCommit" : "<other>",
+				*(ULONG*)( g_buf + 0x20 ) == *(const USHORT*)( oh + 0x44 ) ? "= Subsystem" : "<other>",
+				*(ULONG*)( g_buf + 0x24 ) == ( ( (ULONG)*(const USHORT*)( oh + 0x30 ) << 16 ) | *(const USHORT*)( oh + 0x32 ) ) ? "= MajorSubsystemVersion << 16 | MinorSubsystemVersion" : "<other>",
+				*(ULONG*)( g_buf + 0x28 ) == ( ( (ULONG)*(const USHORT*)( oh + 0x2A ) << 16 ) | *(const USHORT*)( oh + 0x28 ) ) ? "= MinorOperatingSystemVersion << 16 | MajorOperatingSystemVersion" :
+				*(ULONG*)( g_buf + 0x28 ) == ( ( (ULONG)*(const USHORT*)( oh + 0x28 ) << 16 ) | *(const USHORT*)( oh + 0x2A ) ) ? "= MajorOperatingSystemVersion << 16 | MinorOperatingSystemVersion" : "<other>",
+				*(USHORT*)( g_buf + 0x2C ) == *(const USHORT*)( nt + 0x16 ) ? "= FileHeader.Characteristics" : "<other>",
+				*(USHORT*)( g_buf + 0x2E ) == *(const USHORT*)( oh + 0x46 ) ? "= DllCharacteristics" : "<other>",
+				*(USHORT*)( g_buf + 0x30 ) == *(const USHORT*)( nt + 4 ) ? "= FileHeader.Machine" : "<other>", g_buf[ 0x32 ], g_buf[ 0x33 ],
+				*(ULONG*)( g_buf + 0x34 ) == *(const ULONG*)( oh + 0x68 ) ? "= LoaderFlags" : "<other>",
+				fsize && *(ULONG*)( g_buf + 0x38 ) == fsize ? "= the file's size" : "<other>",
+				*(ULONG*)( g_buf + 0x3C ) == *(const ULONG*)( oh + 0x40 ) ? "= CheckSum" : "<other>" );
+		printf( "tm_nt %s.image: this image mapped at its header ImageBase %s, mapped base below 4 GB %s, its DllCharacteristics DYNAMIC_BASE %s\n", tag,
+				(ULONGLONG)(ULONG_PTR)base == ib ? "yes" : "no", (ULONG_PTR)base < 0x100000000ull ? "yes" : "no", ( *(const USHORT*)( oh + 0x46 ) & 0x40 ) ? "yes" : "no" );
+	}
+}
+
+static void case_pii( void )
+{
+	tm_pii( "pii", 0x40, 0 );
+	tm_pii( "pii.r", 0x40, 1 );
+	tm_pii( "pii.0", 0, 1 );
+	tm_pii( "pii.3f", 0x3F, 1 );
+	tm_pii( "pii.48", 0x48, 1 );
+}
+
+static const struct tm_case g_cases[] = { { "sat", case_sat }, { "qsi", case_qsi }, { "hvp", case_hvp }, { "qip", case_qip }, { "wcp", case_wcp }, { "qsix", case_qsix }, { "iocp", case_iocp }, { "wkf", case_wkf }, { "tmr2", case_tmr2 }, { "awcp", case_awcp }, { "swf", case_swf }, { "etw", case_etw }, { "kd", case_kd }, { "of", case_of }, { "tls", case_tls }, { "ahc", case_ahc }, { "vmi", case_vmi }, { "csr", case_csr }, { "sec", case_sec }, { "csrc", case_csrc }, { "nls", case_nls }, { "con", case_con }, { "etwt", case_etwt }, { "tok", case_tok }, { "acc", case_acc }, { "bno", case_bno }, { "mut", case_mut }, { "wil", case_wil }, { "wnf", case_wnf }, { "wnfe", case_wnfe }, { "wnfs", case_wnfs }, { "t2s", case_t2s }, { "hku", case_hku }, { "alert", case_alert }, { "term", case_term }, { "time", case_time }, { "sp", case_sp }, { "mit", case_mit }, { "u32", case_u32 }, { "u32k", case_u32k }, { "fs", case_fs }, { "rvm", case_rvm }, { "atom", case_atom }, { "pii", case_pii } };
 
 int main( int argc, char** argv )
 {

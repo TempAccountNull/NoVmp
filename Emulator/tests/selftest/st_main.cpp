@@ -1951,7 +1951,7 @@ namespace
 		CHECK( r.kind == N::reply_kind::terminated && r.exit_status == 0x77, "NtTerminateProcess( NtCurrentProcess() ): terminated, ExitStatus = the low 32 bits" );
 		CHECK( w5_ok( w5_call( *p, "NtTerminateProcess", { 0, 1 } ) ) && w5_stop( w5_call( *p, "NtTerminateProcess", { 0x40, 1 } ) ),
 			   "NtTerminateProcess of NULL: STATUS_SUCCESS (P41, measured tm_nt term.null) / of a handle: stop" );
-		r = w5_call( *p, "NtCreateFile", {} );
+		r = w5_call( *p, "NtCreateNamedPipeFile", {} );   // P45 (U2130): NtCreateFile is answered by the emulated file system now
 		CHECK( w5_stop( r ) && r.text.find( "not implemented in milestone M5" ) != std::string::npos, "a known, unimplemented service: stop" );
 		emu::nt::call u;
 		u.number = 0x7AB;
@@ -2960,7 +2960,11 @@ namespace
 		const uint64_t fd = rd( S + 0x58, 8 );
 		CHECK( w5_ok( r ) && handle_ok( fd ) && rd( S + 0x60, 8 ) == 0 && rd( S + 0x68, 8 ) == 1, "of.curdir: the image directory: a handle, IoStatus {0, FILE_OPENED}: " + r.text );
 		oa( O, 0, "\\??\\C:\\Windows\\Temp\\" );
-		CHECK( w5_stop( w5_call( *p, "NtOpenFile", { S + 0x58, 0x100020, O, S + 0x60, 3, 0x21 } ) ), "a path outside the emulated file system: stop" );
+		// P45 (U2130): a folder the emulated file system does not hold is a MISS with its measured status (tm_nt of.missing, measured with the
+		// current directory <SystemRoot>: a missing folder there, opened as a folder) - before P45 a loud stop
+		w5_put( *p, S + 0x58, 0xCCCCCCCCCCCCCCCCull );
+		CHECK( w5_status( w5_call( *p, "NtOpenFile", { S + 0x58, 0x100020, O, S + 0x60, 3, 0x21 } ), N::status::object_name_not_found ) && rd( S + 0x58, 8 ) == 0xCCCCCCCCCCCCCCCCull,
+			   "a folder outside the emulated file system: STATUS_OBJECT_NAME_NOT_FOUND, no handle (measured: tm_nt of.missing)" );
 		w5_put( *p, S + 0x70, 0xCCCCCCCCCCCCCCCCull );
 		r = w5_call( *p, "NtQueryVolumeInformationFile", { fd, S + 0x60, S + 0x70, 8, 4 } );
 		CHECK( w5_ok( r ) && rd( S + 0x70, 4 ) == 7 && rd( S + 0x74, 4 ) == 0x20020 && rd( S + 0x68, 8 ) == 8, "of.fsdev: FILE_DEVICE_DISK, 20020H (the system volume, P40 U2062), Information 8" );
@@ -3133,7 +3137,8 @@ namespace
 		CHECK( w5_stop( r ) && r.text.find( "P40 frontier" ) != std::string::npos, "the console driver's server object: the P40 frontier, a loud stop: " + r.text );
 		oa( O, 0, "\\??\\C:\\Windows\\win.ini" );
 		r = w5_call( *p, "NtCreateFile", { S + 0x80, 0x120089, O, S + 0x88, 0, 0, 7, 1, 0, 0, 0 } );
-		CHECK( w5_stop( r ) && r.text.find( "not implemented in milestone M5" ) != std::string::npos, "another NtCreateFile: the generic loud stop" );
+		// P45 (U2130): another NtCreateFile goes to the emulated file system - a miss whose argument set was not measured: a loud stop
+		CHECK( w5_stop( r ) && r.text.find( "was not measured" ) != std::string::npos, "another NtCreateFile: the emulated file system's loud stop (an unmeasured argument set): " + r.text );
 	}
 
 	// nt_measured_console (P41, U2068-U2082): the services of a process started WITHOUT a console (the model of a DETACHED_PROCESS start),
@@ -3698,6 +3703,217 @@ namespace
 		p.dirs[ 5 ] = { 0x2000, 8 };
 		return w4_build( p );
 	}
+	// P45 (U2130): nt_measured_vfs - the emulated file system (nt_kernel_vfs.cpp; USER DECISION 2026-10-27 "virtual FS, measured misses"):
+	// every kind of miss answered with its measured status (tm_nt fs.*), nothing written where Windows writes nothing, the measured
+	// IoStatusBlock halves where it writes them; a path of the model with an unmeasured operation, an unmeasured argument set, kind or context
+	// = a loud stop; every file-system call recorded in fs_log (the placeholder path, the answer)
+	void t_nt_measured_vfs()
+	{
+		std::string err;
+		emu::engine_config ec;
+		ec.profile = emu::cpu_profile_choice::guest;
+		emu::win::process_options po;
+		po.boundary = emu::env_boundary::sys;
+		po.max_insns = 200000;
+		po.image_name = "w5";
+		po.image_file_name = "w5.exe";
+		auto f = w5_facts();
+		auto files = std::make_shared<std::map<std::string, std::vector<uint8_t>>>();
+		( *files )[ "d3d11.dll" ] = ds_dll();
+		f.files = files;
+		std::vector<std::string> log;
+		auto p = emu::win::process::create( ec, f, po, w5_build( { w5_trivial }, err ), log, err );
+		CHECK( p != nullptr, "process: " + err );
+		if ( !p ) return;
+		namespace N = emu::nt;
+		const uint64_t S = w5_scratch, O = S + 0x1000, H = S + 0x58, IO = S + 0x60, F = S + 0x100;
+		auto rd = [ & ]( uint64_t va, int n ) { return w4_read( *p, va, n ); };
+		auto oa = [ & ]( uint64_t at, uint64_t root, const std::string& name, uint64_t attributes ) {
+			ms_ustr( *p, at + 0x30, at + 0x40, name );
+			w5_put( *p, at, 0x30 );
+			w5_put( *p, at + 8, root );
+			w5_put( *p, at + 0x10, at + 0x30 );
+			w5_put( *p, at + 0x18, attributes );
+			w5_put( *p, at + 0x20, 0 );
+			w5_put( *p, at + 0x28, 0 );
+		};
+		auto fill = [ & ]( uint64_t at, int n ) { for ( int k = 0; k < n; k += 8 ) w5_put( *p, at + k, 0xCCCCCCCCCCCCCCCCull ); };
+		const uint64_t CC = 0xCCCCCCCCCCCCCCCCull;
+		auto open_miss = [ & ]( const std::string& path, uint64_t access, uint64_t attributes, uint64_t share, uint64_t options ) {
+			oa( O, 0, path, attributes );
+			fill( H, 8 );
+			fill( IO, 16 );
+			return w5_call( *p, "NtOpenFile", { H, access, O, IO, share, options } );
+		};
+		auto untouched = [ & ]() { return rd( H, 8 ) == CC && rd( IO, 8 ) == CC && rd( IO + 8, 8 ) == CC; };
+		const size_t log0 = p->kern().fs_log().size();
+		// 1. the .mun search of sample run 9 (red9): <parent of the image's folder>\SystemResources\<image>.mun - a missing folder
+		auto r = open_miss( "\\??\\C:\\Users\\user\\SystemResources\\w5.exe.mun", 0x100001, 0x40, 5, 0x60 );
+		CHECK( w5_status( r, N::status::object_path_not_found ) && untouched(), "fs.parsub.of1: STATUS_OBJECT_PATH_NOT_FOUND, handle / IoStatus not written: " + r.text );
+		r = open_miss( "\\??\\C:\\Users\\user\\Desktop\\SystemResources\\w5.exe.mun", 0x100001, 0x40, 5, 0x60 );
+		CHECK( w5_status( r, N::status::object_path_not_found ) && untouched(), "fs.sub.of1: a missing folder in the image's folder: " + r.text );
+		// 2. a missing file next to the image / in System32 / in <SystemRoot> / beside the image's folder
+		r = open_miss( "\\??\\C:\\Users\\user\\Desktop\\nothere.dat", 0x100001, 0x40, 5, 0x60 );
+		CHECK( w5_status( r, N::status::object_name_not_found ) && untouched(), "fs.dir.of1: STATUS_OBJECT_NAME_NOT_FOUND, nothing written: " + r.text );
+		r = open_miss( "\\??\\C:\\Windows\\System32\\nothere.dll", 0x100021, 0x840, 5, 0x60 );
+		CHECK( w5_status( r, N::status::object_name_not_found ) && untouched(), "fs.sys.of2: a DLL not captured = missing: " + r.text );
+		r = open_miss( "\\??\\C:\\Windows\\nothere.dat", 0x100020, 0x40, 3, 0x21 );
+		CHECK( w5_status( r, N::status::object_name_not_found ) && untouched(), "fs.win.of4: " + r.text );
+		r = open_miss( "\\??\\C:\\Users\\user\\nothere.dat", 0x100001, 0x840, 5, 0x60 );
+		CHECK( w5_status( r, N::status::object_name_not_found ) && untouched(), "fs.par.of3: " + r.text );
+		r = open_miss( "\\??\\C:\\Windows\\System32\\en-US\\w5.exe.mui", 0x100001, 0x40, 5, 0x60 );
+		CHECK( w5_status( r, N::status::object_path_not_found ) && untouched(), "fs.syssub.of1: System32 holds no sub-folder in the model: " + r.text );
+		// 3. streams, devices; a stream of the image opened as a folder = STATUS_NOT_A_DIRECTORY (measured fs.adsimg.of4)
+		r = open_miss( "\\??\\C:\\Users\\user\\Desktop\\w5.exe:zone", 0x100020, 0x40, 3, 0x21 );
+		CHECK( w5_status( r, 0xC0000103 ) && untouched(), "fs.adsimg.of4: STATUS_NOT_A_DIRECTORY: " + r.text );
+		r = open_miss( "\\??\\C:\\Users\\user\\Desktop\\nothere.dat:s", 0x100001, 0x40, 5, 0x60 );
+		CHECK( w5_status( r, N::status::object_name_not_found ) && untouched(), "fs.ads.of1: " + r.text );
+		r = open_miss( "\\Device\\NoSuchDevice", 0x100001, 0x40, 5, 0x60 );
+		CHECK( w5_status( r, N::status::object_name_not_found ) && untouched(), "fs.dev.of1: no device is modelled: " + r.text );
+		// 4. NtCreateFile FILE_OPEN, the attribute queries
+		oa( O, 0, "\\??\\C:\\Windows\\System32\\nothere\\x.mun", 0x40 );
+		fill( H, 8 );
+		fill( IO, 16 );
+		r = w5_call( *p, "NtCreateFile", { H, 0x80100080, O, IO, 0, 0x80, 1, 1, 0x60, 0, 0 } );
+		CHECK( w5_status( r, N::status::object_path_not_found ) && untouched(), "fs.syssub.cf1: " + r.text );
+		CHECK( w5_stop( w5_call( *p, "NtCreateFile", { H, 0x80100080, O, IO, 0, 0x80, 1, 2, 0x60, 0, 0 } ) ), "NtCreateFile FILE_CREATE (not measured): stop" );
+		oa( O, 0, "\\??\\C:\\Users\\user\\Desktop\\nothere.dat", 0x40 );
+		fill( F, 0x40 );
+		r = w5_call( *p, "NtQueryAttributesFile", { O, F } );
+		CHECK( w5_status( r, N::status::object_name_not_found ) && rd( F, 8 ) == CC && rd( F + 0x20, 8 ) == CC, "fs.dir.qa1: nothing written: " + r.text );
+		oa( O, 0, "\\??\\C:\\Windows\\System32\\nothere.dll", 0x840 );
+		fill( F, 0x40 );
+		r = w5_call( *p, "NtQueryFullAttributesFile", { O, F } );
+		CHECK( w5_status( r, N::status::object_name_not_found ) && rd( F, 8 ) == CC && rd( F + 0x30, 8 ) == CC, "fs.sys.qf2: nothing written: " + r.text );
+		// 5. what is NOT measured stops loudly
+		CHECK( w5_stop( open_miss( "\\??\\C:\\Users\\user\\Desktop\\nothere.dat", 0x100001, 0x40, 7, 0x60 ) ), "an unmeasured argument set (share 7): stop" );
+		CHECK( w5_stop( open_miss( "\\??\\C:\\Users\\user\\Desktop\\w5.exe", 0x100001, 0x40, 5, 0x60 ) ), "the image itself with an unmeasured operation: stop" );
+		CHECK( w5_stop( open_miss( "\\??\\C:\\Windows\\System32\\d3d11.dll", 0x100001, 0x40, 5, 0x60 ) ), "a captured file with an unmeasured operation: stop" );
+		CHECK( w5_stop( open_miss( "\\??\\UNC\\server\\share\\x.dat", 0x100001, 0x40, 5, 0x60 ) ), "a UNC path: stop" );
+		CHECK( w5_stop( open_miss( "\\??\\D:\\x.dat", 0x100001, 0x40, 5, 0x60 ) ), "another volume: stop" );
+		CHECK( w5_stop( open_miss( "\\??\\C:\\Users\\nothere.dat", 0x100001, 0x40, 5, 0x60 ) ), "a folder whose misses were not measured (C:\\Users): stop" );
+		CHECK( w5_stop( open_miss( "\\??\\C:\\Users\\user\\Desktop\\*.dat", 0x100001, 0x40, 5, 0x60 ) ), "a wildcard: stop" );
+		CHECK( w5_stop( open_miss( "\\??\\C:\\Users\\user\\Desktop\\w5.exe\\x", 0x100001, 0x40, 5, 0x60 ) ), "the image used as a folder: stop" );
+		CHECK( w5_stop( open_miss( "\\??\\C:\\Users\\user\\Desktop\\..\\x", 0x100001, 0x40, 5, 0x60 ) ), "a '..' component: stop" );
+		oa( O, 0x10, "nothere.dat", 0x40 );
+		CHECK( w5_stop( w5_call( *p, "NtOpenFile", { H, 0x100001, O, IO, 5, 0x60 } ) ), "a path relative to a handle: stop" );
+		oa( O, 0, "\\??\\C:\\Users\\user\\Desktop\\nothere.dat", 0x40 );
+		CHECK( w5_status( w5_call( *p, "NtOpenFile", { 0x10, 0x100001, O, IO, 5, 0x60 } ), N::status::access_violation ), "an unwritable FileHandle pointer: STATUS_ACCESS_VIOLATION (probe)" );
+		// 6. a listing of the image's folder with a name nothing matches (fs.dq.*): the open, the first query, the class-12 IoStatusBlock
+		auto lopen = [ & ]() {
+			oa( O, 0, "\\??\\C:\\Users\\user\\Desktop\\", 0x40 );
+			fill( H, 8 );
+			fill( IO, 16 );
+			const auto rr = w5_call( *p, "NtOpenFile", { H, 0x100001, O, IO, 7, 0x4021 } );
+			return w5_ok( rr ) ? rd( H, 8 ) : 0;
+		};
+		uint64_t dh = lopen();
+		CHECK( dh && dh % 4 == 0 && rd( IO, 4 ) == 0 && uint32_t( rd( IO + 4, 4 ) ) == 0xCCCCCCCCu && rd( IO + 8, 8 ) == 1,
+			   "fs.dq.open: a handle, IoStatus Status 0 / Information 1, the upper half of the first field not written" );
+		ms_ustr( *p, S + 0x200, S + 0x220, "nothere.dat" );
+		fill( IO, 16 );
+		fill( F, 0x40 );
+		r = w5_call( *p, "NtQueryDirectoryFile", { dh, 0, 0, 0, IO, F, 0x1000, 3, 1, S + 0x200, 1 } );
+		CHECK( w5_status( r, 0xC000000F ) && rd( IO, 8 ) == CC && rd( IO + 8, 8 ) == CC && rd( F, 8 ) == CC, "fs.dq.c3: STATUS_NO_SUCH_FILE, nothing written: " + r.text );
+		CHECK( w5_stop( w5_call( *p, "NtQueryDirectoryFile", { dh, 0, 0, 0, IO, F, 0x1000, 3, 1, S + 0x200, 1 } ) ), "a second query on the handle: stop (not measured)" );
+		dh = lopen();
+		fill( IO, 16 );
+		r = w5_call( *p, "NtQueryDirectoryFileEx", { dh, 0, 0, 0, IO, F, 0x1000, 12, 3, S + 0x200 } );
+		CHECK( w5_status( r, 0xC000000F ) && rd( IO, 4 ) == 0xC000000F && uint32_t( rd( IO + 4, 4 ) ) == 0xCCCCCCCCu && rd( IO + 8, 8 ) == 0,
+			   "fs.dq.x12: the IoStatusBlock {C000000FH, 0}, the upper half not written: " + r.text );
+		dh = lopen();
+		ms_ustr( *p, S + 0x200, S + 0x220, "*" );
+		CHECK( w5_stop( w5_call( *p, "NtQueryDirectoryFile", { dh, 0, 0, 0, IO, F, 0x1000, 3, 1, S + 0x200, 1 } ) ), "a wildcard listing: stop (the entries are not measured)" );
+		ms_ustr( *p, S + 0x200, S + 0x220, "W5.EXE" );
+		CHECK( w5_stop( w5_call( *p, "NtQueryDirectoryFile", { dh, 0, 0, 0, IO, F, 0x1000, 3, 1, S + 0x200, 1 } ) ), "the image's own name: stop" );
+		// 7. every file-system call was recorded, with the placeholder path and the answer
+		const auto& fl = p->kern().fs_log();
+		bool saw_mun = false, saw_stop = false;
+		for ( size_t i = log0; i < fl.size(); i++ )
+		{
+			if ( fl[ i ].path == "\\??\\<user profile>\\SystemResources\\w5.exe.mun" && fl[ i ].answer == "status C000003AH" && fl[ i ].service == "NtOpenFile" &&
+				 fl[ i ].args == "access 100001H, attributes 40H, share 5H, options 60H" )
+				saw_mun = true;
+			if ( fl[ i ].answer.compare( 0, 4, "STOP" ) == 0 ) saw_stop = true;
+		}
+		CHECK( fl.size() - log0 == 33 && saw_mun && saw_stop, "fs_log: " + std::to_string( fl.size() - log0 ) + " file-system calls recorded (33 made), the .mun open with its placeholder path / "
+																	"arguments / status, the stops as STOP" );
+		bool dir_placeholder = false;
+		for ( size_t i = log0; i < fl.size(); i++ ) dir_placeholder = dir_placeholder || fl[ i ].path == "\\??\\<image dir>\\nothere.dat";
+		CHECK( dir_placeholder, "fs_log: the image's folder shown as <image dir>" );
+	}
+
+	// P45 (U2136): nt_measured_rvm - NtReadVirtualMemory of the own process (tm_nt rvm.*; sample exploration x1 system call 573): a readable
+	// source into a writable destination copied with the count; 0 bytes; an unreadable / partly readable source or a read-only destination =
+	// STATUS_PARTIAL_COPY, count 0, nothing copied; another process = stop
+	void t_nt_measured_rvm()
+	{
+		std::string err;
+		auto p = w5_create( w5_build( { w5_trivial }, err ), emu::env_boundary::sys, err );
+		CHECK( p != nullptr, "process: " + err );
+		if ( !p ) return;
+		namespace N = emu::nt;
+		const uint64_t S = w5_scratch, cp = N::current_process, CC = 0xCCCCCCCCCCCCCCCCull;
+		auto rd = [ & ]( uint64_t va, int n ) { return w4_read( *p, va, n ); };
+		w5_put( *p, S + 0x10, 0x1122334455667788ull );
+		w5_put( *p, S + 0x20, CC );
+		w5_put( *p, S + 0x28, CC );
+		auto r = w5_call( *p, "NtReadVirtualMemory", { cp, S + 0x10, S + 0x20, 8, S + 0x28 } );
+		CHECK( w5_ok( r ) && rd( S + 0x20, 8 ) == 0x1122334455667788ull && rd( S + 0x28, 8 ) == 8, "rvm.ldr: 8 bytes copied, count 8: " + r.text );
+		w5_put( *p, S + 0x20, CC );
+		r = w5_call( *p, "NtReadVirtualMemory", { cp, S + 0x10, S + 0x20, 8, 0 } );
+		CHECK( w5_ok( r ) && rd( S + 0x20, 8 ) == 0x1122334455667788ull, "rvm.ldr.nocount: copied, no count: " + r.text );
+		w5_put( *p, S + 0x28, CC );
+		r = w5_call( *p, "NtReadVirtualMemory", { cp, S + 0x10, S + 0x20, 0, S + 0x28 } );
+		CHECK( w5_ok( r ) && rd( S + 0x28, 8 ) == 0, "rvm.zero: STATUS_SUCCESS, count 0: " + r.text );
+		// a reservation (address space only) as the source; a committed page then a reserved one; a read-only destination
+		uint64_t base = 0, size = 0x10000;
+		CHECK( w5_ok( p->kern().allocate( base, size, N::mem::reserve, N::page::readwrite ) ), "a 64 KiB reservation" );
+		uint64_t cb = base, cs = 0x1000;
+		CHECK( w5_ok( p->kern().allocate( cb, cs, N::mem::commit, N::page::readwrite ) ), "its first page committed" );
+		w5_put( *p, S + 0x20, CC );
+		w5_put( *p, S + 0x28, CC );
+		r = w5_call( *p, "NtReadVirtualMemory", { cp, base + 0x1000, S + 0x20, 8, S + 0x28 } );
+		CHECK( w5_status( r, 0x8000000D ) && rd( S + 0x20, 8 ) == CC && rd( S + 0x28, 8 ) == 0, "rvm.reserved: STATUS_PARTIAL_COPY, count 0, nothing copied: " + r.text );
+		w5_put( *p, S + 0x28, CC );
+		r = w5_call( *p, "NtReadVirtualMemory", { cp, base + 0xFFC, S + 0x20, 8, S + 0x28 } );
+		CHECK( w5_status( r, 0x8000000D ) && rd( S + 0x20, 8 ) == CC && rd( S + 0x28, 8 ) == 0, "rvm.edge: 4 readable bytes then a reserved page - nothing copied: " + r.text );
+		uint64_t ro = 0, rs = 0x1000;
+		CHECK( w5_ok( p->kern().allocate( ro, rs, N::mem::commit | N::mem::reserve, N::page::readonly ) ), "a read-only page" );
+		w5_put( *p, S + 0x28, CC );
+		r = w5_call( *p, "NtReadVirtualMemory", { cp, S + 0x10, ro, 8, S + 0x28 } );
+		CHECK( w5_status( r, 0x8000000D ) && rd( ro, 8 ) == 0 && rd( S + 0x28, 8 ) == 0, "rvm.rodst: a read-only destination - STATUS_PARTIAL_COPY, count 0: " + r.text );
+		CHECK( w5_stop( w5_call( *p, "NtReadVirtualMemory", { 0x44, S + 0x10, S + 0x20, 8, S + 0x28 } ) ), "another process handle: stop" );
+		CHECK( w5_stop( w5_call( *p, "NtReadVirtualMemory", { cp, S + 0x10, S + 0x20, 8, 0x10 } ) ), "an unwritable count pointer: stop" );
+	}
+
+	// P45 (U2138): nt_measured_atom - the atom table before user32's start (tm_nt atom.nouser32: STATUS_ACCESS_DENIED, the atom not
+	// written) and what is not measured (Flags 2, an integer atom, an atom this process did not add); the adds after user32's USERSRV
+	// connection are exercised by the sample's run (dxgi's GlobalAddAtomW) - the connection needs the whole user32 start (suite
+	// win_env_sys_loader T6)
+	void t_nt_measured_atom()
+	{
+		std::string err;
+		auto p = w5_create( w5_build( { w5_trivial }, err ), emu::env_boundary::sys, err );
+		CHECK( p != nullptr, "process: " + err );
+		if ( !p ) return;
+		const uint64_t S = w5_scratch, CC = 0xCCCCCCCCCCCCCCCCull;
+		auto rd = [ & ]( uint64_t va, int n ) { return w4_read( *p, va, n ); };
+		const std::string nm = "D3D9_IdHot_Ctrl_SnapDesktop";
+		for ( size_t i = 0; i < nm.size(); i++ ) w5_put( *p, S + 0x100 + 2 * i, uint64_t( uint8_t( nm[ i ] ) ) );   // UTF-16, 2 bytes each (the next character overwrites the upper bytes)
+		w5_put( *p, S + 0x100 + 2 * nm.size(), 0 );
+		w5_put( *p, S + 0x20, CC );
+		auto r = w5_call( *p, "NtAddAtomEx", { S + 0x100, 2 * nm.size(), S + 0x20, 0 } );
+		CHECK( w5_status( r, 0xC0000022 ) && rd( S + 0x20, 8 ) == CC, "atom.nouser32: before user32's start - STATUS_ACCESS_DENIED, the atom not written: " + r.text );
+		CHECK( w5_stop( w5_call( *p, "NtAddAtomEx", { S + 0x100, 2 * nm.size(), S + 0x20, 2 } ) ), "Flags ATOM_FLAG_GLOBAL: stop (not measured)" );
+		w5_put( *p, S + 0x180, uint64_t( '#' ) | ( uint64_t( '1' ) << 16 ) );
+		CHECK( w5_stop( w5_call( *p, "NtAddAtomEx", { S + 0x180, 4, S + 0x20, 0 } ) ), "an integer atom: stop" );
+		CHECK( w5_stop( w5_call( *p, "NtAddAtomEx", { S + 0x100, 0, S + 0x20, 0 } ) ), "an empty name: stop" );
+		CHECK( w5_stop( w5_call( *p, "NtDeleteAtom", { 0xC100 } ) ), "NtDeleteAtom of an atom this process did not add: stop" );
+		CHECK( w5_stop( w5_call( *p, "NtQueryInformationAtom", { 0xC100, 0, S + 0x200, 0x100, S + 0x28 } ) ), "NtQueryInformationAtom of an atom this process did not add: stop" );
+		CHECK( w5_stop( w5_call( *p, "NtFindAtom", { S + 0x100, 2 * nm.size(), S + 0x20 } ) ), "NtFindAtom before user32's start: stop (not measured)" );
+	}
+
 	void t_nt_measured_dllsearch()
 	{
 		std::string err;
@@ -3749,7 +3965,10 @@ namespace
 		oa( O, 0, "\\??\\C:\\Windows\\SYSTEM32\\d3d11.dll", 0x40 );
 		CHECK( w5_stop( w5_call( *p, "NtQueryAttributesFile", { O, F } ) ), "other attributes: stop" );
 		oa( O, 0, "\\??\\C:\\Windows\\SYSTEM32\\notcaptured.dll", 0x840 );
-		CHECK( w5_stop( w5_call( *p, "NtQueryAttributesFile", { O, F } ) ), "a system-directory file the capture does not hold: stop" );
+		fill( F, 0x30 );
+		// P45 (U2130): a file the capture does not hold is MISSING in the emulated file system (tm_nt fs.sys.qa2) - before P45 a loud stop
+		CHECK( w5_status( w5_call( *p, "NtQueryAttributesFile", { O, F } ), N::status::object_name_not_found ) && rd( F, 8 ) == 0xCCCCCCCCCCCCCCCCull,
+			   "a system-directory file the capture does not hold: STATUS_OBJECT_NAME_NOT_FOUND, nothing written (measured: tm_nt fs.sys.qa2)" );
 		// 2. open, image section, view (tm_nt sp.*.open / .sec / .map)
 		oa( O, 0, "\\??\\C:\\Windows\\SYSTEM32\\d3d11.dll", 0x840 );
 		CHECK( w5_stop( w5_call( *p, "NtOpenFile", { S + 0x58, 0x100021, O, S + 0x60, 5, 0x21 } ) ), "sp.open with other options: stop" );
@@ -3879,6 +4098,9 @@ namespace
 		{ "knowndll_slots", t_knowndll_slots },   // U2105
 		{ "nt_measured_dllsearch", t_nt_measured_dllsearch },   // U2110
 		{ "nt_measured_user32", t_nt_measured_user32 },   // P44 (U2124)
+		{ "nt_measured_vfs", t_nt_measured_vfs },   // P45 (U2130)
+		{ "nt_measured_rvm", t_nt_measured_rvm },   // P45 (U2136)
+		{ "nt_measured_atom", t_nt_measured_atom },   // P45 (U2138)
 	};
 }
 

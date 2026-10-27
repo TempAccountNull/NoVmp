@@ -42,7 +42,11 @@ CASES = ['sat', 'qsi', 'hvp', 'qip', 'wcp', 'qsix', 'iocp', 'wkf', 'tmr2', 'awcp
          'con', 'etwt', 'tok', 'acc', 'bno', 'mut', 'wil', 'wnf', 'wnfe', 'wnfs', 't2s', 'hku', 'alert', 'term',   # P41 (U2068): a process started without a console
          'time',   # P42 (U2102, plan 3.M6): the time sources of a process
          'sp', 'mit',   # P43 (U2106 / U2109, sample run 8): the DLL path search, ProcessMitigationPolicy
-         'u32', 'u32k']   # P44 (U2115 / U2116, STEP 3): what an ordinary GUI program gets from user32's start (our GUI test PE tm_u32), its kernel side
+         'u32', 'u32k',   # P44 (U2115 / U2116, STEP 3): what an ordinary GUI program gets from user32's start (our GUI test PE tm_u32), its kernel side
+         'fs',   # P45 (U2125): the file system's misses by kind (USER DECISION 2026-10-27 "virtual FS, measured misses")
+         'rvm',   # P45 (U2134, sample exploration x1 system call 573): NtReadVirtualMemory of the process' own memory
+         'atom',   # P45 (U2137, sample exploration x3 system call 599): the atom table (dxgi's GlobalAddAtomW)
+         'pii']   # P45 (U2141, sample exploration x8 system call 633): ProcessImageInformation (d3d11's DllMain)
 # P41 (U2068): case term ends the process with exit code 2BH (its NtTerminateProcess( NULL, 2BH ) fixes the process' exit status)
 EXIT_CODE = {'term': 0x2B}
 # hex constants (9 .. 16 digits) that may appear: system constants and the pre-set fill pattern - never an address of the run
@@ -171,19 +175,80 @@ def red_green_selfcheck(by_case):
     return bad, len(red), len(green)
 
 
+# P45 (U2127): the emulated file system's measured table (Emulator/src/nt_kernel_vfs.cpp, between "BEGIN MEASURED TABLE" and "END MEASURED
+# TABLE") must be the recorded lines: one row per line of tm_nt fs (+ of.missing), the same status, handle / IoStatusBlock written or not (and
+# their values), the same count of output bytes written (a zero fill)
+_VFS_ROW = re.compile(r'^\s*\{ "([a-z0-9.]+)", "([^"]+)", "([a-z/-]+)", "([a-z-]+)", 0x([0-9A-F]{8})u, ([01]), ([01]), 0x([0-9A-F]+)u, 0x([0-9A-F]+)ull, (\d+) \},$')
+
+
+def vfs_table_check(root, by_line):
+    """-> list of problems (empty = the table equals the recorded lines)"""
+    src = open(os.path.join(root, 'Emulator', 'src', 'nt_kernel_vfs.cpp'), encoding='ascii').read().replace('\r\n', '\n')
+    if src.count('// BEGIN MEASURED TABLE') != 1 or src.count('// END MEASURED TABLE') != 1:
+        return ['nt_kernel_vfs.cpp: the table markers are missing']
+    body = src.split('// BEGIN MEASURED TABLE', 1)[1].split('// END MEASURED TABLE', 1)[0]
+    rows = [l for l in body.split('\n') if l.strip().startswith('{')]
+    bad = []
+    seen = []
+    for l in rows:
+        m = _VFS_ROW.match(l)
+        if not m:
+            bad.append('row of another form: ' + l.strip()[:80])
+            continue
+        item, op, kind, ctx, st, hnd, iow, ios, ioi, wr = m.groups()
+        seen.append(item)
+        line = by_line.get('tm_nt ' + item)
+        if not line:
+            bad.append('%s: no recorded line' % item)
+            continue
+        want_st = re.search(r'-> status ([0-9A-F]{8})H', line)
+        if not want_st or want_st.group(1) != st:
+            bad.append('%s: status %s, recorded %s' % (item, st, want_st.group(1) if want_st else None))
+        hm = re.search(r', handle (not written|<handle[^>]*>|\(non-zero, multiple of 4\)|[^,]+),', line)
+        if 'handle' in line and hm:
+            written = hm.group(1) != 'not written'
+            if written != (hnd == '1'):
+                bad.append('%s: handle %s, recorded %s' % (item, hnd, hm.group(1)))
+        io = re.search(r'IoStatus (not written|([0-9A-F]{8})H / ([0-9A-F]+)H)', line)
+        if 'IoStatus' in line:
+            if not io:
+                bad.append('%s: the recorded IoStatus has another form' % item)
+            elif io.group(1) == 'not written':
+                if iow != '0':
+                    bad.append('%s: IoStatus written in the table, not in the recording' % item)
+            elif iow != '1' or int(io.group(2), 16) != int(ios, 16) or int(io.group(3), 16) != int(ioi, 16) or '(upper half not written)' not in line:
+                bad.append('%s: IoStatus %s / %s / %s, recorded %s (the model writes Status 4 bytes + Information; the upper half must be unwritten)' %
+                           (item, iow, ios, ioi, io.group(1)))
+        wm = re.search(r'written (\d+)(?: \(offsets 0H\.\.([0-9A-F]+)H, non-zero 0\))?$', line)
+        if re.search(r'written \d', line):
+            if not wm or (int(wm.group(1)) and (wm.group(2) is None or int(wm.group(2), 16) + 1 != int(wm.group(1)))):
+                bad.append('%s: the recorded output is not "written 0" or a zero fill from offset 0' % item)
+            elif int(wm.group(1)) != int(wr):
+                bad.append('%s: written %s, recorded %s' % (item, wr, wm.group(1)))
+    want = sorted(k[6:] for k in by_line if re.match(r'tm_nt fs\.', k) or k == 'tm_nt of.missing')
+    if sorted(seen) != want:
+        bad.append('the table rows %s do not match the recorded fs / of.missing lines %s (missing %s, extra %s)' %
+                   (len(seen), len(want), sorted(set(want) - set(seen))[:4], sorted(set(seen) - set(want))[:4]))
+    return bad
+
+
 def system_volume_copy(tm, sysroot):
-    """P44 (U2113): a copy of tm_nt.exe in a fresh folder below %TEMP% on the system volume -> (folder, image) or (None, why)"""
+    """P44 (U2113): a copy of tm_nt.exe in a fresh folder below %TEMP% on the system volume -> (folder, image) or (None, why).
+    P45 (U2125): the copy lies in the sub-folder img of the fresh folder - case fs measures misses in the PARENT of the image's directory
+    (the .mun search: the folder SystemResources beside the image's folder), which is then a fresh folder of our own (nothing in it but img)"""
     drive = os.path.splitdrive(sysroot)[0].upper()
     tmp = tempfile.mkdtemp(prefix='nt_measured_')
     if os.path.splitdrive(tmp)[0].upper() != drive:
         os.rmdir(tmp)
         return None, '%TEMP% is not on the system volume ' + drive
-    dst = os.path.join(tmp, 'tm_nt.exe')
+    img = os.path.join(tmp, 'img')
+    os.mkdir(img)
+    dst = os.path.join(img, 'tm_nt.exe')
     shutil.copyfile(tm, dst)
     # P44 (U2115): case u32 starts our own GUI test PE tm_u32.exe beside tm_nt.exe
     u32 = os.path.join(os.path.dirname(tm), 'tm_u32.exe')
     if os.path.isfile(u32):
-        shutil.copyfile(u32, os.path.join(tmp, 'tm_u32.exe'))
+        shutil.copyfile(u32, os.path.join(img, 'tm_u32.exe'))
     return tmp, dst
 
 
@@ -233,6 +298,10 @@ def main(argv):
             if h not in ALLOWED_HEX and not re.fullmatch(r'(CC)+', h):
                 bad.append('%s: %s' % (l.split(':', 1)[0], h))
     check(not bad, 'identifier screen: no SID / computer name / user path / raw address (%d finding(s)%s)' % (len(bad), (': ' + '; '.join(bad[:3])) if bad else ''))
+    # P45 (U2127): the emulated file system's table = the recorded fs lines
+    vt = vfs_table_check(root, {l.split(':', 1)[0]: l for l in body})
+    check(not vt, 'the emulated file system\'s measured table (nt_kernel_vfs.cpp) equals the %d recorded fs / of.missing lines%s' %
+          (len([l for l in body if l.startswith('tm_nt fs.') or l.startswith('tm_nt of.missing:')]), ('; ' + '; '.join(vt[:5])) if vt else ''))
     # P44 (U2113): the VOLATILE rules - every recorded line of a volatile item has a valid shape, and the RED / GREEN self-check
     vol = [l for l in body if volatile_shape(l) != '']
     check(all(volatile_shape(l) for l in vol), 'VOLATILE items: %d recorded lines (%s), each of a valid shape' % (len(vol), ' '.join(l.split(':', 1)[0][6:] for l in vol)))
@@ -269,9 +338,11 @@ def main(argv):
             # the image can stay held for a moment after its last process ended (a child of case con, a scanner): retry for up to 15 s
             for k in range(30):
                 try:
-                    for name in ('tm_nt.exe', 'tm_u32.exe'):   # our two copies (single files), then the folder
-                        if os.path.exists(os.path.join(folder, name)):
-                            os.remove(os.path.join(folder, name))
+                    for name in ('tm_nt.exe', 'tm_u32.exe'):   # our two copies (single files), then the two folders (P45: img)
+                        if os.path.exists(os.path.join(folder, 'img', name)):
+                            os.remove(os.path.join(folder, 'img', name))
+                    if os.path.isdir(os.path.join(folder, 'img')):
+                        os.rmdir(os.path.join(folder, 'img'))
                     os.rmdir(folder)
                     break
                 except OSError as e:

@@ -89,6 +89,7 @@
     <ClCompile Include="src\nt_kernel_sys.cpp" />
     <ClCompile Include="src\nt_kernel_measured.cpp" />
     <ClCompile Include="src\nt_kernel_win32k.cpp" />
+    <ClCompile Include="src\nt_kernel_vfs.cpp" />
     <ClCompile Include="src\options.cpp" />
     <ClCompile Include="src\output_file.cpp" />
     <ClCompile Include="src\pe_image.cpp" />

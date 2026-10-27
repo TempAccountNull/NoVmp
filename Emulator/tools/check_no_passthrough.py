@@ -31,6 +31,19 @@ The NEW "no host pass-through" scan of milestone 3.M4, beside no_native_check (w
      and, on the code with comments blanked but strings kept:
        pt_live_system_dir a path into the running machine's system directory (System32, SysWOW64, %SystemRoot%, %windir%,
                           \\Windows\\): the emulator reads only the environment's capture (decision 3.0.8)
+     and (P45, U2132; USER DECISION 2026-10-27 "virtual FS, measured misses": "NEVER open host files on behalf of the emulated
+     program") over the files that SERVE GUEST REQUESTS - the kernel layer (Emulator/src/nt_kernel*.cpp, emu/nt_kernel.hpp), the HLE
+     APIs (Emulator/src/hle.cpp, emu/hle.hpp), the process layer that runs the guest (Emulator/src/win_env.cpp, win_process.cpp,
+     emu/win_env.hpp, emu/win_process.hpp) - comments and strings blanked:
+       pt_host_file       a host file API: Win32 CreateFile* / OpenFile / ReadFile* / WriteFile* / CreateFileMapping* / MapViewOfFile* /
+                          FindFirstFile* / FindNextFile* / GetFileAttributes* / GetFullPathName* / DeleteFile* / MoveFile* / CopyFile* /
+                          SetCurrentDirectory* / GetCurrentDirectory* / CreateDirectory* / RemoveDirectory* / SetFilePointer* / GetFileSize* /
+                          LoadLibrary* / OpenFileById / ReOpenFile, the C runtime's fopen / _wfopen / fopen_s / _wfopen_s / freopen* / _open /
+                          _wopen / _sopen* / _fsopen / _wfsopen / _access* / _stat* / remove( / rename( / _unlink / _wunlink, the C++ streams
+                          (std::ifstream / ofstream / fstream / filebuf), std::filesystem, and the lib's own file input read_input_file /
+                          read_input_lines - exemptions (EXEMPT) with an exact count: win_env.cpp reads the capture's ntdll once at the
+                          environment's construction (never for a guest request), and its OUTPUT files (the trace, the console capture, the
+                          fs_access log) go through emu::output_file to paths of the command line, never a path the guest names
   T  (U2098) the time path: unicorn/qemu/hw/i386/x86.c cpu_get_tsc returns uc_vclock_base( ... ) for UC_X86_VCLOCK_VIRTUAL before
      the stock cpu_get_ticks() (the host TSC), and Emulator/src/engine.cpp opens every engine with uc_ctl_set_x86_vclock(
      UC_X86_VCLOCK_VIRTUAL ) - no emulator engine reads the host TSC for a guest value (runtime: emu-selftest vclock_consistency,
@@ -84,6 +97,17 @@ PT_RULES = [
 STRING_RULES = [
     ('pt_live_system_dir', r'(?i)system32|syswow64|%systemroot%|%windir%|\\\\windows\\\\'),
 ]
+# P45 (U2132): host file APIs in the files that serve guest requests (code with comments and strings blanked)
+FILE_RULES = [
+    ('pt_host_file', r'\b(?:CreateFile\w*|OpenFile|OpenFileById|ReOpenFile|ReadFile\w*|WriteFile\w*|CreateFileMapping\w*|OpenFileMapping\w*|MapViewOfFile\w*|'
+                     r'FindFirstFile\w*|FindNextFile\w*|GetFileAttributes\w*|SetFileAttributes\w*|GetFullPathName\w*|DeleteFile\w*|MoveFile\w*|CopyFile\w*|'
+                     r'SetCurrentDirectory\w*|GetCurrentDirectory\w*|CreateDirectory\w*|RemoveDirectory\w*|SetFilePointer\w*|GetFileSize\w*|LoadLibrary\w*|'
+                     r'fopen|_wfopen|fopen_s|_wfopen_s|freopen\w*|_wopen|_sopen\w*|_wsopen\w*|_fsopen|_wfsopen|_access\w*|_waccess\w*|_wstat\w*|_unlink|_wunlink|'
+                     r'ifstream|ofstream|fstream|wifstream|wofstream|wfstream|filebuf|read_input_file|read_input_lines)\b|'
+                     r'(?<![\w.>:])(?:_open|_stat|_stat64|remove|rename)\s*\(|\bstd::filesystem\b|<filesystem>|\bfilesystem::'),
+]
+GUEST_SERVING = re.compile(r'^Emulator/(?:src/nt_kernel\w*\.cpp|src/hle\.cpp|src/win_env\.cpp|src/win_process\.cpp|include/emu/nt_kernel\.hpp|include/emu/hle\.hpp|'
+                           r'include/emu/win_env\.hpp|include/emu/win_process\.hpp)$')
 GUEST_KUSER_DEF = re.compile(r'(?i)\bguest_\w+\s*=\s*0x0*7ffe0000\b')
 GUEST_KUSER_FILE = 'Emulator/include/emu/win_env.hpp'
 EXEMPT = {
@@ -96,7 +120,10 @@ EXEMPT = {
     # environment block; and the selftest's expectation of one of them
     ('Emulator/src/win_process.cpp', 'pt_live_system_dir'): (4, 'guest-visible paths of the emulated environment (FullDllName <system root>\\System32\\..., '
                                                                 'ComSpec, Path) written into guest memory, never opened on the host (U2025-U2026)'),
-    ('Emulator/tests/selftest/st_main.cpp', 'pt_live_system_dir'): (22, 'win_env_process_state expects the guest-visible FullDllName C:\\Windows\\System32\\ntdll.dll '
+    ('Emulator/tests/selftest/st_main.cpp', 'pt_live_system_dir'): (34, 'P45 (U2130): nt_measured_vfs / nt_measured_dllsearch - the guest paths \\??\\C:\\Windows\\System32\\<a missing name> '
+                                                                       '(+ \\en-US\\..., \\nothere\\x.mun, d3d11.dll) and the expected placeholder views written into / compared with guest memory '
+                                                                       '(12 more); before: '
+                                                                       'win_env_process_state expects the guest-visible FullDllName C:\\Windows\\System32\\ntdll.dll '
                                                                        '(a string compared in guest memory, U2027); P39 (U2061) nt_measured_loader: the guest-visible '
                                                                        'KnownDllPath target <system root>\\System32 (x2), the guest paths \\??\\C:\\Windows\\Temp\\ (a path '
                                                                        'outside the emulated file system, expected to stop) and \\Sessions\\1\\Windows\\SharedSection / '
@@ -113,6 +140,15 @@ EXEMPT = {
                                                                  'compared with a guest name under the placeholder user SID (tm_nt hku.safer) - never opened on the host (P41)'),
     # P39 (U2057 / U2060): the EMULATED object namespace - the \KnownDlls\KnownDllPath link target built from the capture's system root,
     # its text in the reply, the session's CSR shared-section name compared with a guest OBJECT_ATTRIBUTES name, the frontier text naming it
+    # P45 (U2132): win_env.cpp serves guest requests (the SYSCALL / HLE hooks) and also builds the environment: <filesystem> + one
+    # std::filesystem::path join and ONE read_input_file - the capture's ntdll.dll read at the environment's construction (the system-call
+    # table of decision 3.0.8), never for a guest request; its output files (trace, console capture, fs_access) use emu::output_file
+    ('Emulator/src/win_env.cpp', 'pt_host_file'): (3, '<filesystem>, std::filesystem::path( capture dir ) / "ntdll.dll" and read_input_file of it: the capture\'s ntdll read '
+                                                      'once when the environment is built (the syscall table, decision 3.0.8) - never on behalf of the guest'),
+    # P45 (U2126): the emulated file system's folder <system root>\system32 (the capture's files) a guest OBJECT_ATTRIBUTES path is
+    # classified against - never opened on the host
+    ('Emulator/src/nt_kernel_vfs.cpp', 'pt_live_system_dir'): (1, 'the emulated System32 folder <system root>\\system32 of the virtual file system (the capture\'s '
+                                                                  'files), compared with guest paths - never opened on the host (P45)'),
     ('Emulator/src/nt_kernel_measured.cpp', 'pt_live_system_dir'): (6, 'the emulated namespace: the KnownDllPath target <system root>\\System32 (written into '
                                                                        'guest memory), its reply text, the guest name \\Sessions\\<id>\\Windows\\SharedSection compared, '
                                                                        'the frontier stop text - never opened on the host (P39); P40 (U2065): the guest name \\Sessions\\<id>\\Windows\\ApiPort compared and '
@@ -163,6 +199,12 @@ def scan(text, rel=''):
         for m in re.finditer(rx, kept):
             ln = kept.count('\n', 0, m.start()) + 1
             hits.append((rid, ln, lines[ln - 1].strip()[:110]))
+    # P45 (U2132): host file APIs in the guest-serving files (the include line <filesystem> stays code once comments / strings are blanked)
+    if GUEST_SERVING.match(rel):
+        for rid, rx in FILE_RULES:
+            for m in re.finditer(rx, code):
+                ln = code.count('\n', 0, m.start()) + 1
+                hits.append((rid, ln, lines[ln - 1].strip()[:110]))
     return hits
 
 
@@ -208,8 +250,42 @@ MUST_PASS = [
 ]
 
 
-def run_controls():
+# P45 (U2132): pt_host_file - samples in a guest-serving file must fire, the same text in another file / in strings / comments must not
+FILE_HIT = [
+    'HANDLE h = CreateFileW( path, GENERIC_READ, 0, nullptr, OPEN_EXISTING, 0, nullptr );',
+    'FILE* f = fopen( p.c_str(), "rb" );',
+    'std::ifstream in( p, std::ios::binary );',
+    'if ( std::filesystem::exists( p ) ) return true;',
+    'read_input_file( host_path, 1 << 20, bytes, err );',
+    'auto a = GetFileAttributesW( w.c_str() );',
+    '_wfopen_s( &f, L"x", L"rb" );',
+    'int fd = _open( "x", 0 );',
+    'HMODULE m = LoadLibraryW( L"x.dll" );',
+    '#include <filesystem>',
+]
+FILE_PASS = [
+    'reply r = svc_open_file( c ); o.kind = "file (directory)"; // CreateFileW( ... ) in a comment',
+    'c.name == "NtCreateFile" || c.name == "NtQueryAttributesFile"; const char* s = "fopen ReadFile std::ifstream";',
+    'std::unique_ptr<output_file> fs; fs->create( path, max, err ); x.remove( 1 ); vfs_open_file( c, oa, what );',
+]
+
+
+def run_file_controls():
     fails = []
+    for text in FILE_HIT:
+        if 'pt_host_file' not in [h[0] for h in scan(text, 'Emulator/src/nt_kernel_vfs.cpp')]:
+            fails.append('rule pt_host_file did not fire in a guest-serving file on: %s' % text)
+        if [h for h in scan(text, 'Emulator/src/sysdll.cpp') if h[0] == 'pt_host_file']:
+            fails.append('rule pt_host_file fired outside the guest-serving files on: %s' % text)
+    for text in FILE_PASS:
+        got = [h[0] for h in scan(text, 'Emulator/src/hle.cpp') if h[0] == 'pt_host_file']
+        if got:
+            fails.append('false pt_host_file hit on: %s' % text)
+    return fails
+
+
+def run_controls():
+    fails = run_file_controls()
     for rid, text in MUST_HIT:
         if rid not in [h[0] for h in scan(text)]:
             fails.append('rule %s did not fire on: %s' % (rid, text))
@@ -283,7 +359,8 @@ def main(argv):
     root, build = os.path.abspath(argv[0]), os.path.abspath(argv[2])
     report, fails = [], []
     cf = run_controls()
-    print('negative controls: %d rule samples, %d clean samples, 3 guest-constant controls: %d failed' % (len(MUST_HIT), len(MUST_PASS), len(cf)))
+    print('negative controls: %d rule samples, %d clean samples, 3 guest-constant controls, pt_host_file %d / %d samples (P45): %d failed' %
+          (len(MUST_HIT), len(MUST_PASS), len(FILE_HIT), len(FILE_PASS), len(cf)))
     fails += ['control: ' + f for f in cf]
     files, _f3 = CNN.check_projects(root, [])   # S3's problems are no_native_check's verdict; the file list is reused here
     if not files:
@@ -293,7 +370,11 @@ def main(argv):
         rel = CNN.relp(root, ap)
         for rid, ln, snip in scan(open(ap, encoding='utf-8', errors='replace').read(), rel):
             found.setdefault((rel, rid), []).append((ln, snip))
-    report.append('P  scanned %d emulator files, rules %s' % (len(files), ' '.join(r for r, _ in PT_RULES + STRING_RULES)))
+    guest = [CNN.relp(root, ap) for ap in files if GUEST_SERVING.match(CNN.relp(root, ap))]
+    report.append('P  scanned %d emulator files, rules %s; pt_host_file over the %d guest-serving files: %s' %
+                  (len(files), ' '.join(r for r, _ in PT_RULES + STRING_RULES), len(guest), ', '.join(sorted(guest))))
+    if len(guest) < 8:
+        fails.append('P  pt_host_file: only %d guest-serving files found (the kernel layer / HLE / process layer moved?)' % len(guest))
     for (rel, rid), hits in sorted(found.items()):
         ex = EXEMPT.get((rel, rid))
         if ex and ex[0] == len(hits):
@@ -315,6 +396,7 @@ def main(argv):
         print('no_host_passthrough: FAIL (%d problem(s))' % len(fails))
         return 1
     print('no_host_passthrough: PASS (static: no Nt* / syscall / process-memory / host-KUSER / host-query / host-clock / live System32 path in %d emulator files; '
+          'no host file API in the guest-serving files (P45); '
           'the TSC of every emulator engine on the virtual time base; '
           'runtime: the emulated system call never reached the host)' % len(files))
     return 0

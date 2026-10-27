@@ -25,6 +25,11 @@ by it; the system DLLs are mapped as data and run only in emulation):
     connection (the model measured from inside our own GUI test PE tm_u32), the GUI conversion at NtGdiInit with user32's ClientThreadSetup
     callback, CharUpperW, the DLL detach: the recorded 369 services, exit 36H; --HLE (the CharUpperW stub) 36H; the native reference started
     NORMALLY (tm_nt run.normal) 36H; no console output attempt
+  - P45 (U2133, USER DECISION 2026-10-27 "virtual FS, measured misses"): T7 (t7_vfs, a console program started detached) opens a missing
+    file next to itself and a missing <parent>\SystemResources\<its name>.mun (the sample's .mun search, run 9) and queries the missing
+    file's attributes; the exit status encodes the three statuses and what was written: 1F343A34H natively (DETACHED), under --Sys
+    (213 services; the emulated file system's measured misses, tm_nt fs.*) and under --HLE (ntdll's file services = the kernel layer);
+    <out dir>\fs_access.txt of both modes holds the accesses with their answers
 A changed service sequence fails this suite (a newly answered or changed service must update EXPECTED and the notes). Exit 0 = PASS,
 1 = FAIL, 2 = usage.
 usage: python -I win_env_sys_loader.py REPO_ROOT TESTS_DIR
@@ -34,8 +39,11 @@ import importlib.util
 import os
 import re
 import struct
+import shutil
 import subprocess
 import sys
+import tempfile
+import time
 
 sys.dont_write_bytecode = True
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -203,8 +211,41 @@ EXPECTED = {
     'NtOpenKey NtSetEvent NtSetInformationWorkerFactory NtSetEvent NtTestAlert NtContinue NtTerminateProcess NtClose NtClose NtClose NtOpenKey '
     'NtQueryValueKey NtClose NtOpenKey NtQueryValueKey NtClose NtSetInformationThread NtSetInformationThread NtClose NtClose NtClose NtClose '
     'NtQueryWnfStateData NtTerminateProcess ').split(),
+    # P45 (U2133): T7 - a console program (started detached) that opens a missing file next to itself and a missing
+    # <parent>\\SystemResources\\<its name>.mun and queries the missing file's attributes: the emulated file system's measured misses
+    'T7': ('NtQueryPerformanceCounter NtProtectVirtualMemory NtProtectVirtualMemory NtCreateEvent NtQuerySystemInformation NtQueryInformationProcess '
+           'NtQuerySystemInformation NtQueryVirtualMemory NtQueryVirtualMemory NtProtectVirtualMemory NtOpenKey NtQueryValueKey NtClose NtOpenKey NtOpenKey '
+           'NtOpenKey NtQueryInformationProcess NtQueryInformationProcess NtQuerySecurityAttributesToken NtQuerySecurityAttributesToken NtOpenKey NtQueryValueKey '
+           'NtClose NtQueryInformationProcess NtQuerySystemInformation NtQuerySystemInformation NtAllocateVirtualMemoryEx NtAllocateVirtualMemoryEx '
+           'NtAllocateVirtualMemoryEx NtQuerySystemInformation NtAllocateVirtualMemory NtFreeVirtualMemory NtAllocateVirtualMemory NtQuerySystemInformation '
+           'NtQuerySystemInformation NtCreateEvent NtCreateWaitCompletionPacket NtQuerySystemInformationEx NtCreateIoCompletion NtCreateWorkerFactory '
+           'NtCreateTimer2 NtCreateWaitCompletionPacket NtAssociateWaitCompletionPacket NtCreateTimer2 NtCreateWaitCompletionPacket '
+           'NtAssociateWaitCompletionPacket NtSetInformationWorkerFactory NtSetInformationWorkerFactory NtSetInformationWorkerFactory '
+           'NtAssociateWaitCompletionPacket NtTraceControl NtTraceControl NtTraceControl NtTraceControl NtFreeVirtualMemory NtProtectVirtualMemory '
+           'NtOpenDirectoryObject NtProtectVirtualMemory NtOpenSymbolicLinkObject NtQuerySymbolicLinkObject NtClose NtProtectVirtualMemory NtProtectVirtualMemory '
+           'NtCreateEvent NtCreateEvent NtProtectVirtualMemory NtProtectVirtualMemory NtOpenFile NtQueryVolumeInformationFile NtSetEvent NtAllocateVirtualMemory '
+           'NtOpenSection NtMapViewOfSection NtQueryPerformanceCounter NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory '
+           'NtProtectVirtualMemory NtOpenSection NtMapViewOfSection NtQueryPerformanceCounter NtProtectVirtualMemory NtProtectVirtualMemory '
+           'NtProtectVirtualMemory NtProtectVirtualMemory NtClose NtProtectVirtualMemory NtClose NtProtectVirtualMemory NtSetInformationProcess '
+           'NtApphelpCacheControl NtApphelpCacheControl NtSetInformationVirtualMemory NtQuerySystemInformation NtQuerySystemInformation NtOpenSection '
+           'NtCreateSection NtConnectPort NtClose NtMapViewOfSection NtClose NtAllocateVirtualMemory NtInitializeNlsFiles NtSetInformationProcess NtTraceControl '
+           'NtTraceControl NtQueryInformationToken NtAccessCheck NtAccessCheck NtOpenProcessToken NtQueryInformationToken NtQueryInformationToken '
+           'NtQueryInformationToken NtOpenDirectoryObject NtQueryInformationToken NtClose NtCreateMutant NtWaitForSingleObject NtOpenSemaphore NtCreateSemaphore '
+           'NtCreateSemaphore NtReleaseMutant NtQueryWnfStateData NtCreateEvent NtCreateWaitCompletionPacket NtSetWnfProcessNotificationEvent '
+           'NtAssociateWaitCompletionPacket NtSubscribeWnfStateChange NtQueryWnfStateData NtSubscribeWnfStateChange NtQueryWnfStateData NtSubscribeWnfStateChange '
+           'NtQueryWnfStateData NtAllocateVirtualMemory NtSetTimer2 NtOpenKey NtTraceControl NtTraceControl NtTraceControl NtTraceControl '
+           'NtSetInformationVirtualMemory NtOpenKey NtTraceControl NtTraceControl NtQuerySystemInformation NtSetEvent NtProtectVirtualMemory '
+           'NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory '
+           'NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory '
+           'NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory '
+           'NtProtectVirtualMemory NtOpenKey NtOpenKey NtOpenKey NtQueryValueKey NtClose NtQueryInformationToken NtOpenKey NtOpenKey NtQueryValueKey NtClose '
+           'NtOpenKey NtQueryValueKey NtClose NtQuerySystemInformationEx NtCreateIoCompletion NtCreateWorkerFactory NtSetInformationWorkerFactory NtCreateTimer2 '
+           'NtCreateWaitCompletionPacket NtAssociateWaitCompletionPacket NtCreateTimer2 NtCreateWaitCompletionPacket NtAssociateWaitCompletionPacket '
+           'NtSetInformationWorkerFactory NtSetInformationWorkerFactory NtQuerySecurityAttributesToken NtQuerySecurityAttributesToken NtProtectVirtualMemory '
+           'NtProtectVirtualMemory NtApphelpCacheControl NtSetInformationVirtualMemory NtSetEvent NtSetEvent NtSetInformationWorkerFactory NtSetEvent NtTestAlert '
+           'NtContinue NtOpenFile NtQueryAttributesFile NtOpenFile NtTerminateProcess NtClose NtClose NtClose NtClose NtQueryWnfStateData NtTerminateProcess ').split(),
 }
-STATUS = {'T2': 0x2B, 'T3': 0x2E, 'T5': 0x2F, 'T6': 0x36}
+STATUS = {'T2': 0x2B, 'T3': 0x2E, 'T5': 0x2F, 'T6': 0x36, 'T7': 0x1F343A34}
 # P41: the registry items the start of a process without a console asks (capture_sysdlls.py --reg / --reg-value; local, never committed)
 P41_REGISTRY = [
     r'key	absent	\registry\machine\system\currentcontrolset\control\stateseparation\redirectionmap\keys',
@@ -222,6 +263,8 @@ P41_REGISTRY = [
     r'value	\registry\machine\software\microsoft\windows nt\currentversion\gre_initialize	disableumpdbuffersizecheck	absent',
     r'key	present	\registry\machine\software\microsoft\windows nt\currentversion\windows',
     r'value	\registry\machine\software\microsoft\windows nt\currentversion\windows	loadappinit_dlls	4	00000000',
+    # P45 (U2133): T7's start
+    r'key	absent	\registry\machine\software\microsoft\windows nt\currentversion\image file execution options\t7_vfs.exe',
 ]
 T5_TEXTS = ('t5_stdout: hello from WriteFile' + chr(92) + 'r' + chr(92) + 'n', 't5_stdout: hello from WriteConsoleW' + chr(92) + 'r' + chr(92) + 'n')
 
@@ -238,7 +281,7 @@ def main(argv):
     oep = os.path.join(tests, 'emu-oep.exe')
     pe_dir = os.path.join(tests, 'test_pe')
     tm = os.path.join(pe_dir, 'tm_nt.exe')
-    t2, t3, t5, t6 = (os.path.join(pe_dir, n) for n in ('t2_import.exe', 't3_tls.exe', 't5_stdout.exe', 't6_user32.exe'))
+    t2, t3, t5, t6, t7 = (os.path.join(pe_dir, n) for n in ('t2_import.exe', 't3_tls.exe', 't5_stdout.exe', 't6_user32.exe', 't7_vfs.exe'))   # P45: + T7
     fails = []
 
     def check(ok, what):
@@ -247,7 +290,7 @@ def main(argv):
             fails.append(what)
         return ok
 
-    for p in (oep, t2, t3, t5, t6, tm):
+    for p in (oep, t2, t3, t5, t6, t7, tm):
         if not os.path.isfile(p):
             say('FAIL %s missing (build.cmd first)' % p)
             return 1
@@ -273,12 +316,15 @@ def main(argv):
     check(rc == 3 and any(l.startswith('[emu-oep] error: --Sys:') and 'LdrInitializeThunk' in l for l in out), 'T2 --Sys without --loader: refused, exit 3')
     outdir = os.path.join(tests, 'sysloader_out')
     status = {}
-    for tag, path in (('T2', t2), ('T3', t3p), ('T5', t5), ('T6', t6)):
+    for tag, path in (('T2', t2), ('T3', t3p), ('T5', t5), ('T6', t6), ('T7', t7)):
         od = os.path.join(outdir, tag.lower() + '_sys')
         os.makedirs(od, exist_ok=True)
         cf = os.path.join(od, 'console_capture.txt')
         if os.path.isfile(cf):
             os.remove(cf)   # this suite's own output file of an earlier run (one file)
+        ff = os.path.join(od, 'fs_access.txt')   # P45 (U2128)
+        if os.path.isfile(ff):
+            os.remove(ff)   # this suite's own output file of an earlier run
         rc, out = T1H.run([oep, '--guest', '--Sys', '--loader', '--counters', '--out-dir', od, path])
         obs = T1H.observable(out)
         check(any('env: NLS view at ' in l for l in obs) and any('env: API set schema view at ' in l and 'schema version 6' in l for l in obs) and
@@ -301,6 +347,15 @@ def main(argv):
         check(any(l.startswith('[emu-oep] console fields at the stop: ') and "(the process' copy): ConsoleHandle 0x0, ConsoleFlags 0x0, StandardInput 0x0, StandardOutput 0x0, "
                   'StandardError 0x0' in l for l in out),
               '%s: the process parameters after the start = a natively detached process (ConsoleHandle 0, no standard handles: tm_nt con.pp)' % tag)
+        if tag == 'T7':
+            # P45 (U2133): the emulated file system's answers, recorded in <out dir>\fs_access.txt (observation only)
+            body = open(ff, encoding='ascii').read() if os.path.isfile(ff) else ''
+            want = ['NtOpenFile "\\??\\<image dir>\\" access 100020H, attributes 40H, share 3H, options 21H -> status 00000000H',
+                    'NtOpenFile "\\??\\<image dir>\\t7_vfs_absent_5d2c.dat" access 100001H, attributes 40H, share 5H, options 60H -> status C0000034H',
+                    'NtQueryAttributesFile "\\??\\<image dir>\\t7_vfs_absent_5d2c.dat" attributes 40H -> status C0000034H',
+                    'NtOpenFile "\\??\\<user profile>\\SystemResources\\t7_vfs.exe.mun" access 100001H, attributes 40H, share 5H, options 60H -> status C000003AH']
+            check(all(w in body for w in want) and body.count(chr(10)) == 6 and any('file-system accesses: 5; file ' in l for l in out),
+                  'T7 --Sys: fs_access.txt holds the 5 file-system accesses (the loader\'s directory open + its volume query, T7\'s two misses and the .mun miss) with the measured answers')
         if tag == 'T5':
             cap_lines = [l for l in out if l.startswith('[emu-oep] console capture #')]
             body = open(cf, encoding='ascii').read() if os.path.isfile(cf) else ''
@@ -311,7 +366,7 @@ def main(argv):
         else:
             check(not os.path.isfile(cf) and any('console capture: 0 output attempt(s)' in l for l in out), '%s --Sys: no output attempt, no capture file' % tag)
     # --HLE: the same observable result
-    for tag, path in (('T2', t2), ('T3', t3p), ('T5', t5), ('T6', t6)):
+    for tag, path in (('T2', t2), ('T3', t3p), ('T5', t5), ('T6', t6), ('T7', t7)):
         od = os.path.join(outdir, tag.lower() + '_hle')
         os.makedirs(od, exist_ok=True)
         cf = os.path.join(od, 'console_capture.txt')
@@ -321,6 +376,9 @@ def main(argv):
         st = [l for l in out if l.startswith('[emu-oep] observable: exit status: ')]
         h = int(st[0].split(': ', 2)[2].split()[0], 16) if len(st) == 1 else None
         check(rc == 0 and h == STATUS[tag] and h == status.get(tag), '%s --HLE: the guest exit status %02XH = the --Sys result (got %s)' % (tag, STATUS[tag], h))
+        if tag == 'T7':
+            body = open(os.path.join(od, 'fs_access.txt'), encoding='ascii').read() if os.path.isfile(os.path.join(od, 'fs_access.txt')) else ''
+            check(body.count(chr(10)) == 4 and 'C000003AH' in body and body.count('C0000034H') == 2, 'T7 --HLE: fs_access.txt holds T7\'s 3 file-system calls (the ntdll stubs = the kernel layer) with the same answers')
         if tag == 'T5':
             body = open(cf, encoding='ascii').read() if os.path.isfile(cf) else ''
             check('KERNEL32.dll!WriteFile handle 0x0 length 33 text "%s" -> FALSE, LastError 6 (ERROR_INVALID_HANDLE), *lpNumberOfBytesWritten 0' % T5_TEXTS[0] in body and
@@ -330,10 +388,31 @@ def main(argv):
     live = os.path.join(os.environ.get('SystemRoot', r'C:\Windows'), 'System32', 'ntdll.dll')
     cap_sha = hashlib.sha256(open(os.path.join(cap, 'ntdll.dll'), 'rb').read()).hexdigest()
     if os.path.isfile(live) and hashlib.sha256(open(live, 'rb').read()).hexdigest() == cap_sha:
-        for tag, path in (('T2', t2), ('T3', t3p), ('T5', t5), ('T6', t6)):
+        for tag, path in (('T2', t2), ('T3', t3p), ('T5', t5), ('T6', t6), ('T7', t7)):
             # P44 (U2124): T6 (a GUI program) is started NORMALLY (tm_nt run.normal, no creation flags), the console programs detached
             how = 'run.normal' if tag == 'T6' else 'run.detached'
+            folder = None
+            if tag == 'T7':
+                # P45 (U2133): what a file-system miss WRITES depends on the volume of the image's folder (P44 U2111: the system volume writes
+                # nothing, the guest's other volume E: zeros) and the emulated image lies on the system volume - T7 runs from a COPY in
+                # <a fresh folder below %TEMP%>\img (its .mun search then looks in that fresh folder: SystemResources is surely missing)
+                folder = tempfile.mkdtemp(prefix='win_env_t7_')
+                os.mkdir(os.path.join(folder, 'img'))
+                path = os.path.join(folder, 'img', 't7_vfs.exe')
+                shutil.copyfile(t7, path)
+                check(os.path.splitdrive(folder)[0].upper() == os.path.splitdrive(os.environ.get('SystemRoot', r'C:\Windows'))[0].upper(),
+                      'T7 native copy on the system volume (%%TEMP%% %s)' % os.path.splitdrive(folder)[0])
             r = subprocess.run([tm, how, path], capture_output=True, text=True, timeout=120)
+            if folder:
+                for k in range(30):   # our one copy, then the two folders (retried while the image is still held)
+                    try:
+                        if os.path.exists(path):
+                            os.remove(path)
+                        os.rmdir(os.path.join(folder, 'img'))
+                        os.rmdir(folder)
+                        break
+                    except OSError:
+                        time.sleep(0.5)
             m = [re.search(r'exit code ([0-9A-F]+)H', l) for l in r.stdout.splitlines() if l.startswith('tm_nt %s: ' % how)]
             code = int(m[0].group(1), 16) if len(m) == 1 and m[0] else None
             check(r.returncode == 0 and code == STATUS[tag] and code == status.get(tag),
@@ -344,7 +423,7 @@ def main(argv):
     if fails:
         say('FAIL (%d problem(s))' % len(fails))
         return 1
-    say('PASS: T2 / T3 / T5 / T6 run to their end under --Sys --loader (the real LdrInitializeThunk, %d / %d / %d / %d answered services, the model of a process '
+    say('PASS: T2 / T3 / T5 / T6 / T7 run to their end under --Sys --loader (the real LdrInitializeThunk, %d / %d / %d / %d answered services, the model of a process '
         'started without a console; T6: user32\'s USERSRV connection and GUI start, P44) with the exit status 2BH / 2EH / 2FH / 36H = --HLE = the native '
         'reference; T5\'s output attempts captured in both modes' % (len(EXPECTED['T2']), len(EXPECTED['T3']), len(EXPECTED['T5']), len(EXPECTED['T6'])))
     return 0
