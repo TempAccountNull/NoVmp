@@ -118,6 +118,10 @@ namespace emu::nt
 		uint32_t processors = 0;             // U2032: dwNumberOfProcessors
 		uint64_t rng_seed = 0;               // P39 (U2052): engine_config::rng_seed (decision D8) - the deterministic process cookie
 		uint64_t tsc_hz = 0;                 // U2094 (plan 3.M6): the TSC rate of the one virtual time base (emu/vclock.hpp; 0 = no clock)
+		// P46 (U2142): the process image for ProcessImageInformation (25H) - its FILE's headers (the first SizeOfHeaders bytes, at most
+		// 10000H), the file's size and the base the emulated image is mapped at (win_env; never a host file)
+		std::vector<uint8_t> image_headers;
+		uint64_t image_file_size = 0, image_mapped_base = 0;
 	};
 
 	// one system call as the guest made it
@@ -269,6 +273,7 @@ namespace emu::nt
 		reply svc_event( const call& c );
 		reply svc_query_system_information( const call& c );
 		bool query_process_more( const call& c, reply& r );
+		bool query_image_information( const call& c, reply& r );   // P46 (U2142): ProcessImageInformation 25H (nt_kernel_measured.cpp; tm_nt pii, T8)
 		reply query_memory_image( const call& c );
 		reply query_working_set_ex( const call& c );
 		reply svc_open_key( const call& c );
@@ -356,6 +361,10 @@ namespace emu::nt
 							   const std::vector<std::pair<uint64_t, uint64_t>>& known, std::string& why );
 		reply svc_alpc_send_wait_receive_port( const call& c );   // P44 (U2119): the CSR request of user32's start (USERSRV connect)
 		bool user_connected_ = false;                           // P44: the USERSRV connection made (the shared-info views mapped)
+		std::map<uint64_t, uint32_t> key_tags_;                 // P46 (U2152): HandleTags set on a key handle (NtSetInformationKey 5)
+		std::map<uint64_t, uint64_t> key_notify_;               // P46 (U2154): a pending NtNotifyChangeKey: key handle -> its event handle
+		std::map<std::string, uint32_t> wm_names_;              // P46 (U2160): registered window-message names -> their atom (placeholders)
+		uint32_t wm_next_ = 0xC200;                             // P46 (U2160): the next placeholder message atom (C000H..FFFFH shape)
 		uint64_t user_si_view_ = 0, user_he_view_ = 0;          // P44: the user shared-info view (R1), the user handle table view (R2)
 		bool gui_process_ = false, gui_thread_ = false;         // P44 (U2120): the GUI conversion of the process / the thread done
 		uint64_t gdi_view_ = 0, desk_view_ = 0;                 // P44: the GDI shared memory view (R3), the desktop heap view (R4)

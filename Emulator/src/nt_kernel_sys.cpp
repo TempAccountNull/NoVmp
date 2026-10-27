@@ -317,7 +317,11 @@ namespace emu::nt
 		{
 			const auto it = handles_.find( oa.root );
 			if ( it == handles_.end() || it->second.kind != "key" ) return done_( status::invalid_handle, "RootDirectory " + hex( oa.root ) + " is not a key handle of this process" );
-			full = it->second.name + "\\" + oa.name;
+			// P46 (U2153): a root opened with a trailing backslash ("\\REGISTRY\\MACHINE\\", kernelbase's predefined HKLM) names the same key -
+			// its backslash is not doubled (MEASURED: tm_nt reg.hklm.rel - a relative open under that handle = the key)
+			std::string rn = it->second.name;
+			while ( !rn.empty() && rn.back() == '\\' ) rn.pop_back();
+			full = rn + "\\" + oa.name;
 		}
 		std::string key;
 		for ( char ch : full ) key += char( std::tolower( uint8_t( ch ) ) );
@@ -339,12 +343,31 @@ namespace emu::nt
 		// key is MEASURED from inside our own test PE with its own SID (tm_nt hku.*) and listed here. Other user keys: stop.
 		{
 			const std::string up = "\\registry\\user\\s-1-5-21-1000001-1000002-1000003-1001";
-			static const char* const measured_absent[] = { "\\software\\policies\\microsoft\\windows\\safer\\codeidentifiers" };   // tm_nt hku.safer
+			static const char* const measured_absent[] = { "\\software\\policies\\microsoft\\windows\\safer\\codeidentifiers", "\\software\\classes\\local settings\\software\\microsoft\\ole\\featuredevelopmentproperties", "\\software\\classes\\local settings\\software\\microsoft\\ole" };   // tm_nt hku.safer; P46 (U2156) tm_nt hku.locset.ole.fdp, hku.locset.ole
+			// P46 (U2156): keys of the user's hive MEASURED present from inside (tm_nt hku.*): a key handle (the key's own values / subkeys
+			// are measured on their own - anything read below it that is not measured stops); "" = the hive root (tm_nt hku.root: NtOpenKey
+			// 20119H = STATUS_SUCCESS; combase's start, sample run 11 exploration x22 system call 672)
+			struct hku_key { const char* rest; uint32_t access; const char* tag; };
+			static const hku_key measured_present[] = { { "", 0x20119, "hku.root" },
+															{ "\\software\\classes\\local settings", 0x20119, "hku.locset" },
+															{ "\\software\\classes\\local settings\\software\\microsoft", 0x20019, "hku.locset.ms" } };   // P46_HKU_TABLE
 			if ( key.rfind( up, 0 ) == 0 )
 			{
 				const std::string rest = key.substr( up.size() );
 				for ( auto m : measured_absent )
 					if ( rest == m ) return absent( "for the user (measured from inside: tm_nt hku.*)" );
+				for ( const auto& m : measured_present )
+					if ( rest == m.rest && uint32_t( c.args[ 1 ] ) == m.access )
+					{
+						if ( !user_buffer( c.args[ 0 ], 8, UC_PROT_WRITE ) ) return done_( status::access_violation, "KeyHandle not writable" );
+						object o;
+						o.kind = "key";
+						o.name = full;
+						const uint64_t h = open_handle( o );
+						reply rp = done_( status::success, "key handle " + hex( h ) + ": \"" + full + "\" (the user's hive, present - measured from inside: tm_nt " + m.tag + ")" );
+						if ( !put( c.args[ 0 ], &h, 8, rp ) ) return stop_( "writing the handle failed after the probe" );
+						return rp;
+					}
 				return stop_( std::string( c.name ) + " \"" + full + "\": a key of the user's hive that was not measured (tm_nt hku.*: measured from inside with the process' own SID)" );
 			}
 		}
@@ -412,6 +435,18 @@ namespace emu::nt
 				if ( !put( out + 4, &zero, 4, r ) ) r = stop_( "writing the result failed after the probe" );
 				return true;
 			}
+			case 0x56:
+				// P46 (U2162): class 56H (phnt ntpsapi.h PROCESSINFOCLASS 86 ProcessEnclaveInformation, "qs: Obsolete"; sample run 11 exploration x71,
+				// Length B0H, ReturnLength NULL). MEASURED (tm_nt qip.56 / .56r / .56.0 / .56.8 / .56.100): STATUS_INVALID_INFO_CLASS (C0000003H) for
+				// every one of those lengths, with and without a ReturnLength - nothing written, ReturnLength not written. Other lengths: stop.
+				if ( len != 0 && len != 8 && len != 0xB0 && len != 0x100 )
+					r = stop_( "ProcessInformationClass 56H, Length " + hex( len ) + ": not measured (0 / 8 / B0H / 100H are)" );
+				else
+					r = done_( 0xC0000003, "ProcessInformationClass 56H (ProcessEnclaveInformation, obsolete), Length " + hex( len ) +
+										   ": STATUS_INVALID_INFO_CLASS, nothing written (measured: tm_nt qip.56*)" );
+				return true;
+			case 0x25:
+				return query_image_information( c, r );   // P46 (U2142): ProcessImageInformation (nt_kernel_measured.cpp; tm_nt pii, T8)
 			case 0x22:
 			{
 				data.assign( 4, 0 );

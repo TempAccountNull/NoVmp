@@ -472,7 +472,7 @@ namespace emu::nt
 		// EnableCallbackContext .. HasPayload stay 0). Other providers / inputs (their enable state is the environment's): stop until measured.
 		if ( fn == 0xF )
 		{
-			struct prov { uint8_t guid[ 16 ]; uint16_t logger; bool callback; const char* tag; };
+			struct prov { uint8_t guid[ 16 ]; uint16_t logger; bool callback; const char* tag; uint8_t regtype = 3; };   // P46 (U2148): + RegType
 			static const prov provs[] = {
 				{ { 0x5C, 0xAB, 0x95, 0x35, 0x2A, 0x04, 0x8E, 0x4C, 0xB9, 0x42, 0x2D, 0x05, 0x9B, 0xFE, 0xB1, 0xB1 }, 1, false, "tm_nt etw.reg" },
 				{ { 0x7B, 0xC8, 0x5F, 0x30, 0x2A, 0x00, 0x26, 0x5E, 0xD2, 0x97, 0x60, 0x22, 0x30, 0x12, 0xCA, 0x9C }, 2, true, "tm_nt etw.reg2" },
@@ -499,7 +499,67 @@ namespace emu::nt
 				{ { 0xB8, 0xE5, 0xBB, 0x03, 0x88, 0xC7, 0x0B, 0x4D, 0xB4, 0x7E, 0x5B, 0x57, 0x31, 0x39, 0x8A, 0x89 }, 11, true, "tm_nt etw.reg11" },
 				// P45 (U2139): dxgi's second provider CA11C036-0102-4A2D-A6AD-F03CFED5D3C9 (sample exploration x6 system call 603: LoggerId 12,
 				// ReplyCallback set) - MEASURED tm_nt etw.reg12: STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
-				{ { 0x36, 0xC0, 0x11, 0xCA, 0x02, 0x01, 0x2D, 0x4A, 0xA6, 0xAD, 0xF0, 0x3C, 0xFE, 0xD5, 0xD3, 0xC9 }, 12, true, "tm_nt etw.reg12" } };
+				{ { 0x36, 0xC0, 0x11, 0xCA, 0x02, 0x01, 0x2D, 0x4A, 0xA6, 0xAD, 0xF0, 0x3C, 0xFE, 0xD5, 0xD3, 0xC9 }, 12, true, "tm_nt etw.reg12" },
+				// P46 (U2148): d3d11's provider DB6D6FDB-77AC-4E88-8253-819DF9BBF140 (sample run 11 exploration x1 system call 634: RegType 3,
+				// LoggerId 13, ReplyCallback set) - MEASURED tm_nt etw.reg13: STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0xDB, 0x6D, 0x6F, 0xDB, 0x77, 0xAC, 0x88, 0x4E, 0x82, 0x53, 0x81, 0x9D, 0xF9, 0xBB, 0xF1, 0x40 }, 13, true, "tm_nt etw.reg13" },
+				// P46 (U2148): provider EA27CC86876FF7478B433473527D4A87 (sample run 11 exploration x2 system call 635, d3d11's DllMain: RegType 3, LoggerId 14, ReplyCallback set) - MEASURED tm_nt etw.reg14:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0xEA, 0x27, 0xCC, 0x86, 0x87, 0x6F, 0xF7, 0x47, 0x8B, 0x43, 0x34, 0x73, 0x52, 0x7D, 0x4A, 0x87 }, 14, true, "tm_nt etw.reg14" },
+				// P46 (U2148): combase's provider BDA92AE8-9F11-4D49-BA1D-A4C2ABCA692E (sample run 11 exploration x37: RegType 2, LoggerId 15,
+				// ReplyCallback set) - MEASURED tm_nt etw.reg15: STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0xE8, 0x2A, 0xA9, 0xBD, 0x11, 0x9F, 0x49, 0x4D, 0xBA, 0x1D, 0xA4, 0xC2, 0xAB, 0xCA, 0x69, 0x2E }, 15, true, "tm_nt etw.reg15", 2 },
+				// P46 (U2148): provider 8960FF1A63E8364DBDFD3581F07440BE (sample run 11 exploration x39: RegType 3, LoggerId 16, ReplyCallback set) - MEASURED tm_nt etw.reg16:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0x89, 0x60, 0xFF, 0x1A, 0x63, 0xE8, 0x36, 0x4D, 0xBD, 0xFD, 0x35, 0x81, 0xF0, 0x74, 0x40, 0xBE }, 16, true, "tm_nt etw.reg16" },
+				// P46 (U2148): provider 388455F06AF5875947DA040CA75AEF05 (sample run 11 exploration x42: RegType 3, LoggerId 17, ReplyCallback set) - MEASURED tm_nt etw.reg17:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0x38, 0x84, 0x55, 0xF0, 0x6A, 0xF5, 0x87, 0x59, 0x47, 0xDA, 0x04, 0x0C, 0xA7, 0x5A, 0xEF, 0x05 }, 17, true, "tm_nt etw.reg17" },
+				// P46 (U2148): provider 1B86D6B80FD2EC4EBBAE87E0DD80602B (sample run 11 exploration x46: RegType 3, LoggerId 18, ReplyCallback set) - MEASURED tm_nt etw.reg18:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0x1B, 0x86, 0xD6, 0xB8, 0x0F, 0xD2, 0xEC, 0x4E, 0xBB, 0xAE, 0x87, 0xE0, 0xDD, 0x80, 0x60, 0x2B }, 18, true, "tm_nt etw.reg18" },
+				// P46 (U2148): provider F054ED83484D454EB16E726FFD1FA4AF (sample run 11 exploration x47: RegType 3, LoggerId 19, ReplyCallback set) - MEASURED tm_nt etw.reg19:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0xF0, 0x54, 0xED, 0x83, 0x48, 0x4D, 0x45, 0x4E, 0xB1, 0x6E, 0x72, 0x6F, 0xFD, 0x1F, 0xA4, 0xAF }, 19, true, "tm_nt etw.reg19" },
+				// P46 (U2148): provider 9AC6A419EB284B4D8D945F19055A1B5C (sample run 11 exploration x48: RegType 3, LoggerId 20, ReplyCallback set) - MEASURED tm_nt etw.reg20:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0x9A, 0xC6, 0xA4, 0x19, 0xEB, 0x28, 0x4B, 0x4D, 0x8D, 0x94, 0x5F, 0x19, 0x05, 0x5A, 0x1B, 0x5C }, 20, true, "tm_nt etw.reg20" },
+				// P46 (U2148): provider 71846FA81DC3BC4FA035665D06047B03 (sample run 11 exploration x49: RegType 3, LoggerId 21, ReplyCallback set) - MEASURED tm_nt etw.reg21:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0x71, 0x84, 0x6F, 0xA8, 0x1D, 0xC3, 0xBC, 0x4F, 0xA0, 0x35, 0x66, 0x5D, 0x06, 0x04, 0x7B, 0x03 }, 21, true, "tm_nt etw.reg21" },
+				// P46 (U2148): provider 3D315729AAFC4A5D2F6932CE5F0AC44E (sample run 11 exploration x50: RegType 3, LoggerId 22, ReplyCallback set) - MEASURED tm_nt etw.reg22:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0x3D, 0x31, 0x57, 0x29, 0xAA, 0xFC, 0x4A, 0x5D, 0x2F, 0x69, 0x32, 0xCE, 0x5F, 0x0A, 0xC4, 0x4E }, 22, true, "tm_nt etw.reg22" },
+				// P46 (U2148): provider 2A9EE0C763C69953AF792FCCD321D19A (sample run 11 exploration x51: RegType 3, LoggerId 23, ReplyCallback set) - MEASURED tm_nt etw.reg23:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0x2A, 0x9E, 0xE0, 0xC7, 0x63, 0xC6, 0x99, 0x53, 0xAF, 0x79, 0x2F, 0xCC, 0xD3, 0x21, 0xD1, 0x9A }, 23, true, "tm_nt etw.reg23" },
+				// P46 (U2148): provider 13CC3F706FB66858DDD9E2DB7F381FFB (sample run 11 exploration x53: RegType 3, LoggerId 24, ReplyCallback set) - MEASURED tm_nt etw.reg24:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0x13, 0xCC, 0x3F, 0x70, 0x6F, 0xB6, 0x68, 0x58, 0xDD, 0xD9, 0xE2, 0xDB, 0x7F, 0x38, 0x1F, 0xFB }, 24, true, "tm_nt etw.reg24" },
+				// P46 (U2148): provider D01942C444F3DF11A5E2B307DFD72085 (sample run 11 exploration x55: RegType 3, LoggerId 25, ReplyCallback set) - MEASURED tm_nt etw.reg25:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0xD0, 0x19, 0x42, 0xC4, 0x44, 0xF3, 0xDF, 0x11, 0xA5, 0xE2, 0xB3, 0x07, 0xDF, 0xD7, 0x20, 0x85 }, 25, true, "tm_nt etw.reg25" },
+				// P46 (U2148): provider E22D1193A30AD74E91E34264555220C1 (sample run 11 exploration x56: RegType 3, LoggerId 26, ReplyCallback set) - MEASURED tm_nt etw.reg26:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0xE2, 0x2D, 0x11, 0x93, 0xA3, 0x0A, 0xD7, 0x4E, 0x91, 0xE3, 0x42, 0x64, 0x55, 0x52, 0x20, 0xC1 }, 26, true, "tm_nt etw.reg26" },
+				// P46 (U2148): provider E82AA9BD119F494DBA1DA4C2ABCA692E (sample run 11 exploration x60: RegType 2, LoggerId 27, ReplyCallback set) - MEASURED tm_nt etw.reg27:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0xE8, 0x2A, 0xA9, 0xBD, 0x11, 0x9F, 0x49, 0x4D, 0xBA, 0x1D, 0xA4, 0xC2, 0xAB, 0xCA, 0x69, 0x2E }, 27, true, "tm_nt etw.reg27", 2 },
+				// P46 (U2148): provider 8960FF1A63E8364DBDFD3581F07440BE (sample run 11 exploration x61: RegType 3, LoggerId 28, ReplyCallback set) - MEASURED tm_nt etw.reg28:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0x89, 0x60, 0xFF, 0x1A, 0x63, 0xE8, 0x36, 0x4D, 0xBD, 0xFD, 0x35, 0x81, 0xF0, 0x74, 0x40, 0xBE }, 28, true, "tm_nt etw.reg28" },
+				// P46 (U2148): provider 388455F06AF5875947DA040CA75AEF05 (sample run 11 exploration x62: RegType 3, LoggerId 29, ReplyCallback set) - MEASURED tm_nt etw.reg29:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0x38, 0x84, 0x55, 0xF0, 0x6A, 0xF5, 0x87, 0x59, 0x47, 0xDA, 0x04, 0x0C, 0xA7, 0x5A, 0xEF, 0x05 }, 29, true, "tm_nt etw.reg29" },
+				// P46 (U2148): provider 00FE4EA7BE14F94E9DA91484D5473302 (sample run 11 exploration x69: RegType 2, LoggerId 30, ReplyCallback set) - MEASURED tm_nt etw.reg30:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0x00, 0xFE, 0x4E, 0xA7, 0xBE, 0x14, 0xF9, 0x4E, 0x9D, 0xA9, 0x14, 0x84, 0xD5, 0x47, 0x33, 0x02 }, 30, true, "tm_nt etw.reg30", 2 },
+				// P46 (U2148): provider AC89E0C72ABAE0119AF768384824019B (sample run 11 exploration x70: RegType 3, LoggerId 31, ReplyCallback set) - MEASURED tm_nt etw.reg31:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0xAC, 0x89, 0xE0, 0xC7, 0x2A, 0xBA, 0xE0, 0x11, 0x9A, 0xF7, 0x68, 0x38, 0x48, 0x24, 0x01, 0x9B }, 31, true, "tm_nt etw.reg31" },
+				// P46 (U2148): provider 4B1AA7F3186157428CCB39A33BA059D4 (sample run 11 exploration x76: RegType 3, LoggerId 32, ReplyCallback set) - MEASURED tm_nt etw.reg32:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0x4B, 0x1A, 0xA7, 0xF3, 0x18, 0x61, 0x57, 0x42, 0x8C, 0xCB, 0x39, 0xA3, 0x3B, 0xA0, 0x59, 0xD4 }, 32, true, "tm_nt etw.reg32" } };
 			uint8_t d[ 0xA0 ] = {};
 			std::string err, guid;
 			if ( ilen != 0xA0 || olen != 0xA0 || c.args[ 1 ] != c.args[ 3 ] || !user_buffer( c.args[ 1 ], 0xA0, UC_PROT_READ | UC_PROT_WRITE ) )
@@ -511,7 +571,7 @@ namespace emu::nt
 			{
 				uint64_t cb = 0;
 				std::memcpy( &cb, d + 0x20, 8 );
-				bool same = std::memcmp( d, pv.guid, 16 ) == 0 && d[ 0x10 ] == 3 && d[ 0x11 ] == 0 && d[ 0x12 ] == 0 && d[ 0x13 ] == 0 && d[ 0x14 ] == pv.logger && d[ 0x15 ] == 0 &&
+				bool same = std::memcmp( d, pv.guid, 16 ) == 0 && d[ 0x10 ] == pv.regtype && d[ 0x11 ] == 0 && d[ 0x12 ] == 0 && d[ 0x13 ] == 0 && d[ 0x14 ] == pv.logger && d[ 0x15 ] == 0 &&
 							( cb != 0 ) == pv.callback;
 				for ( int i = 0x16; i < 0xA0; i++ ) same = same && ( ( i >= 0x20 && i < 0x28 ) || d[ i ] == 0 );
 				if ( same ) hit = &pv;
@@ -555,13 +615,66 @@ namespace emu::nt
 			const auto hr = handles_.find( h );
 			// the measured (provider, traits size) pairs: tm_nt etwt (B9AF743C, 33H), etwt5 (0A27EFF1, 25H), etwt6 (FE5EF905, 39H), etwt7 (58446CE3, 39H)
 			const std::string pn = hr != handles_.end() ? hr->second.name : std::string();
+			// P46 (U2148): d3d11's traits blob as measured (tm_nt etwt14: the capture's d3d11.dll at file offset 1F680BH, "Microsoft.Windows.
+			// Graphics.D3D11" + the provider-group trait) - another blob of that size is not measured
+			static const uint8_t d3d11_traits[ 0x36 ] = { 0x36, 0x00, 0x4D, 0x69, 0x63, 0x72, 0x6F, 0x73, 0x6F, 0x66, 0x74, 0x2E, 0x57, 0x69, 0x6E, 0x64,
+                                                 0x6F, 0x77, 0x73, 0x2E, 0x47, 0x72, 0x61, 0x70, 0x68, 0x69, 0x63, 0x73, 0x2E, 0x44, 0x33, 0x44,
+                                                 0x31, 0x31, 0x00, 0x13, 0x00, 0x01, 0x1A, 0x73, 0x50, 0x4F, 0xCF, 0x89, 0x82, 0x47, 0xB3, 0xE0,
+                                                 0xDC, 0xE8, 0xC9, 0x04, 0x76, 0xBA };
+			// P46 (U2148): provider 16's traits as measured (tm_nt etwt16: the capture's combase.dll at file offset 2ACCD8H, "CombaseTraceLoggingProvider")
+			static const uint8_t traits16[ 0x31 ] = { 0x31, 0x00, 0x43, 0x6F, 0x6D, 0x62, 0x61, 0x73, 0x65, 0x54, 0x72, 0x61, 0x63, 0x65, 0x4C, 0x6F, 0x67,
+                                             0x67, 0x69, 0x6E, 0x67, 0x50, 0x72, 0x6F, 0x76, 0x69, 0x64, 0x65, 0x72, 0x00, 0x13, 0x00, 0x01, 0x1A,
+                                             0x73, 0x50, 0x4F, 0xCF, 0x89, 0x82, 0x47, 0xB3, 0xE0, 0xDC, 0xE8, 0xC9, 0x04, 0x76, 0xBA };
+			// P46 (U2148): provider 17's traits as measured (tm_nt etwt17: the capture's combase.dll at file offset 2ACE12H, "Microsoft.Windows.WinRTClassActivation")
+			static const uint8_t traits17[ 0x3C ] = { 0x3C, 0x00, 0x4D, 0x69, 0x63, 0x72, 0x6F, 0x73, 0x6F, 0x66, 0x74, 0x2E, 0x57, 0x69, 0x6E, 0x64, 0x6F,
+                                             0x77, 0x73, 0x2E, 0x57, 0x69, 0x6E, 0x52, 0x54, 0x43, 0x6C, 0x61, 0x73, 0x73, 0x41, 0x63, 0x74, 0x69,
+                                             0x76, 0x61, 0x74, 0x69, 0x6F, 0x6E, 0x00, 0x13, 0x00, 0x01, 0x1A, 0x73, 0x50, 0x4F, 0xCF, 0x89, 0x82,
+                                             0x47, 0xB3, 0xE0, 0xDC, 0xE8, 0xC9, 0x04, 0x76, 0xBA };
+			// P46 (U2148): provider 23's traits as measured (tm_nt etwt23: the capture's combase.dll at file offset 2ACD1AH, "Microsoft.Windows.Com.PoFAggregate")
+			static const uint8_t traits23[ 0x38 ] = { 0x38, 0x00, 0x4D, 0x69, 0x63, 0x72, 0x6F, 0x73, 0x6F, 0x66, 0x74, 0x2E, 0x57, 0x69, 0x6E, 0x64, 0x6F,
+                                             0x77, 0x73, 0x2E, 0x43, 0x6F, 0x6D, 0x2E, 0x50, 0x6F, 0x46, 0x41, 0x67, 0x67, 0x72, 0x65, 0x67, 0x61,
+                                             0x74, 0x65, 0x00, 0x13, 0x00, 0x01, 0x1A, 0x73, 0x50, 0x4F, 0xCF, 0x89, 0x82, 0x47, 0xB3, 0xE0, 0xDC,
+                                             0xE8, 0xC9, 0x04, 0x76, 0xBA };
+			// P46 (U2148): provider 24's traits as measured (tm_nt etwt24: the capture's combase.dll at file offset 2ACD63H, "Microsoft.Windows.TlgAggregateInternal")
+			static const uint8_t traits24[ 0x3C ] = { 0x3C, 0x00, 0x4D, 0x69, 0x63, 0x72, 0x6F, 0x73, 0x6F, 0x66, 0x74, 0x2E, 0x57, 0x69, 0x6E, 0x64, 0x6F,
+                                             0x77, 0x73, 0x2E, 0x54, 0x6C, 0x67, 0x41, 0x67, 0x67, 0x72, 0x65, 0x67, 0x61, 0x74, 0x65, 0x49, 0x6E,
+                                             0x74, 0x65, 0x72, 0x6E, 0x61, 0x6C, 0x00, 0x13, 0x00, 0x01, 0x1A, 0x73, 0x50, 0x4F, 0xCF, 0x89, 0x82,
+                                             0x47, 0xB3, 0xE0, 0xDC, 0xE8, 0xC9, 0x04, 0x76, 0xBA };
+			// P46 (U2148): provider 26's traits as measured (tm_nt etwt26: the capture's dcomp.dll at file offset 18CAEAH, "Microsoft.Windows.Dwm.DComp")
+			static const uint8_t traits26[ 0x31 ] = { 0x31, 0x00, 0x4D, 0x69, 0x63, 0x72, 0x6F, 0x73, 0x6F, 0x66, 0x74, 0x2E, 0x57, 0x69, 0x6E, 0x64, 0x6F,
+                                             0x77, 0x73, 0x2E, 0x44, 0x77, 0x6D, 0x2E, 0x44, 0x43, 0x6F, 0x6D, 0x70, 0x00, 0x13, 0x00, 0x01, 0x1A,
+                                             0x73, 0x50, 0x4F, 0xCF, 0x89, 0x82, 0x47, 0xB3, 0xE0, 0xDC, 0xE8, 0xC9, 0x04, 0x76, 0xBA };
+			// P46 (U2148): provider 32's traits as measured (tm_nt etwt32: the capture's bcrypt.dll at file offset 1AE4FH, "Microsoft.Windows.Security.BCrypt")
+			static const uint8_t traits32[ 0x37 ] = { 0x37, 0x00, 0x4D, 0x69, 0x63, 0x72, 0x6F, 0x73, 0x6F, 0x66, 0x74, 0x2E, 0x57, 0x69, 0x6E, 0x64, 0x6F,
+                                             0x77, 0x73, 0x2E, 0x53, 0x65, 0x63, 0x75, 0x72, 0x69, 0x74, 0x79, 0x2E, 0x42, 0x43, 0x72, 0x79, 0x70,
+                                             0x74, 0x00, 0x13, 0x00, 0x01, 0x1A, 0x73, 0x50, 0x4F, 0xCF, 0x89, 0x82, 0x47, 0xB3, 0xE0, 0xDC, 0xE8,
+                                             0xC9, 0x04, 0x76, 0xBA };
+			auto traits_are = [ & ]( const uint8_t* want ) {
+				uint8_t got[ 0x100 ] = {};
+				std::string e2;
+				return sz <= sizeof( got ) && user_buffer( blob, sz, UC_PROT_READ ) && e_.read( blob, got, sz, e2 ) && std::memcmp( got, want, sz ) == 0;
+			};
 			const bool known = ( pn == "B9AF743C828DE344B52C365DBF48382A" && sz == 0x33 ) || ( pn == "0A27EFF1320D5243BA52DBAB41E1D859" && sz == 0x25 ) ||
 							   ( pn == "FE5EF905757FC749A99460A55CC09571" && sz == 0x39 ) || ( pn == "58446CE380EDD74AA8BE52DDA1EB5F1C" && sz == 0x39 ) ||
 							   // P44 (U2121): user32's three traits (tm_nt etwt8 / etwt9 / etwt10: STATUS_SUCCESS, ReturnLength 0, no output)
 							   ( pn == "2ECD5BF29026DC553BC407B65B1B41C9" && sz == 0x2E ) || ( pn == "AC5EB75F0B9F0C55339FFC21FDE966CD" && sz == 0x0C ) ||
 							   ( pn == "250E91E0CC6F324F8F5EA42CF7ACC5C3" && sz == 0x26 ) ||
 							   // P45 (U2139): dxgi's traits (tm_nt etwt11: STATUS_SUCCESS, ReturnLength 0, no output)
-							   ( pn == "B8E5BB0388C70B4DB47E5B5731398A89" && sz == 0x35 );
+							   ( pn == "B8E5BB0388C70B4DB47E5B5731398A89" && sz == 0x35 ) ||
+							   // P46 (U2148): d3d11's traits (tm_nt etwt14: STATUS_SUCCESS, ReturnLength 0, no output) - only with the measured bytes
+							   ( pn == "EA27CC86876FF7478B433473527D4A87" && sz == 0x36 && traits_are( d3d11_traits ) ) ||
+							   // P46 (U2148): provider 16's traits (tm_nt etwt16: STATUS_SUCCESS, ReturnLength 0, no output) - only with the measured bytes
+							   ( pn == "8960FF1A63E8364DBDFD3581F07440BE" && sz == 0x31 && traits_are( traits16 ) ) ||
+							   // P46 (U2148): provider 17's traits (tm_nt etwt17: STATUS_SUCCESS, ReturnLength 0, no output) - only with the measured bytes
+							   ( pn == "388455F06AF5875947DA040CA75AEF05" && sz == 0x3C && traits_are( traits17 ) ) ||
+							   // P46 (U2148): provider 23's traits (tm_nt etwt23: STATUS_SUCCESS, ReturnLength 0, no output) - only with the measured bytes
+							   ( pn == "2A9EE0C763C69953AF792FCCD321D19A" && sz == 0x38 && traits_are( traits23 ) ) ||
+							   // P46 (U2148): provider 24's traits (tm_nt etwt24: STATUS_SUCCESS, ReturnLength 0, no output) - only with the measured bytes
+							   ( pn == "13CC3F706FB66858DDD9E2DB7F381FFB" && sz == 0x3C && traits_are( traits24 ) ) ||
+							   // P46 (U2148): provider 26's traits (tm_nt etwt26: STATUS_SUCCESS, ReturnLength 0, no output) - only with the measured bytes
+							   ( pn == "E22D1193A30AD74E91E34264555220C1" && sz == 0x31 && traits_are( traits26 ) ) ||
+							   // P46 (U2148): provider 32's traits (tm_nt etwt32: STATUS_SUCCESS, ReturnLength 0, no output) - only with the measured bytes
+							   ( pn == "4B1AA7F3186157428CCB39A33BA059D4" && sz == 0x37 && traits_are( traits32 ) );
 			if ( hr == handles_.end() || hr->second.kind != "etw registration" || !known || !user_buffer( blob, sz, UC_PROT_READ ) )
 				return stop_( what + " - EtwSetProviderTraitsCode for handle " + hex( h ) + ", traits size " + hex( sz ) + ": not measured (tm_nt etwt*: the four providers' blobs are)" );
 			if ( c.args[ 5 ] && !user_buffer( c.args[ 5 ], 4, UC_PROT_WRITE ) ) return done_( status::access_violation, what + ": ReturnLength not writable" );
@@ -1033,12 +1146,13 @@ namespace emu::nt
 												  "combase.dll", "kernel.appcore.dll", "dcomp.dll", "ole32.dll", "shell32.dll", "ws2_32.dll", "bcrypt.dll", "sechost.dll",
 												  "advapi32.dll", "cfgmgr32.dll", "transparent_makimav2.exe",
 												  "t6_user32.exe", "imm32.dll",   // P44 (U2121): ahc.33 test PE T6's image name, ahc.34 IMM32.DLL (user32 loads it)
-												  "t7_vfs.exe" };   // P45 (U2129): ahc.35 test PE T7's image name
+												  "t7_vfs.exe",   // P45 (U2129): ahc.35 test PE T7's image name
+												  "t8_pii.exe" };   // P46 (U2144): ahc.36 test PE T8's image name
 		static const char* const measured80[] = { "msvcrt.dll", "oleaut32.dll", "dwmapi.dll", "setupapi.dll" };
 		uint32_t outv = 0xFFFFFFFF;
 		for ( const char* m : measured0 ) if ( ln == m ) outv = 0;
 		for ( const char* m : measured80 ) if ( ln == m ) outv = 0x80;
-		if ( outv == 0xFFFFFFFF ) return stop_( what + " - this module name is not measured (tm_nt ahc.0 .. ahc.35)" );
+		if ( outv == 0xFFFFFFFF ) return stop_( what + " - this module name is not measured (tm_nt ahc.0 .. ahc.36)" );
 		if ( !user_buffer( pout, 4, UC_PROT_WRITE ) ) return stop_( what + " - ParamsOut not writable: not measured" );
 		reply rr = done_( status::success, what + ": ParamsOut = " + hex( outv ) + ( outv ? " (as the guest's lookup answers this name)" : " (no compatibility-database entry)" ) + " (measured: tm_nt ahc)" );
 		if ( !put( pout, &outv, 4, rr ) ) return stop_( "writing ParamsOut failed after the probe" );
@@ -1707,9 +1821,15 @@ namespace emu::nt
 			return ru;
 		}
 		const bool bno = cls == 0x2C;
-		if ( !tok || !pret || ( !bno && ( ( cls != 0xC && cls != 0x1D && cls != 0x2A ) || ( len != 0 && len != 4 && len != 8 ) ) ) ||
+		// P46 (U2150): + 14H TokenElevation (TOKEN_ELEVATION {TokenIsElevated}, um\winnt.h) - MEASURED tm_nt tok.pt.14 / .14.0 / .14.8 in an
+		// ordinary (non-elevated, medium-integrity) start: Length 4 = STATUS_SUCCESS, ReturnLength 4, TokenIsElevated 0; Length 0 / 8 =
+		// STATUS_INFO_LENGTH_MISMATCH, ReturnLength 4, nothing written (a strict length, unlike 0CH / 1DH / 2AH) - the emulated process is
+		// such a start (the environment's token model). + 1AH TokenUIAccess (ULONG) - MEASURED tm_nt tok.pt.1a / .1a.0 / .1a.8: as 0CH / 1DH /
+		// 2AH (Length 4 / 8 = STATUS_SUCCESS, ReturnLength 4, value 0; Length 0 = STATUS_BUFFER_TOO_SMALL, ReturnLength 4)
+		const bool strict = cls == 0x14;
+		if ( !tok || !pret || ( !bno && ( ( cls != 0xC && cls != 0x1D && cls != 0x2A && cls != 0x14 && cls != 0x1A ) || ( len != 0 && len != 4 && len != 8 ) ) ) ||
 			 ( bno && len != 0 && len != 8 && len != 0x10 && len != 0x120 ) )
-			return stop_( what + " - not measured (the process token: classes 0CH / 1DH / 2AH with Length 0 / 4 / 8, 2CH with 0 / 8 / 10H / 120H, a ReturnLength)" );
+			return stop_( what + " - not measured (the process token: classes 0CH / 14H / 1AH / 1DH / 2AH with Length 0 / 4 / 8, 2CH with 0 / 8 / 10H / 120H, a ReturnLength)" );
 		if ( !user_buffer( pret, 4, UC_PROT_WRITE ) || ( len && !user_buffer( out, len, UC_PROT_WRITE ) ) ) return done_( status::access_violation, what + ": an OUT buffer is not writable" );
 		if ( bno )
 		{
@@ -1726,6 +1846,13 @@ namespace emu::nt
 			return rb;
 		}
 		const uint32_t four = 4;
+		if ( strict && len != 4 )
+		{
+			reply rm = done_( status::info_length_mismatch, what + ": STATUS_INFO_LENGTH_MISMATCH, ReturnLength 4, nothing written (measured: tm_nt tok.pt." +
+															std::string( "14" ) + ".0 / .8)" );
+			if ( !put( pret, &four, 4, rm ) ) return stop_( "writing the result failed after the probe" );
+			return rm;
+		}
 		if ( len == 0 )
 		{
 			reply r = done_( status::buffer_too_small, what + ": STATUS_BUFFER_TOO_SMALL, ReturnLength 4 (measured: tm_nt tok.*.0)" );
@@ -1733,7 +1860,8 @@ namespace emu::nt
 			return r;
 		}
 		uint32_t v = 0;
-		std::string name = cls == 0x1D ? "TokenIsAppContainer 0" : "TokenPrivateNameSpace 0";
+		std::string name = cls == 0x1D ? "TokenIsAppContainer 0" : cls == 0x14 ? "TokenElevation: TokenIsElevated 0 (a non-elevated start)" :
+						   cls == 0x1A ? "TokenUIAccess 0" : "TokenPrivateNameSpace 0";
 		if ( cls == 0xC )
 		{
 			std::string err;
@@ -2008,6 +2136,20 @@ namespace emu::nt
 		std::string why;
 		if ( c.args[ 2 ] && !guest_object_attributes( c.args[ 2 ], oa, why ) ) return stop_( c.name + ": " + why );
 		const auto it = handles_.find( oa.root );
+		// P46 (U2158): NtOpenEvent( &h, 100000H SYNCHRONIZE, {the session's BaseNamedObjects directory, "HookSwitchHookEnabledEvent",
+		// attributes 0} ) (sample run 11 exploration x44) - prototype phnt ntexapi.h NtOpenEvent. MEASURED from inside (tm_nt bno.hookev): no
+		// process of the measured session created it - STATUS_OBJECT_NAME_NOT_FOUND (C0000034H), the handle not written. Created in this
+		// environment (named_objects_) or another name / access / root: stop.
+		{
+			uint32_t sid = 0;
+			std::string err;
+			e_.read( f_.peb + 0x2C0, &sid, 4, err );   // PEB SessionId (2C0H, ntdll.pdb _PEB)
+			const std::string bno = "\\Sessions\\" + std::to_string( sid ) + "\\BaseNamedObjects";
+			if ( c.name == "NtOpenEvent" && uint32_t( c.args[ 1 ] ) == 0x100000 && it != handles_.end() && it->second.kind == "directory" && it->second.name == bno &&
+				 oa.name == "HookSwitchHookEnabledEvent" && oa.attributes == 0 && !named_objects_.count( bno + "\\" + oa.name ) && user_buffer( c.args[ 0 ], 8, UC_PROT_WRITE ) )
+				return done_( status::object_name_not_found, "NtOpenEvent( " + hex( c.args[ 0 ] ) + ", 100000H, {" + bno + ", \"HookSwitchHookEnabledEvent\"} ): no such event in the "
+															 "session - STATUS_OBJECT_NAME_NOT_FOUND, the handle not written (measured: tm_nt bno.hookev)" );
+		}
 		std::string a;
 		for ( int i = 3; i < 6; i++ ) a += ", " + hex( c.args[ size_t( i ) ] );
 		return stop_( c.name + "( " + hex( c.args[ 0 ] ) + ", access " + hex( uint32_t( c.args[ 1 ] ) ) + ", OA " + hex( c.args[ 2 ] ) + " {root " + hex( oa.root ) +
@@ -2047,6 +2189,23 @@ namespace emu::nt
 	{
 		object_attributes oa;
 		std::string why, full;
+		// P46 (U2161): an UNNAMED semaphore (shell32's DllMain, sample run 11 exploration x67): NtCreateSemaphore( &h, 100003H, NULL, 0,
+		// 7FFFFFFFH ) - MEASURED (tm_nt wil.anon): STATUS_SUCCESS + a handle (a 0 ms wait times out: count 0). The counts are kept as given
+		// (the documented rule 0 <= InitialCount <= MaximumCount > 0, WDK km\wdm.h KeInitializeSemaphore); another access: stop.
+		if ( c.name == "NtCreateSemaphore" && !c.args[ 2 ] )
+		{
+			const int32_t init = int32_t( c.args[ 3 ] ), maxc = int32_t( c.args[ 4 ] );
+			const std::string w2 = "NtCreateSemaphore( " + hex( c.args[ 0 ] ) + ", access " + hex( uint32_t( c.args[ 1 ] ) ) + ", NULL, " + hex( c.args[ 3 ] ) + ", " + hex( c.args[ 4 ] ) + " )";
+			if ( uint32_t( c.args[ 1 ] ) != 0x100003 || maxc <= 0 || init < 0 || init > maxc ) return stop_( w2 + " - not measured (an unnamed one: 100003H, 0 <= InitialCount <= MaximumCount > 0)" );
+			if ( !user_buffer( c.args[ 0 ], 8, UC_PROT_WRITE ) ) return stop_( w2 + " - SemaphoreHandle not writable: not measured" );
+			object o;
+			o.kind = "semaphore";
+			o.value = ( uint64_t( uint32_t( maxc ) ) << 32 ) | uint32_t( init );
+			const uint64_t hnd = open_handle( o );
+			reply ra = done_( status::success, w2 + ": an unnamed semaphore, handle " + hex( hnd ) + ", count " + std::to_string( init ) + " (measured: tm_nt wil.anon)" );
+			if ( !put( c.args[ 0 ], &hnd, 8, ra ) ) return stop_( "writing the handle failed after the probe" );
+			return ra;
+		}
 		if ( !c.args[ 2 ] || !guest_object_attributes( c.args[ 2 ], oa, why ) ) return stop_( c.name + ": " + ( why.empty() ? std::string( "no ObjectAttributes" ) : why ) );
 		std::string a;
 		for ( int i = 3; i < 5; i++ ) a += ", " + hex( c.args[ size_t( i ) ] );
@@ -2406,5 +2565,114 @@ namespace emu::nt
 		if ( !put( dst, b.data(), n, rr ) ) return stop_( "writing the destination failed after the probe" );
 		if ( pcount && !put( pcount, &n, 8, rr ) ) return stop_( "writing the count failed after the probe" );
 		return rr;
+	}
+
+	// ------------------------------------------------------------------------------------------------ ProcessImageInformation (25H)
+	// P46 (U2142): NtQueryInformationProcess( NtCurrentProcess(), 25H ProcessImageInformation, buf, Length, ReturnLength ) - the process
+	// image's SECTION_IMAGE_INFORMATION. Prototype / layout: phnt ntpsapi.h PROCESSINFOCLASS 37 ProcessImageInformation ("q:
+	// SECTION_IMAGE_INFORMATION"), ntmmapi.h:1274-1320 (System Informer 4.0.26241.138, MIT, reference only): TransferAddress +0, ZeroBits +8,
+	// MaximumStackSize +10H, CommittedStackSize +18H, SubSystemType +20H, SubSystemVersion +24H (Minor, Major), OperatingSystemVersion +28H
+	// (Major, Minor), ImageCharacteristics +2CH, DllCharacteristics +2EH, Machine +30H, ImageContainsCode +32H, ImageFlags +33H, LoaderFlags
+	// +34H, ImageFileSize +38H, CheckSum +3CH (40H bytes). The guest's public symbols (ntdll / kernelbase / kernel32 / user32 / gdi32 /
+	// gdi32full / win32u .pdb, 10.0.19044.7807) carry no _SECTION_IMAGE_INFORMATION type: the layout rests on phnt + the measurement, which
+	// found every field at its phnt offset. The caller in the sample's start: kernelbase GetSystemInfo -> GetSystemInfoInternal (d3d11's
+	// DllMain through msvcrt; sample run 10 system call 633).
+	// MEASURED natively, every field as its relation to the image's own PE header / file:
+	//   tm_nt pii.* (P45, U2141): an image WITH DYNAMIC_BASE (ASLR, relocated) - ImageFlags 04H (ImageDynamicallyRelocated)
+	//   test PE T8 pii (P46, U2143): an image WITHOUT DYNAMIC_BASE at its preferred base - ImageFlags 00H
+	//   both: TransferAddress = the mapped base + AddressOfEntryPoint, ZeroBits 0 (+0CH..+0FH 0), MaximumStackSize = SizeOfStackReserve,
+	//   CommittedStackSize = SizeOfStackCommit, SubSystemType = Subsystem, SubSystemVersion = Major << 16 | Minor, OperatingSystemVersion =
+	//   MinorOS << 16 | MajorOS, ImageCharacteristics / DllCharacteristics / Machine / LoaderFlags / CheckSum = the header's, ImageContainsCode
+	//   1, ImageFileSize = the file's size; Length 40H: STATUS_SUCCESS, ReturnLength 40H when given (pii.r, T8 call 2), nothing past 40H;
+	//   another Length (0 / 3FH / 48H): STATUS_INFO_LENGTH_MISMATCH, nothing written, ReturnLength not written (pii.0 / .3f / .48, T8 call 3).
+	// The flag follows the header's DYNAMIC_BASE for a code image that is mapped by sections and has no COR header (Wine 11.0
+	// dlls/kernel32/tests/loader.c:474-482, written against Windows - licensed OSS reference): an emulated DYNAMIC_BASE image answers 04H
+	// wherever it lies. NOT measured - a loud stop, never a guess: a 32-bit header, a COR header (directory 14: the ComPlus flags), a
+	// SectionAlignment that is not a multiple of the page size (ImageMappedFlat), SizeOfCode 0 or AddressOfEntryPoint 0 (ImageContainsCode),
+	// LoaderFlags not 0, a mapped base below 4 GB (BaseBelow4gb), an image without DYNAMIC_BASE that is NOT at its preferred base, another
+	// process, an unwritable buffer / ReturnLength.
+	bool kernel::query_image_information( const call& c, reply& r )
+	{
+		const uint32_t len = uint32_t( c.args[ 3 ] );
+		const uint64_t out = c.args[ 2 ], pret = c.stack_args ? c.args[ 4 ] : 0;
+		const std::string what = "ProcessImageInformation (25H), Length " + hex( len ) + ( pret ? ", ReturnLength " + hex( pret ) : std::string( ", ReturnLength NULL" ) );
+		if ( len != 0x40 )
+		{
+			// measured: Length 0 / 3FH / 48H (tm_nt pii.0 / pii.3f / pii.48; T8 call 3)
+			r = done_( status::info_length_mismatch, what + ": STATUS_INFO_LENGTH_MISMATCH, nothing written, ReturnLength not written (measured: tm_nt pii.0 / .3f / .48, T8)" );
+			return true;
+		}
+		if ( !user_buffer( out, 0x40, UC_PROT_WRITE ) || ( pret && !user_buffer( pret, 4, UC_PROT_WRITE ) ) )
+		{
+			r = stop_( what + ": the buffer or ReturnLength is not writable user memory - not measured" );
+			return true;
+		}
+		const std::vector<uint8_t>& h = f_.image_headers;
+		auto rd = [ & ]( uint64_t off, uint32_t n, uint64_t& v ) {
+			v = 0;
+			if ( off > h.size() || n > h.size() - off ) return false;
+			std::memcpy( &v, h.data() + off, n );
+			return true;
+		};
+		uint64_t lfanew = 0, sig = 0, machine = 0, chars = 0, soh = 0, magic = 0, code = 0, entry = 0, salign = 0, osmaj = 0, osmin = 0, ssmaj = 0, ssmin = 0, sum = 0,
+				 subsys = 0, dllch = 0, sres = 0, scom = 0, lflags = 0, nrva = 0, cor = 0;
+		if ( !rd( 0x3C, 4, lfanew ) || !rd( lfanew, 4, sig ) || sig != 0x4550 || !rd( lfanew + 4, 2, machine ) || !rd( lfanew + 0x14, 2, soh ) ||
+			 !rd( lfanew + 0x16, 2, chars ) )
+		{
+			r = stop_( what + ": the process image's headers are not available to the kernel layer" );
+			return true;
+		}
+		const uint64_t oh = lfanew + 0x18;
+		if ( !rd( oh, 2, magic ) || magic != 0x20B || soh < 0x70 || !rd( oh + 4, 4, code ) || !rd( oh + 0x10, 4, entry ) || !rd( oh + 0x20, 4, salign ) ||
+			 !rd( oh + 0x28, 2, osmaj ) || !rd( oh + 0x2A, 2, osmin ) || !rd( oh + 0x30, 2, ssmaj ) || !rd( oh + 0x32, 2, ssmin ) || !rd( oh + 0x40, 4, sum ) ||
+			 !rd( oh + 0x44, 2, subsys ) || !rd( oh + 0x46, 2, dllch ) || !rd( oh + 0x48, 8, sres ) || !rd( oh + 0x50, 8, scom ) || !rd( oh + 0x68, 4, lflags ) ||
+			 !rd( oh + 0x6C, 4, nrva ) )
+		{
+			r = stop_( what + ": a 32-bit / truncated optional header - not measured (both measurements: PE32+)" );
+			return true;
+		}
+		if ( nrva > 14 && soh >= 0x70 + 15 * 8 && !rd( oh + 0x70 + 14 * 8, 4, cor ) ) cor = 0;
+		uint64_t pref = 0;
+		rd( oh + 0x18, 8, pref );
+		const uint64_t base = f_.image_mapped_base;
+		const bool dynamic = ( dllch & 0x40 ) != 0;
+		std::string no;
+		if ( cor ) no = "a COR header (directory 14: the ComPlus flags)";
+		else if ( !f_.page_size || salign % f_.page_size ) no = "SectionAlignment " + hex( salign ) + " not a multiple of the page size (ImageMappedFlat)";
+		else if ( !code || !entry ) no = "SizeOfCode " + hex( code ) + " / AddressOfEntryPoint " + hex( entry ) + " (ImageContainsCode of such an image)";
+		else if ( lflags ) no = "LoaderFlags " + hex( lflags );
+		else if ( base < 0x100000000ull ) no = "the image mapped below 4 GB at " + hex( base ) + " (BaseBelow4gb)";
+		else if ( !dynamic && base != pref ) no = "an image without DYNAMIC_BASE that is not at its preferred base " + hex( pref ) + " (mapped at " + hex( base ) + ")";
+		else if ( f_.image_file_size > 0xFFFFFFFFull ) no = "an image file of 4 GiB or more";
+		if ( !no.empty() )
+		{
+			r = stop_( what + ": " + no + " - not measured (tm_nt pii: DYNAMIC_BASE, relocated; T8: no DYNAMIC_BASE, at the preferred base)" );
+			return true;
+		}
+		uint8_t d[ 0x40 ] = {};
+		const uint64_t ta = base + entry;
+		const uint32_t ssv = uint32_t( ( ssmaj << 16 ) | ssmin ), osv = uint32_t( ( osmin << 16 ) | osmaj ), st = uint32_t( subsys ), fs = uint32_t( f_.image_file_size ),
+					   cs = uint32_t( sum ), lf = uint32_t( lflags );
+		const uint16_t ic = uint16_t( chars ), dc = uint16_t( dllch ), mc = uint16_t( machine );
+		const uint8_t contains = 1, flags = dynamic ? 0x04 : 0x00;
+		std::memcpy( d + 0x00, &ta, 8 );
+		std::memcpy( d + 0x10, &sres, 8 );
+		std::memcpy( d + 0x18, &scom, 8 );
+		std::memcpy( d + 0x20, &st, 4 );
+		std::memcpy( d + 0x24, &ssv, 4 );
+		std::memcpy( d + 0x28, &osv, 4 );
+		std::memcpy( d + 0x2C, &ic, 2 );
+		std::memcpy( d + 0x2E, &dc, 2 );
+		std::memcpy( d + 0x30, &mc, 2 );
+		d[ 0x32 ] = contains;
+		d[ 0x33 ] = flags;
+		std::memcpy( d + 0x34, &lf, 4 );
+		std::memcpy( d + 0x38, &fs, 4 );
+		std::memcpy( d + 0x3C, &cs, 4 );
+		r = done_( status::success, what + ": TransferAddress " + hex( ta ) + ", ImageFlags " + hex( flags ) + ( dynamic ? " (DYNAMIC_BASE: measured tm_nt pii)" : " (no DYNAMIC_BASE, at the preferred base: measured T8)" ) +
+										", ImageFileSize " + hex( fs ) + ", the header's fields" );
+		const uint32_t rl = 0x40;
+		if ( !put( out, d, 0x40, r ) || ( pret && !put( pret, &rl, 4, r ) ) ) r = stop_( "writing the result failed after the probe" );
+		return true;
 	}
 }

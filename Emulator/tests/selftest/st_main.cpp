@@ -1917,9 +1917,17 @@ namespace
 		for ( uint64_t i = 0; i < 8; i++ ) w5_put( *p, S + 8 * i, 0xEEEEEEEEEEEEEEEEull );
 		auto r = w5_call( *p, "NtQueryInformationProcess", { cp, 0, S, 0x30, S + 0x40 } );
 		std::cout << "  class 0: " << r.text << "\n";
-		CHECK( w5_ok( r ) && w4_read( *p, S + 8, 8 ) == p->peb() && w4_read( *p, S + 32, 8 ) == emu::win::guest_process_id && w4_read( *p, S, 8 ) == 0 &&
-				   w4_read( *p, S + 40, 8 ) == 0 && w4_read( *p, S + 0x40, 4 ) == 0x30,
-			   "ProcessBasicInformation: PebBaseAddress, UniqueProcessId, the reserved members 0, ReturnLength 30H" );
+		// P46 (U2163): the members as measured (tm_nt qip.0): ExitStatus 103H (its padding not written), AffinityMask, BasePriority 8, the parent's
+		// id a placeholder 1000H
+		CHECK( w5_ok( r ) && w4_read( *p, S + 8, 8 ) == p->peb() && w4_read( *p, S + 32, 8 ) == emu::win::guest_process_id && w4_read( *p, S, 8 ) == 0xEEEEEEEE00000103ull &&
+				   w4_read( *p, S + 0x10, 8 ) == 0xFF && w4_read( *p, S + 0x18, 8 ) == 0xEEEEEEEE00000008ull && w4_read( *p, S + 40, 8 ) == 0x1000 && w4_read( *p, S + 0x40, 4 ) == 0x30,
+			   "ProcessBasicInformation: ExitStatus 103H, PebBaseAddress, AffinityMask, BasePriority 8, UniqueProcessId, the parent placeholder, ReturnLength 30H (tm_nt qip.0)" );
+		for ( uint64_t i = 0; i < 9; i++ ) w5_put( *p, S + 8 * i, 0xEEEEEEEEEEEEEEEEull );
+		r = w5_call( *p, "NtQueryInformationProcess", { cp, 0, S, 0x40, 0 } );
+		CHECK( w5_ok( r ) && w4_read( *p, S, 8 ) == 0x40 && w4_read( *p, S + 8, 8 ) == 0xEEEEEEEE00000103ull && w4_read( *p, S + 0x10, 8 ) == p->peb() &&
+				   w4_read( *p, S + 0x38, 8 ) == 0xEEEEEEEE00000000ull && w4_read( *p, S + 0x40, 8 ) == 0xEEEEEEEEEEEEEEEEull,
+			   "PROCESS_EXTENDED_BASIC_INFORMATION: Size 40H, BasicInfo, Flags 0, +3CH not written (tm_nt qip.0x): " + r.text );
+		CHECK( w5_status( w5_call( *p, "NtQueryInformationProcess", { cp, 0, S, 0x38, 0 } ), N::status::info_length_mismatch ), "ProcessBasicInformation Length 38H: STATUS_INFO_LENGTH_MISMATCH (tm_nt qip.0.38)" );
 		for ( auto [ cls, len ] : { std::pair<uint64_t, uint64_t>{ 7, 8 }, { 26, 8 }, { 29, 4 } } )
 		{
 			w5_put( *p, S, 0xEEEEEEEEEEEEEEEEull );
@@ -3914,6 +3922,71 @@ namespace
 		CHECK( w5_stop( w5_call( *p, "NtFindAtom", { S + 0x100, 2 * nm.size(), S + 0x20 } ) ), "NtFindAtom before user32's start: stop (not measured)" );
 	}
 
+	// P46 (U2145): nt_measured_pii - ProcessImageInformation (25H) of the process image (tm_nt pii.*, test PE T8): every field from the
+	// image's own header / file, ImageFlags 04H with DYNAMIC_BASE (tm_nt pii) and 00H without it at the preferred base (T8),
+	// ReturnLength 40H, the length rule (nothing written); the unmeasured image shapes stop (SizeOfCode 0, LoaderFlags, a COR header, a
+	// base below 4 GB, an unwritable buffer, another process)
+	void t_nt_measured_pii()
+	{
+		std::string err;
+		// w4_build's layout: the optional header at file offset 98H (SizeOfCode +4, ImageBase +18H, DllCharacteristics +46H, LoaderFlags +68H,
+		// DataDirectory[14] +70H + 14 * 8)
+		auto mk = [ & ]( uint16_t dllch, uint32_t size_of_code, uint32_t loader_flags, uint32_t cor_rva, uint64_t image_base ) {
+			auto f = w5_build( { w5_trivial }, err );
+			if ( f.size() < 0x400 ) return f;
+			std::memcpy( f.data() + 0x98 + 0x04, &size_of_code, 4 );
+			std::memcpy( f.data() + 0x98 + 0x18, &image_base, 8 );
+			std::memcpy( f.data() + 0x98 + 0x46, &dllch, 2 );
+			std::memcpy( f.data() + 0x98 + 0x68, &loader_flags, 4 );
+			std::memcpy( f.data() + 0x98 + 0x70 + 14 * 8, &cor_rva, 4 );
+			return f;
+		};
+		namespace N = emu::nt;
+		const uint64_t S = w5_scratch, cp = N::current_process, CC = 0xCCCCCCCCCCCCCCCCull;
+		for ( int fixed = 0; fixed < 2; fixed++ )
+		{
+			const auto file = mk( fixed ? 0x8120 : 0x8160, 0x200, 0, 0, w5_base );
+			auto p = w5_create( file, emu::env_boundary::sys, err );
+			CHECK( p != nullptr, "process: " + err );
+			if ( !p ) return;
+			auto rd = [ & ]( uint64_t va, unsigned n ) { return w4_read( *p, va, n ); };
+			const std::string tag = fixed ? "pii.T8 (no DYNAMIC_BASE, at the preferred base)" : "pii (DYNAMIC_BASE)";
+			for ( int k = 0; k < 12; k++ ) w5_put( *p, S + 8 * k, CC );
+			auto r = w5_call( *p, "NtQueryInformationProcess", { cp, 0x25, S, 0x40, 0 } );
+			CHECK( w5_ok( r ), tag + ": STATUS_SUCCESS: " + r.text );
+			CHECK( rd( S, 8 ) == w5_base + 0x1000, tag + ": TransferAddress = the mapped base + AddressOfEntryPoint" );
+			CHECK( rd( S + 8, 8 ) == 0, tag + ": ZeroBits 0, +0CH..+0FH 0" );
+			CHECK( rd( S + 0x10, 8 ) == 0x100000 && rd( S + 0x18, 8 ) == 0x1000, tag + ": the stack sizes = SizeOfStackReserve / SizeOfStackCommit" );
+			CHECK( rd( S + 0x20, 4 ) == 3 && rd( S + 0x24, 4 ) == 0x60000 && rd( S + 0x28, 4 ) == 0, tag + ": SubSystemType 3, SubSystemVersion 6.0 (Major << 16), OperatingSystemVersion 0" );
+			CHECK( rd( S + 0x2C, 2 ) == 0x22 && rd( S + 0x2E, 2 ) == ( fixed ? 0x8120u : 0x8160u ) && rd( S + 0x30, 2 ) == 0x8664, tag + ": ImageCharacteristics / DllCharacteristics / Machine = the header's" );
+			CHECK( rd( S + 0x32, 1 ) == 1 && rd( S + 0x33, 1 ) == ( fixed ? 0x00u : 0x04u ), tag + ": ImageContainsCode 1, ImageFlags " + ( fixed ? "00H" : "04H" ) );
+			CHECK( rd( S + 0x34, 4 ) == 0 && rd( S + 0x38, 4 ) == file.size() && rd( S + 0x3C, 4 ) == 0, tag + ": LoaderFlags 0, ImageFileSize = the file's size, CheckSum 0" );
+			CHECK( rd( S + 0x40, 8 ) == CC && rd( S + 0x58, 8 ) == CC, tag + ": nothing written past 40H" );
+			w5_put( *p, S + 0x60, CC );
+			r = w5_call( *p, "NtQueryInformationProcess", { cp, 0x25, S, 0x40, S + 0x60 } );
+			CHECK( w5_ok( r ) && rd( S + 0x60, 4 ) == 0x40 && rd( S + 0x64, 4 ) == 0xCCCCCCCCu, tag + ": ReturnLength 40H (4 bytes) - tm_nt pii.r / T8 call 2: " + r.text );
+			for ( uint32_t len : { 0u, 0x3Fu, 0x48u } )
+			{
+				for ( int k = 0; k < 12; k++ ) w5_put( *p, S + 8 * k, CC );
+				w5_put( *p, S + 0x60, CC );
+				r = w5_call( *p, "NtQueryInformationProcess", { cp, 0x25, S, len, S + 0x60 } );
+				CHECK( w5_status( r, N::status::info_length_mismatch ) && rd( S, 8 ) == CC && rd( S + 0x38, 8 ) == CC && rd( S + 0x60, 8 ) == CC,
+					   tag + ": Length " + std::to_string( len ) + " - STATUS_INFO_LENGTH_MISMATCH, nothing written, ReturnLength not written: " + r.text );
+			}
+			CHECK( w5_stop( w5_call( *p, "NtQueryInformationProcess", { cp, 0x25, 0x10, 0x40, 0 } ) ), tag + ": an unwritable buffer: stop (not measured)" );
+			CHECK( w5_stop( w5_call( *p, "NtQueryInformationProcess", { 0x44, 0x25, S, 0x40, 0 } ) ), tag + ": another process: stop" );
+		}
+		struct shape { const char* what; uint16_t dllch; uint32_t code, lflags, cor; uint64_t base; };
+		for ( const shape& s : { shape{ "SizeOfCode 0", 0x8160, 0, 0, 0, w5_base }, shape{ "LoaderFlags 1", 0x8160, 0x200, 1, 0, w5_base },
+								 shape{ "a COR header", 0x8160, 0x200, 0, 0x2000, w5_base }, shape{ "a base below 4 GB (no DYNAMIC_BASE, at its preferred base 70000000H)", 0x8120, 0x200, 0, 0, 0x70000000ull } } )
+		{
+			auto p = w5_create( mk( s.dllch, s.code, s.lflags, s.cor, s.base ), emu::env_boundary::sys, err );
+			CHECK( p != nullptr, std::string( "process (" ) + s.what + "): " + err );
+			if ( !p ) continue;
+			CHECK( w5_stop( w5_call( *p, "NtQueryInformationProcess", { cp, 0x25, S, 0x40, 0 } ) ), std::string( s.what ) + ": not measured - stop" );
+		}
+	}
+
 	void t_nt_measured_dllsearch()
 	{
 		std::string err;
@@ -4101,6 +4174,7 @@ namespace
 		{ "nt_measured_vfs", t_nt_measured_vfs },   // P45 (U2130)
 		{ "nt_measured_rvm", t_nt_measured_rvm },   // P45 (U2136)
 		{ "nt_measured_atom", t_nt_measured_atom },   // P45 (U2138)
+		{ "nt_measured_pii", t_nt_measured_pii },   // P46 (U2145)
 	};
 }
 

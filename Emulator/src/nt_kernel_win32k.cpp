@@ -297,7 +297,11 @@ namespace emu::nt
 			std::string kn;
 			if ( it != handles_.end() )
 				for ( char ch : it->second.name ) kn += char( std::tolower( uint8_t( ch ) ) );
-			if ( it == handles_.end() || it->second.kind != "key" || kn != "\\registry\\machine" || cls != 7 || ( len != 4 && len != 0 ) || !c.stack_args )
+			// P46 (U2152): also the root opened with the trailing backslash (tm_nt reg.hklm.tags0: 0 before any set), and the tags this handle
+			// P46 (U2157): and the user's hive root \REGISTRY\USER\<the placeholder SID> (tm_nt reg.hkcu.*: the same answers from inside)
+			// got from NtSetInformationKey 5 (tm_nt reg.hklm.tags1 / .tags3: the value set is read back)
+			if ( it == handles_.end() || it->second.kind != "key" || false /* P46 (U2157): every key handle (tm_nt reg.hklm / reg.hkcu / reg.hkcu.sub) */ || cls != 7 || ( len != 4 && len != 0 ) ||
+				 !c.stack_args )
 			{
 				r = stop_( what + " - not measured (tm_nt u32k.hklm.tags: class 7 on \\REGISTRY\\MACHINE, Length 4 / 0)" );
 				return true;
@@ -308,9 +312,96 @@ namespace emu::nt
 				r = done_( status::access_violation, what + ": an OUT buffer is not writable" );
 				return true;
 			}
-			const uint32_t zero = 0, four = 4;
-			r = done_( len ? status::success : status::buffer_too_small, what + ( len ? ": HandleTags 0, ResultLength 4" : ": STATUS_BUFFER_TOO_SMALL, ResultLength 4" ) + " (measured: tm_nt u32k.hklm.tags)" );
-			if ( ( len && !put( c.args[ 2 ], &zero, 4, r ) ) || ( prl && !put( prl, &four, 4, r ) ) ) r = stop_( "writing the result failed after the probe" );
+			const auto tg = key_tags_.find( c.args[ 0 ] );
+			const uint32_t tags = tg != key_tags_.end() ? tg->second : 0, four = 4;
+			r = done_( len ? status::success : status::buffer_too_small, what + ( len ? ": HandleTags " + hex( tags ) + ", ResultLength 4" : ": STATUS_BUFFER_TOO_SMALL, ResultLength 4" ) +
+											 " (measured: tm_nt u32k.hklm.tags / reg.hklm.tags*)" );
+			if ( ( len && !put( c.args[ 2 ], &tags, 4, r ) ) || ( prl && !put( prl, &four, 4, r ) ) ) r = stop_( "writing the result failed after the probe" );
+			return true;
+		}
+		// P46 (U2152): NtSetInformationKey( KeyHandle, 5 KeySetHandleTagsInformation, &tags, Length ) - phnt ntregapi.h:778-784, KEY_SET_INFORMATION_CLASS
+		// :248-258; kernelbase's predefined HKEY_LOCAL_MACHINE in combase's start (sample run 11 exploration x11 system call 660: the handle of
+		// NtOpenKeyEx( "\REGISTRY\MACHINE\", 20119H ), tags 100H). MEASURED tm_nt reg.hklm.*: Length 4 = STATUS_SUCCESS and the handle's tags
+		// become the value (100H; 0 again - NtQueryKey 7 reads it back); Length 0 / 8 = STATUS_INFO_LENGTH_MISMATCH, the tags unchanged. Other
+		// keys / classes / values: stop. P46 (U2157): also on the user's hive root (tm_nt reg.hkcu.set / .tags1: the same).
+		if ( c.name == "NtSetInformationKey" )
+		{
+			const auto it = handles_.find( c.args[ 0 ] );
+			const uint32_t cls = uint32_t( c.args[ 1 ] ), len = uint32_t( c.args[ 3 ] );
+			std::string kn;
+			if ( it != handles_.end() )
+				for ( char ch : it->second.name ) kn += char( std::tolower( uint8_t( ch ) ) );
+			const std::string what = "NtSetInformationKey( " + hex( c.args[ 0 ] ) + ( it != handles_.end() ? " (" + it->second.kind + " \"" + it->second.name + "\")" : std::string() ) +
+									 ", class " + hex( cls ) + ", " + hex( c.args[ 2 ] ) + ", Length " + hex( len ) + " )";
+			if ( it == handles_.end() || it->second.kind != "key" || false /* P46 (U2157): every key handle (tm_nt reg.hklm / reg.hkcu / reg.hkcu.sub) */ || cls != 5 )
+			{
+				r = stop_( what + " - not measured (tm_nt reg.hklm: class 5 on \\REGISTRY\\MACHINE)" );
+				return true;
+			}
+			if ( len != 4 )
+			{
+				r = done_( status::info_length_mismatch, what + ": STATUS_INFO_LENGTH_MISMATCH, the tags unchanged (measured: tm_nt reg.hklm.set.0 / .set.8)" );
+				return true;
+			}
+			uint32_t v = 0;
+			std::string err;
+			if ( !user_buffer( c.args[ 2 ], 4, UC_PROT_READ ) || !e_.read( c.args[ 2 ], &v, 4, err ) )
+			{
+				r = stop_( what + " - the input is not readable: not measured" );
+				return true;
+			}
+			if ( v != 0x100 && v != 0 )
+			{
+				r = stop_( what + ": HandleTags " + hex( v ) + " - not measured (100H / 0 are)" );
+				return true;
+			}
+			key_tags_[ c.args[ 0 ] ] = v;
+			r = done_( status::success, what + ": HandleTags " + hex( v ) + " set on the handle (measured: tm_nt reg.hklm.set / .set.zero)" );
+			return true;
+		}
+		// P46 (U2155): NtOpenThreadToken( ThreadHandle, DesiredAccess, OpenAsSelf, *TokenHandle ) - phnt ntseapi.h; combase's start (sample run 11
+		// exploration x20 system call 670: NtCurrentThread(), 4 TOKEN_IMPERSONATE, OpenAsSelf TRUE). The emulated thread never impersonates.
+		// MEASURED tm_nt tok.thr / .thr.noself / .thr.query: STATUS_NO_TOKEN (C000007CH), the handle not written (access 4 / 8, OpenAsSelf 1 / 0).
+		// Another thread / access: stop.
+		if ( c.name == "NtOpenThreadToken" )
+		{
+			const uint32_t acc = uint32_t( c.args[ 1 ] );
+			const std::string what = "NtOpenThreadToken( " + hex( c.args[ 0 ] ) + ", " + hex( acc ) + ", OpenAsSelf " + hex( c.args[ 2 ] & 0xFF ) + ", " + hex( c.args[ 3 ] ) + " )";
+			if ( c.args[ 0 ] != ~0ull - 1 || ( acc != 4 && acc != 8 ) || ( c.args[ 2 ] & 0xFF ) > 1 || !user_buffer( c.args[ 3 ], 8, UC_PROT_WRITE ) )
+			{
+				r = stop_( what + " - not measured (tm_nt tok.thr*: NtCurrentThread(), access 4 / 8, OpenAsSelf 0 / 1, a writable handle pointer)" );
+				return true;
+			}
+			r = done_( 0xC000007C, what + ": the thread does not impersonate - STATUS_NO_TOKEN, the handle not written (measured: tm_nt tok.thr)" );
+			return true;
+		}
+		// P46 (U2154): NtNotifyChangeKey( KeyHandle, Event, ApcRoutine, ApcContext, IoStatusBlock, CompletionFilter, WatchTree, Buffer,
+		// BufferSize, Asynchronous ) - phnt ntregapi.h:1196-1207; kernelbase RegNotifyChangeKeyValue in combase's start (sample run 11
+		// exploration x17 system call 669: the HKLM\Software\Microsoft\Ole key, a notification event, no APC, CompletionFilter 10000001H
+		// REG_NOTIFY_CHANGE_NAME | REG_NOTIFY_THREAD_AGNOSTIC, WatchTree FALSE, no buffer, Asynchronous TRUE). MEASURED tm_nt reg.notify.*:
+		// STATUS_PENDING (103H), the IoStatusBlock not written, the event not signaled (also 200 ms later: nothing changes the key); the key's
+		// NtClose then signals the event, the IoStatusBlock still not written. The emulated registry never changes: the notification stays
+		// pending until the key's close (svc_close). P46 (U2154): WatchTree TRUE on a key of the user's hive the same (tm_nt reg.notify.tree:
+		// STATUS_PENDING, nothing written; the close signals the event). Other argument sets: stop.
+		if ( c.name == "NtNotifyChangeKey" )
+		{
+			const auto it = handles_.find( c.args[ 0 ] );
+			const auto ev = handles_.find( c.args[ 1 ] );
+			const std::string what = "NtNotifyChangeKey( " + hex( c.args[ 0 ] ) + ( it != handles_.end() ? " (" + it->second.kind + " \"" + it->second.name + "\")" : std::string() ) +
+									 ", event " + hex( c.args[ 1 ] ) + ", APC " + hex( c.args[ 2 ] ) + " / " + hex( c.args[ 3 ] ) + ", IoStatusBlock " + hex( c.args[ 4 ] ) +
+									 ( c.stack_args ? ", filter " + hex( c.args[ 5 ] ) + ", WatchTree " + hex( c.args[ 6 ] & 0xFF ) + ", Buffer " + hex( c.args[ 7 ] ) + " / " +
+														  hex( uint32_t( c.args[ 8 ] ) ) + ", Asynchronous " + hex( c.args[ 9 ] & 0xFF ) : std::string() ) + " )";
+			if ( !c.stack_args || it == handles_.end() || it->second.kind != "key" || ev == handles_.end() || ev->second.kind != "event (notification)" || ev->second.value ||
+				 c.args[ 2 ] || c.args[ 3 ] || uint32_t( c.args[ 5 ] ) != 0x10000001 || ( c.args[ 6 ] & 0xFF ) > 1 || c.args[ 7 ] || uint32_t( c.args[ 8 ] ) || ( c.args[ 9 ] & 0xFF ) != 1 ||
+				 key_notify_.count( c.args[ 0 ] ) || !user_buffer( c.args[ 4 ], 16, UC_PROT_WRITE ) )
+			{
+				r = stop_( what + " - not measured (tm_nt reg.notify / .notify.tree: a key, a non-signaled notification event, no APC, filter 10000001H, WatchTree FALSE / TRUE, "
+								  "no buffer, asynchronous, one notification per key, a writable IoStatusBlock)" );
+				return true;
+			}
+			key_notify_[ c.args[ 0 ] ] = c.args[ 1 ];
+			r = done_( 0x103, what + ": STATUS_PENDING - the IoStatusBlock not written, the event not signaled; pending until the key's close (the emulated "
+									 "registry does not change) (measured: tm_nt reg.notify)" );
 			return true;
 		}
 		// NtSetInformationThread( NtCurrentThread(), 0AH ThreadZeroTlsCell, &index, 4 ) - phnt ntpsapi.h THREADINFOCLASS ThreadZeroTlsCell
@@ -509,6 +600,44 @@ namespace emu::nt
 		{
 			if ( uint32_t( c.args[ 0 ] ) != f_.thread_id ) { r = stop_( what + " - another thread: not measured" ); return true; }
 			r = done_( uint32_t( desktop_handle_ ), conv + what + ": the thread's desktop handle " + hex( desktop_handle_ ) + " (non-zero: measured gfSystemInitialized 1, tm_nt u32.g)" );
+			return true;
+		}
+		// P46 (U2160): NtUserRegisterWindowMessage( PUNICODE_STRING MessageName ) - user32 RegisterWindowMessageW (combase / ole32's start,
+		// sample run 11 exploration x63: "{FB8F0821-0164-101B-84ED-08002B2EC713}"); the win32k prototype after ReactOS 0.4.16 win32ss/include/
+		// ntuser.h NtUserRegisterWindowMessage (reference only). MEASURED (tm_u32 u32.rwm, our own GUI test PE started normally): the result is an
+		// atom of the window station's message-name table in C000H..FFFFH (its number depends on the session - the environment answers a
+		// PLACEHOLDER from C200H on), the same name again = the same atom; the name is NOT in the global atom table (GlobalFindAtomW 0: a table
+		// of its own, not NtAddAtomEx's). A name of printable ASCII, 1..255 characters; two names equal but for case (not measured), an empty
+		// name, an unreadable string: stop.
+		if ( c.name == "NtUserRegisterWindowMessage" )
+		{
+			std::string nm, why;
+			if ( !guest_ustring( c.args[ 0 ], nm, why ) || nm.empty() || nm.size() > 255 )
+			{
+				r = stop_( what + " - the name is not a readable 1..255-character string: not measured" + ( why.empty() ? std::string() : " (" + why + ")" ) );
+				return true;
+			}
+			std::string low;
+			for ( char ch : nm )
+			{
+				if ( uint8_t( ch ) < 0x20 || uint8_t( ch ) > 0x7E ) { r = stop_( what + " - a non-printable / non-ASCII name: not measured" ); return true; }
+				low += char( std::tolower( uint8_t( ch ) ) );
+			}
+			for ( const auto& [ k, v ] : wm_names_ )
+			{
+				std::string kl;
+				for ( char ch : k ) kl += char( std::tolower( uint8_t( ch ) ) );
+				if ( kl == low && k != nm ) { r = stop_( what + " - \"" + nm + "\" equals \"" + k + "\" but for case: not measured" ); return true; }
+			}
+			auto it = wm_names_.find( nm );
+			const bool again = it != wm_names_.end();
+			if ( !again )
+			{
+				if ( wm_next_ > 0xFFFF ) { r = stop_( what + " - the placeholder message atoms are used up" ); return true; }
+				it = wm_names_.emplace( nm, wm_next_++ ).first;
+			}
+			r = done_( it->second, conv + what + ": \"" + nm + "\" -> message atom " + hex( it->second ) + ( again ? " (registered before: the same)" : " (a placeholder in C000H..FFFFH)" ) +
+										" (measured shape: tm_nt u32.rwm)" );
 			return true;
 		}
 		// NtUserCallOneParam( LPK flags, 3DH ) - user32 ClientThreadSetup (user32+1DDD6) when the LPK hooks are set (user32+B43A4H, measured FH

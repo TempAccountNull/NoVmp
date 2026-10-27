@@ -47,7 +47,9 @@ namespace emu::hle
 		// implementation; the export's own code is a system-call stub: its arguments are the stub's - RCX, RDX, R8, R9, [RSP+28H] ...)
 		const known ntdll[] = { { "NtOpenFile", api::nt_file_service }, { "NtCreateFile", api::nt_file_service }, { "NtQueryAttributesFile", api::nt_file_service },
 								{ "NtQueryFullAttributesFile", api::nt_file_service }, { "NtQueryDirectoryFile", api::nt_file_service },
-								{ "NtQueryDirectoryFileEx", api::nt_file_service }, { "NtClose", api::nt_file_service } };
+								{ "NtQueryDirectoryFileEx", api::nt_file_service }, { "NtClose", api::nt_file_service },
+								// P46 (U2146): NtQueryInformationProcess (test PE T8: ProcessImageInformation) - the kernel layer's service the same way
+								{ "NtQueryInformationProcess", api::nt_file_service } };
 	}
 
 	std::string binding::label() const
@@ -373,7 +375,8 @@ namespace emu::hle
 			default:
 				r.text = b.label() + " is not implemented in milestone M5 (the --HLE APIs of M5: kernel32.dll GetCurrentProcessId, GetCurrentThreadId, ExitProcess, "
 									 "GetModuleHandleW / A( NULL ); P41: GetStdHandle, WriteFile, WriteConsoleA / W, GetLastError; P44: user32.dll CharUpperW; "
-									 "P45: ntdll.dll NtOpenFile, NtCreateFile, NtQueryAttributesFile, NtQueryFullAttributesFile, NtQueryDirectoryFile(Ex), NtClose)";
+									 "P45: ntdll.dll NtOpenFile, NtCreateFile, NtQueryAttributesFile, NtQueryFullAttributesFile, NtQueryDirectoryFile(Ex), NtClose; "
+									 "P46: ntdll.dll NtQueryInformationProcess)";
 				return r;
 		}
 	}

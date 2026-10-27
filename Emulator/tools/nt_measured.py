@@ -46,13 +46,16 @@ CASES = ['sat', 'qsi', 'hvp', 'qip', 'wcp', 'qsix', 'iocp', 'wkf', 'tmr2', 'awcp
          'fs',   # P45 (U2125): the file system's misses by kind (USER DECISION 2026-10-27 "virtual FS, measured misses")
          'rvm',   # P45 (U2134, sample exploration x1 system call 573): NtReadVirtualMemory of the process' own memory
          'atom',   # P45 (U2137, sample exploration x3 system call 599): the atom table (dxgi's GlobalAddAtomW)
-         'pii']   # P45 (U2141, sample exploration x8 system call 633): ProcessImageInformation (d3d11's DllMain)
+         'pii',   # P45 (U2141, sample exploration x8 system call 633): ProcessImageInformation (d3d11's DllMain)
+         'reg']   # P46 (U2151, sample run 11 exploration x11 system call 660): the HKLM handle's tags (NtSetInformationKey 5, combase's start)
 # P41 (U2068): case term ends the process with exit code 2BH (its NtTerminateProcess( NULL, 2BH ) fixes the process' exit status)
 EXIT_CODE = {'term': 0x2B}
 # hex constants (9 .. 16 digits) that may appear: system constants and the pre-set fill pattern - never an address of the run
 ALLOWED_HEX = {'FFFF800000000000', 'FFFFFFFFFF676980', 'FFFFFFFFDC3CBA00', 'FFFFFFFFFF676980H', 'CCCCCCCCCCCCCCCC',
                # P41 (U2068): WNF state names of the system DLLs, a worker-factory idle timeout - constants
-               '0280032EA3BC0875', '418A073AA3BC7C75', '418A073AA3BC88F5', '418A073AA3BC1C75', 'FFFFFFFFEE1E5D00'}
+               '0280032EA3BC0875', '418A073AA3BC7C75', '418A073AA3BC88F5', '418A073AA3BC1C75', 'FFFFFFFFEE1E5D00',
+               # P46 (U2159): the last group of the OLE window-message name {FB8F0821-0164-101B-84ED-08002B2EC713} (a constant of combase / ole32)
+               '08002B2EC713'}
 
 
 # P44 (U2113): VOLATILE fields - compared by shape, never by value. Each entry: the items it applies to, the field, why Windows changes

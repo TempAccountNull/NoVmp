@@ -30,6 +30,9 @@ by it; the system DLLs are mapped as data and run only in emulation):
     file's attributes; the exit status encodes the three statuses and what was written: 1F343A34H natively (DETACHED), under --Sys
     (213 services; the emulated file system's measured misses, tm_nt fs.*) and under --HLE (ntdll's file services = the kernel layer);
     <out dir>\fs_access.txt of both modes holds the accesses with their answers
+  - P46 (U2144): T8 (t8_pii, a console program linked WITHOUT /DYNAMICBASE, started detached) asks NtQueryInformationProcess 25H
+    ProcessImageInformation (sample run 10's stop) three times and encodes every field's relation to its own PE header: 1C007FFFH natively
+    (DETACHED), under --Sys (213 services) and under --HLE (ntdll's NtQueryInformationProcess = the kernel layer)
 A changed service sequence fails this suite (a newly answered or changed service must update EXPECTED and the notes). Exit 0 = PASS,
 1 = FAIL, 2 = usage.
 usage: python -I win_env_sys_loader.py REPO_ROOT TESTS_DIR
@@ -244,8 +247,44 @@ EXPECTED = {
            'NtSetInformationWorkerFactory NtSetInformationWorkerFactory NtQuerySecurityAttributesToken NtQuerySecurityAttributesToken NtProtectVirtualMemory '
            'NtProtectVirtualMemory NtApphelpCacheControl NtSetInformationVirtualMemory NtSetEvent NtSetEvent NtSetInformationWorkerFactory NtSetEvent NtTestAlert '
            'NtContinue NtOpenFile NtQueryAttributesFile NtOpenFile NtTerminateProcess NtClose NtClose NtClose NtClose NtQueryWnfStateData NtTerminateProcess ').split(),
+    # P46 (U2144): T8 - a console program (started detached) linked without /DYNAMICBASE: ProcessImageInformation of an image at its
+    # preferred base (three queries: 40H / NULL, 40H / &ret, 3FH)
+    'T8': ('NtQueryPerformanceCounter NtProtectVirtualMemory NtProtectVirtualMemory NtCreateEvent NtQuerySystemInformation NtQueryInformationProcess '
+           'NtQuerySystemInformation NtQueryVirtualMemory NtQueryVirtualMemory NtProtectVirtualMemory NtOpenKey NtQueryValueKey NtClose NtOpenKey '
+           'NtOpenKey NtOpenKey NtQueryInformationProcess NtQueryInformationProcess NtQuerySecurityAttributesToken NtQuerySecurityAttributesToken '
+           'NtOpenKey NtQueryValueKey NtClose NtQueryInformationProcess NtQuerySystemInformation NtQuerySystemInformation NtAllocateVirtualMemoryEx '
+           'NtAllocateVirtualMemoryEx NtAllocateVirtualMemoryEx NtQuerySystemInformation NtAllocateVirtualMemory NtFreeVirtualMemory '
+           'NtAllocateVirtualMemory NtQuerySystemInformation NtQuerySystemInformation NtCreateEvent NtCreateWaitCompletionPacket '
+           'NtQuerySystemInformationEx NtCreateIoCompletion NtCreateWorkerFactory NtCreateTimer2 NtCreateWaitCompletionPacket '
+           'NtAssociateWaitCompletionPacket NtCreateTimer2 NtCreateWaitCompletionPacket NtAssociateWaitCompletionPacket NtSetInformationWorkerFactory '
+           'NtSetInformationWorkerFactory NtSetInformationWorkerFactory NtAssociateWaitCompletionPacket NtTraceControl NtTraceControl NtTraceControl '
+           'NtTraceControl NtFreeVirtualMemory NtProtectVirtualMemory NtOpenDirectoryObject NtProtectVirtualMemory NtOpenSymbolicLinkObject '
+           'NtQuerySymbolicLinkObject NtClose NtProtectVirtualMemory NtProtectVirtualMemory NtCreateEvent NtCreateEvent NtProtectVirtualMemory '
+           'NtProtectVirtualMemory NtOpenFile NtQueryVolumeInformationFile NtSetEvent NtAllocateVirtualMemory NtOpenSection NtMapViewOfSection '
+           'NtQueryPerformanceCounter NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory NtOpenSection '
+           'NtMapViewOfSection NtQueryPerformanceCounter NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory '
+           'NtClose NtProtectVirtualMemory NtClose NtProtectVirtualMemory NtSetInformationProcess NtApphelpCacheControl NtApphelpCacheControl '
+           'NtSetInformationVirtualMemory NtQuerySystemInformation NtQuerySystemInformation NtOpenSection NtCreateSection NtConnectPort NtClose '
+           'NtMapViewOfSection NtClose NtAllocateVirtualMemory NtInitializeNlsFiles NtSetInformationProcess NtTraceControl NtTraceControl '
+           'NtQueryInformationToken NtAccessCheck NtAccessCheck NtOpenProcessToken NtQueryInformationToken NtQueryInformationToken '
+           'NtQueryInformationToken NtOpenDirectoryObject NtQueryInformationToken NtClose NtCreateMutant NtWaitForSingleObject NtOpenSemaphore '
+           'NtCreateSemaphore NtCreateSemaphore NtReleaseMutant NtQueryWnfStateData NtCreateEvent NtCreateWaitCompletionPacket '
+           'NtSetWnfProcessNotificationEvent NtAssociateWaitCompletionPacket NtSubscribeWnfStateChange NtQueryWnfStateData NtSubscribeWnfStateChange '
+           'NtQueryWnfStateData NtSubscribeWnfStateChange NtQueryWnfStateData NtAllocateVirtualMemory NtSetTimer2 NtOpenKey NtTraceControl '
+           'NtTraceControl NtTraceControl NtTraceControl NtSetInformationVirtualMemory NtOpenKey NtTraceControl NtTraceControl '
+           'NtQuerySystemInformation NtSetEvent NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory '
+           'NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory '
+           'NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory '
+           'NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory NtProtectVirtualMemory NtOpenKey NtOpenKey NtOpenKey NtQueryValueKey '
+           'NtClose NtQueryInformationToken NtOpenKey NtOpenKey NtQueryValueKey NtClose NtOpenKey NtQueryValueKey NtClose NtQuerySystemInformationEx '
+           'NtCreateIoCompletion NtCreateWorkerFactory NtSetInformationWorkerFactory NtCreateTimer2 NtCreateWaitCompletionPacket '
+           'NtAssociateWaitCompletionPacket NtCreateTimer2 NtCreateWaitCompletionPacket NtAssociateWaitCompletionPacket NtSetInformationWorkerFactory '
+           'NtSetInformationWorkerFactory NtQuerySecurityAttributesToken NtQuerySecurityAttributesToken NtProtectVirtualMemory NtProtectVirtualMemory '
+           'NtApphelpCacheControl NtSetInformationVirtualMemory NtSetEvent NtSetEvent NtSetInformationWorkerFactory NtSetEvent NtTestAlert NtContinue '
+           'NtQueryInformationProcess NtQueryInformationProcess NtQueryInformationProcess NtTerminateProcess NtClose NtClose NtClose NtClose '
+           'NtQueryWnfStateData NtTerminateProcess ').split(),
 }
-STATUS = {'T2': 0x2B, 'T3': 0x2E, 'T5': 0x2F, 'T6': 0x36, 'T7': 0x1F343A34}
+STATUS = {'T2': 0x2B, 'T3': 0x2E, 'T5': 0x2F, 'T6': 0x36, 'T7': 0x1F343A34, 'T8': 0x1C007FFF}
 # P41: the registry items the start of a process without a console asks (capture_sysdlls.py --reg / --reg-value; local, never committed)
 P41_REGISTRY = [
     r'key	absent	\registry\machine\system\currentcontrolset\control\stateseparation\redirectionmap\keys',
@@ -265,6 +304,8 @@ P41_REGISTRY = [
     r'value	\registry\machine\software\microsoft\windows nt\currentversion\windows	loadappinit_dlls	4	00000000',
     # P45 (U2133): T7's start
     r'key	absent	\registry\machine\software\microsoft\windows nt\currentversion\image file execution options\t7_vfs.exe',
+    # P46 (U2144): T8's start
+    r'key	absent	\registry\machine\software\microsoft\windows nt\currentversion\image file execution options\t8_pii.exe',
 ]
 T5_TEXTS = ('t5_stdout: hello from WriteFile' + chr(92) + 'r' + chr(92) + 'n', 't5_stdout: hello from WriteConsoleW' + chr(92) + 'r' + chr(92) + 'n')
 
@@ -281,7 +322,7 @@ def main(argv):
     oep = os.path.join(tests, 'emu-oep.exe')
     pe_dir = os.path.join(tests, 'test_pe')
     tm = os.path.join(pe_dir, 'tm_nt.exe')
-    t2, t3, t5, t6, t7 = (os.path.join(pe_dir, n) for n in ('t2_import.exe', 't3_tls.exe', 't5_stdout.exe', 't6_user32.exe', 't7_vfs.exe'))   # P45: + T7
+    t2, t3, t5, t6, t7, t8 = (os.path.join(pe_dir, n) for n in ('t2_import.exe', 't3_tls.exe', 't5_stdout.exe', 't6_user32.exe', 't7_vfs.exe', 't8_pii.exe'))   # P45: + T7, P46: + T8
     fails = []
 
     def check(ok, what):
@@ -290,7 +331,7 @@ def main(argv):
             fails.append(what)
         return ok
 
-    for p in (oep, t2, t3, t5, t6, t7, tm):
+    for p in (oep, t2, t3, t5, t6, t7, t8, tm):
         if not os.path.isfile(p):
             say('FAIL %s missing (build.cmd first)' % p)
             return 1
@@ -316,7 +357,7 @@ def main(argv):
     check(rc == 3 and any(l.startswith('[emu-oep] error: --Sys:') and 'LdrInitializeThunk' in l for l in out), 'T2 --Sys without --loader: refused, exit 3')
     outdir = os.path.join(tests, 'sysloader_out')
     status = {}
-    for tag, path in (('T2', t2), ('T3', t3p), ('T5', t5), ('T6', t6), ('T7', t7)):
+    for tag, path in (('T2', t2), ('T3', t3p), ('T5', t5), ('T6', t6), ('T7', t7), ('T8', t8)):
         od = os.path.join(outdir, tag.lower() + '_sys')
         os.makedirs(od, exist_ok=True)
         cf = os.path.join(od, 'console_capture.txt')
@@ -366,7 +407,7 @@ def main(argv):
         else:
             check(not os.path.isfile(cf) and any('console capture: 0 output attempt(s)' in l for l in out), '%s --Sys: no output attempt, no capture file' % tag)
     # --HLE: the same observable result
-    for tag, path in (('T2', t2), ('T3', t3p), ('T5', t5), ('T6', t6), ('T7', t7)):
+    for tag, path in (('T2', t2), ('T3', t3p), ('T5', t5), ('T6', t6), ('T7', t7), ('T8', t8)):
         od = os.path.join(outdir, tag.lower() + '_hle')
         os.makedirs(od, exist_ok=True)
         cf = os.path.join(od, 'console_capture.txt')
@@ -388,7 +429,7 @@ def main(argv):
     live = os.path.join(os.environ.get('SystemRoot', r'C:\Windows'), 'System32', 'ntdll.dll')
     cap_sha = hashlib.sha256(open(os.path.join(cap, 'ntdll.dll'), 'rb').read()).hexdigest()
     if os.path.isfile(live) and hashlib.sha256(open(live, 'rb').read()).hexdigest() == cap_sha:
-        for tag, path in (('T2', t2), ('T3', t3p), ('T5', t5), ('T6', t6), ('T7', t7)):
+        for tag, path in (('T2', t2), ('T3', t3p), ('T5', t5), ('T6', t6), ('T7', t7), ('T8', t8)):
             # P44 (U2124): T6 (a GUI program) is started NORMALLY (tm_nt run.normal, no creation flags), the console programs detached
             how = 'run.normal' if tag == 'T6' else 'run.detached'
             folder = None
@@ -423,7 +464,7 @@ def main(argv):
     if fails:
         say('FAIL (%d problem(s))' % len(fails))
         return 1
-    say('PASS: T2 / T3 / T5 / T6 / T7 run to their end under --Sys --loader (the real LdrInitializeThunk, %d / %d / %d / %d answered services, the model of a process '
+    say('PASS: T2 / T3 / T5 / T6 / T7 / T8 run to their end under --Sys --loader (the real LdrInitializeThunk, %d / %d / %d / %d answered services, the model of a process '
         'started without a console; T6: user32\'s USERSRV connection and GUI start, P44) with the exit status 2BH / 2EH / 2FH / 36H = --HLE = the native '
         'reference; T5\'s output attempts captured in both modes' % (len(EXPECTED['T2']), len(EXPECTED['T3']), len(EXPECTED['T5']), len(EXPECTED['T6'])))
     return 0

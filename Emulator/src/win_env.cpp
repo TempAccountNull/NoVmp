@@ -1234,6 +1234,10 @@ namespace emu::win
 		kf.image_dir = make_identity( f, po.image_file_name ).image_dir;   // P39 (U2058): the emulated file system's one directory
 		kf.image_name = po.image_file_name;                                // P43 (U2107): the one file of that directory
 		kf.system_root = f.system_root;        // P39 (U2057): the KnownDllPath link target
+		// P46 (U2142): ProcessImageInformation's source - the image file's headers (bounded), its size, the mapped base
+		kf.image_headers.assign( file.begin(), file.begin() + std::ptrdiff_t( std::min<uint64_t>( file.size(), std::min<uint64_t>( img_.size_of_headers, 0x10000 ) ) ) );
+		kf.image_file_size = file.size();
+		kf.image_mapped_base = map_.base;
 		kernel_ = std::make_unique<nt::kernel>( *e_, kf );
 		hle_ = std::make_unique<hle::module>();
 		start_va_ = map_.entry;

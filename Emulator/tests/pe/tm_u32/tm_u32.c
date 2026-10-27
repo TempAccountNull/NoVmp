@@ -209,6 +209,17 @@ int WINAPI wWinMain( HINSTANCE hi, HINSTANCE hp, PWSTR cmd, int show )
 			 (unsigned long)*(const ULONG*)( u + 0xB4348 ), (unsigned long)*(const ULONG*)( u + 0xB43A4 ), (unsigned long)*(const ULONG*)( u + 0xB4730 ),
 			 (unsigned long)*(const ULONG*)( u + 0xB4734 ), (unsigned long)*(const ULONG*)( u + 0xB3924 ) );
 	}
+	{
+		/* P46 (U2159; sample run 11 exploration x63): user32 RegisterWindowMessageW -> win32u NtUserRegisterWindowMessage( &UNICODE_STRING ) for
+		   the OLE name below (combase / ole32's start). Its value is an atom of the window station's table (0C000H..0FFFFH; the number depends on
+		   the session - only its shape is printed), the same on the second call; GlobalFindAtomW of the name: the same atom or not */
+		static const wchar_t nm[] = L"{FB8F0821-0164-101B-84ED-08002B2EC713}";
+		const UINT a = RegisterWindowMessageW( nm ), b = RegisterWindowMessageW( nm );
+		const ATOM f = GlobalFindAtomW( nm );
+		say( "tm_nt u32.rwm: RegisterWindowMessageW(\"{FB8F0821-0164-101B-84ED-08002B2EC713}\") -> %s; again -> %s; GlobalFindAtomW of the name -> %s\n",
+			 a >= 0xC000 && a <= 0xFFFF ? "an atom in C000H..FFFFH" : a ? "another value" : "0", b == a ? "the same" : "another value",
+			 f == a ? "the same atom" : f ? "another atom" : "0 (not in the global atom table)" );
+	}
 	tm_qwords( "u32.teb.ci", (const ULONGLONG*)( teb + 0x800 ), 62, 0x800 );
 	say( "tm_nt u32.peb.more: AppCompatFlagsUser (2D0H) %llXH\n", *(const ULONGLONG*)( peb + 0x2D0 ) );
 	tm_region_lines();

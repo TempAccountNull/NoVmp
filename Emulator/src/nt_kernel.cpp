@@ -451,6 +451,20 @@ namespace emu::nt
 			const std::string what = it->second.kind + " \"" + it->second.name + "\"";
 			if ( named_objects_.count( it->second.name ) && named_objects_[ it->second.name ] > 0 ) named_objects_[ it->second.name ]--;   // P41 (U2076): the last handle ends a named object
 			handles_.erase( it );
+			key_tags_.erase( h );   // P46 (U2152)
+			// P46 (U2154): a key with a pending NtNotifyChangeKey - its close signals the notification's event, the IoStatusBlock is not written
+			// (MEASURED: tm_nt reg.notify.close / .closed)
+			if ( const auto kn = key_notify_.find( h ); kn != key_notify_.end() )
+			{
+				const uint64_t evh = kn->second;
+				key_notify_.erase( kn );
+				const auto ev = handles_.find( evh );
+				if ( ev == handles_.end() || ev->second.kind.rfind( "event", 0 ) != 0 )
+					return stopped( "NtClose of key " + hex( h ) + " with a pending notification whose event " + hex( evh ) + " was closed before - not measured" );
+				ev->second.value = 1;
+				return answered( status::success, "handle " + hex( h ) + " (" + what + ") closed; its pending notification ended: event " + hex( evh ) +
+												  " signaled, the IoStatusBlock not written (measured: tm_nt reg.notify.closed)" );
+			}
 			return answered( status::success, "handle " + hex( h ) + " (" + what + ") closed" );
 		}
 		// km\wdm.h ZwClose: "STATUS_INVALID_HANDLE if Handle is not a valid handle"
@@ -642,6 +656,29 @@ namespace emu::nt
 		const uint64_t out = c.args[ 2 ];
 		const uint64_t pret = c.stack_args ? c.args[ 4 ] : 0;
 		if ( !c.stack_args ) return stopped( "NtQueryInformationProcess: the stack argument ReturnLength is not readable" );
+		// P46 (U2163): ProcessBasicInformation (0) - MEASURED natively (tm_nt qip.0 / qip.0x / qip.0xr / qip.0x.size30 / qip.0.38 / qip.0.48): Length
+		// 30H = PROCESS_BASIC_INFORMATION {ExitStatus 103H (STATUS_PENDING: the process runs), PebBaseAddress = the PEB, AffinityMask = the process
+		// affinity mask, BasePriority 8, UniqueProcessId = the process id, InheritedFromUniqueProcessId non-zero, a multiple of 4}; Length 40H =
+		// PROCESS_EXTENDED_BASIC_INFORMATION (phnt ntpsapi.h: Size, BasicInfo, Flags) with Size written 40H (whatever it held), the same BasicInfo,
+		// Flags 0; the padding after ExitStatus / BasePriority and +3CH..+3FH NOT written; ReturnLength 30H / 40H when given; Length 38H / 48H =
+		// STATUS_INFO_LENGTH_MISMATCH, nothing written. The parent's id is a PLACEHOLDER (1000H: a process the environment does not model - a
+		// service on it stops). Other lengths: stop.
+		if ( cls == 0 && ( len == 0x30 || len == 0x40 || len == 0x38 || len == 0x48 ) )
+		{
+			if ( len == 0x38 || len == 0x48 ) return answered( status::info_length_mismatch, "ProcessBasicInformation, Length " + hex( len ) + ": STATUS_INFO_LENGTH_MISMATCH, nothing written (measured: tm_nt qip.0.38 / .48)" );
+			if ( !user_buffer( out, len, UC_PROT_WRITE ) || ( pret && !user_buffer( pret, 4, UC_PROT_WRITE ) ) )
+				return stopped( "ProcessBasicInformation: the buffer or ReturnLength is not writable - not measured" );
+			const uint64_t b = len == 0x40 ? out + 8 : out, size = 0x40, aff = f_.active_processor_mask, parent = 0x1000;
+			const uint32_t exit_status = 0x103, prio = 8, flags = 0, rl = len;
+			reply r = answered( status::success, std::string( len == 0x40 ? "PROCESS_EXTENDED_BASIC_INFORMATION (Size 40H, Flags 0)" : "ProcessBasicInformation" ) +
+												 ": ExitStatus 103H, PebBaseAddress " + hex( f_.peb ) + ", AffinityMask " + hex( aff ) + ", BasePriority 8, UniqueProcessId " +
+												 hex( f_.process_id ) + ", InheritedFromUniqueProcessId 1000H (placeholder) (measured: tm_nt qip.0" + ( len == 0x40 ? "x" : "" ) + ")" );
+			if ( ( len == 0x40 && ( !put( out, &size, 8, r ) || !put( out + 0x38, &flags, 4, r ) ) ) || !put( b, &exit_status, 4, r ) || !put( b + 8, &f_.peb, 8, r ) ||
+				 !put( b + 0x10, &aff, 8, r ) || !put( b + 0x18, &prio, 4, r ) || !put( b + 0x20, &f_.process_id, 8, r ) || !put( b + 0x28, &parent, 8, r ) ||
+				 ( pret && !put( pret, &rl, 4, r ) ) )
+				return stopped( "writing the result failed after the probe" );
+			return r;
+		}
 		std::vector<uint8_t> data;
 		std::string what;
 		switch ( cls )
