@@ -2696,6 +2696,9 @@ static int x86_cpus_init(struct uc_struct *uc, const char *cpu_model)
     cpu->env.rdrand_seed = uc->x86_rdrand_seed;
     cpu->env.rdrand_count = 0;
 #endif /* __Use_Original_Qemu (U835) */
+#if __Use_Original_Qemu != 1 /* ours (U2091) */
+    cpu->env.drbg_ready = 0;   /* the CTR_DRBG is instantiated from the seed at the first draw */
+#endif /* __Use_Original_Qemu (U2091) */
 #if __Use_Original_Qemu != 1 /* ours (U1480) */
     /* NoVmp (ledger U1480): UC_CTL_X86_XINUSE_MODEL written before init (default 0: the vendor's) */
     cpu->env.xinuse_model = (uint8_t)uc->x86_xinuse_model_cfg;
@@ -2718,6 +2721,9 @@ static void x86_rdrand_sync(struct uc_struct *uc, int to_cpu)
         env->rdrand_host = uc->x86_rdrand_mode == UC_X86_RDRAND_HOST;
         env->rdrand_seed = uc->x86_rdrand_seed;
         env->rdrand_count = 0;
+#if __Use_Original_Qemu != 1 /* ours (U2091) */
+        env->drbg_ready = 0;   /* a new seed: a new CTR_DRBG instantiation at the next draw */
+#endif /* __Use_Original_Qemu (U2091) */
     } else {
         uc->x86_rdrand_mode = env->rdrand_host ? UC_X86_RDRAND_HOST : UC_X86_RDRAND_SEEDED;
         uc->x86_rdrand_seed = env->rdrand_seed;
@@ -2749,6 +2755,14 @@ static uc_err x86_wait_wake(struct uc_struct *uc, int set, uint64_t *w)
     return UC_ERR_OK;
 }
 #endif /* __Use_Original_Qemu (U1622) */
+
+#if __Use_Original_Qemu != 1 /* ours (U2090) */
+/* NoVmp (ledger U2090): UC_CTL_X86_VCLOCK read (uc.c) - the TSC ticks TPAUSE / UMWAIT waited (U1620), time that passed */
+static uint64_t x86_vclock_wait(struct uc_struct *uc)
+{
+    return X86_CPU(uc->cpu)->env.tsc_wait;
+}
+#endif /* __Use_Original_Qemu (U2090) */
 
 #if __Use_Original_Qemu != 1 /* ours (U1470) */
 /* NoVmp (ledger U1470): UC_CTL_X86_MICROCODE read (uc.c): the CPU's revision and platform ID */
@@ -2825,6 +2839,11 @@ static uc_err x86_context_restore(struct uc_struct *uc, uc_context *context)
     X86_CTX_COPY(rdrand_count);
     X86_CTX_COPY(rdrand_host);
 #endif /* __Use_Original_Qemu (U835) */
+#if __Use_Original_Qemu != 1 /* ours (U2091) */
+    X86_CTX_COPY(drbg_key);     /* the CTR_DRBG state: a restore replays the same values */
+    X86_CTX_COPY(drbg_v);
+    X86_CTX_COPY(drbg_ready);
+#endif /* __Use_Original_Qemu (U2091) */
 #if __Use_Original_Qemu != 1 /* ours (U960) */
     /* the restored local APIC state decides CPU_INTERRUPT_HARD (apic_model.c) */
     x86_apic_update(env);
@@ -3018,6 +3037,9 @@ void uc_init(struct uc_struct *uc)
 #if __Use_Original_Qemu != 1 /* ours (U1622) */
     uc->x86_wait_wake = x86_wait_wake;
 #endif /* __Use_Original_Qemu (U1622) */
+#if __Use_Original_Qemu != 1 /* ours (U2090) */
+    uc->x86_vclock_wait = x86_vclock_wait;
+#endif /* __Use_Original_Qemu (U2090) */
 #if __Use_Original_Qemu != 1 /* ours (U1021) */
     uc->x86_mktme_key = x86_mktme_key;
 #endif /* __Use_Original_Qemu (U1021) */

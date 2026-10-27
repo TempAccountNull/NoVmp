@@ -116,8 +116,8 @@ function Add-Exp( [string]$Id, [string]$File, [string]$Groups, [string[]]$Extra 
 # specs suite $Of exported, after $Of has finished. Verdict (kind snip): every expected-value case line of $Of replayed (the
 # "snippets:" count = Get-ExpectedCases of $Of), "expect differing: 0", "errors: 0", and the Unicorn engine state of the line
 # ("reference") equal except the lines $SnipReferenceKnown names for $Of, by exact count: values that come from the host
-# (RDTSC / the TSC MSR read the host clock until the virtual time base of milestone M6; --HostSeed RDRAND; PBNDKB's random IV /
-# key) differ between two engines by design. Kind snipbad (expect_selftest_bad): every one of its 7 wrong expectations is a
+# (RDTSC / the TSC MSR read the host clock until the virtual time base of milestone M6; --HostSeed RDRAND) differ between two
+# engines by design (U2101: PBNDKB's random IV / key come from the seeded CTR_DRBG, U2091 - no longer pinned). Kind snipbad (expect_selftest_bad): every one of its 7 wrong expectations is a
 # DIFF in emu-snippet too. A passing suite removes its spec file (build\x64\<config>\tests\snippet_replay\<id>.jsonl).
 function SnipExport( [string]$Id ) { return @( '--snippet-export', ( Join-Path $T "snippet_replay\$Id.jsonl" ) ) }
 function Add-Snip( [string]$Of, [string]$Groups, [string]$Kind = 'snip' )
@@ -130,7 +130,6 @@ $SnipReferenceKnown = @{
 	# cases_tscadj.txt: 7 lines read RDTSC / IA32_TIME_STAMP_COUNTER (the host clock) into a compared register
 	'tscadj_host_p' = 7; 'tscadj_host_e' = 7; 'tscadj_guest' = 7; 'tscadj_vm' = 7; 'tscadj_max' = 7
 	'cases_rdrand_host' = 3   # --HostSeed: the host DRNG
-	'cases_sysins' = 2        # PBNDKB (U807): IV, MAC and ciphertext random
 	'cases_sysmsr' = 1        # RDMSR IA32_TIME_STAMP_COUNTER (10H)
 }
 # a model's self-test (python MODEL --selftest, exit status 0)
@@ -507,9 +506,9 @@ Add-PySelftest 'ref_apx_cases_selftest' 'apx tools' 'ref_apx_cases.py'
 # 0 differing; the CPU's results must also match the model (--hwcmp).
 Add-Suite 'cases_apx_map4_hw' 'hw apx' 'hwnp' 'emu-alltest' @( '--cases', ( CaseFile 'cases_apx_map4_hw' ), '--apx' )
 Add-HwCmp 'ref_apx_map4_hwcmp' 'hw apx' 'ref_apx_map4.py' 'cases_apx_map4_hw'
-# U835 (decision D8): RDRAND/RDSEED source. The default seeded model (SplitMix64, seed 0; values
-# from an independent SplitMix64), an explicit seed (--rdrand-seed), and the host DRNG (--HostSeed:
-# flags only, the values are the host's).
+# U835 (decision D8): RDRAND/RDSEED source. The default seeded model (since U2091 a CTR_DRBG of NIST SP 800-90A, AES-128, seed 0;
+# values from the independent reference ref_ctr_drbg.py, P42 - U835 used SplitMix64), an explicit seed (--rdrand-seed), and the host
+# DRNG (--HostSeed: flags only, the values are the host's).
 Add-Exp 'cases_rdrand' 'cases_rdrand' 'rdrand expect'
 Add-Exp 'cases_rdrand_seed' 'cases_rdrand_seed' 'rdrand expect' @( '--rdrand-seed', '0x1234' )
 Add-Exp 'cases_rdrand_host' 'cases_rdrand_host' 'rdrand expect' @( '--HostSeed' )

@@ -402,15 +402,16 @@ namespace
 		CHECK( logged, "the refusal is in the verbose log" );
 	}
 
-	// decision D8: --seeded = the fork's deterministic model (U835: value n = SplitMix64(seed + n * 9E3779B97F4A7C15H), n = 1, 2,
+	// decision D8: --seeded = the fork's deterministic model (U2091, plan 3.M6: value n = the n-th 64-bit output of a CTR_DRBG, NIST SP
+	// 800-90A Rev. 1 10.2.1, AES-128, no derivation function, entropy input = the seed || 24 zero bytes - known answers of the independent
+	// reference ref_ctr_drbg.py, P42; U835 used SplitMix64), n = 1, 2,
 	// ...), CF = 1 and OF SF ZF AF PF = 0 ("CF=1 indicates that the data in the destination is valid", "The OF, SF, ZF, AF,
 	// and PF flags are set to 0": 253667-093 Vol2B RDRAND p. 4-554); --HostSeed selects the host source (not executed here)
-	uint64_t splitmix64( uint64_t seed, uint64_t n )
+	uint64_t splitmix64( uint64_t seed, uint64_t n )   // U2101: the name kept; the CTR_DRBG known answers of ref_ctr_drbg.py
 	{
-		uint64_t z = seed + n * 0x9e3779b97f4a7c15ull;
-		z = ( z ^ ( z >> 30 ) ) * 0xbf58476d1ce4e5b9ull;
-		z = ( z ^ ( z >> 27 ) ) * 0x94d049bb133111ebull;
-		return z ^ ( z >> 31 );
+		if ( seed == 0 && n >= 1 && n <= 3 ) return std::array<uint64_t, 3>{ 0xBA68F086D3250ED4ull, 0x744359FBB1126FBCull, 0x6D3C7FD031E91FE5ull }[ n - 1 ];
+		if ( seed == 0x5eed && n >= 1 && n <= 3 ) return std::array<uint64_t, 3>{ 0xD4AD888E8B2220D6ull, 0x130D35CADEE27722ull, 0xF46F9714588D9ED2ull }[ n - 1 ];
+		return 0;
 	}
 
 	void t_engine_rng()

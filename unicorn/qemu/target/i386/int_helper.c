@@ -527,8 +527,9 @@ target_ulong HELPER(rdrand)(CPUX86State *env)
 #else /* ours (U835) */
 /*
  * NoVmp (ledger U835, decision D8): RDRAND / RDSEED source, UC_CTL_X86_RDRAND.
- * Seeded (default): the n-th value drawn is SplitMix64(seed + (n + 1) * golden gamma)
- * (Steele, Lea, Flood 2014), CF = 1; seed and count live in env (uc_context carries them).
+ * Seeded (default): since U2091 (plan 3.M6) the n-th 64-bit output of a CTR_DRBG (SP 800-90A,
+ * AES-128) instantiated from the seed (below; U835 used SplitMix64), CF = 1; seed, count and the
+ * DRBG state live in env (uc_context carries them).
  * Host: the host CPU's RDRAND / RDSEED (chosen at run time from the host CPUID), CF as the
  * host returns it; the OS generator (CF = 1 unless it fails) when the host lacks it.
  * Both: CF = the success bit, OF SF ZF AF PF = 0 (SDM Vol2B RDRAND/RDSEED), destination 0
@@ -539,13 +540,74 @@ target_ulong HELPER(rdrand)(CPUX86State *env)
 #include <immintrin.h>
 #endif
 
+/*
+ * NoVmp (ledger U2091, replaces U835's SplitMix64 model; plan 3.M6 / 1.K.11 P14, notes/eread/P42_phase3_m6.md): the seeded model is a CTR_DRBG
+ * (NIST SP 800-90A Rev. 1 section 10.2.1) with AES-128 and no derivation function - the DRBG family Intel names
+ * for RDRAND (253665-093 Vol1 7.3.17.1 p. 7-24: "The DRBG is designed to meet the NIST SP 800-90A standard";
+ * DRNG Software Implementation Guide 2.1 3.2.2 / 3.2.3 p. 12: a 256-bit conditioned entropy sample seeds "the
+ * CTR_DRBG defined in section 10.2.1 of NIST SP 800-90A ... using the AES block cipher"; 256 bits = seedlen of
+ * AES-128 in SP 800-90A Table 3: keylen 128 + blocklen 128). The deterministic model's choices: the 256-bit
+ * entropy_input of the instantiation (10.2.1.3.1) = the 64-bit seed little-endian followed by 24 zero bytes
+ * (the "conditioned sample"), no nonce, an empty personalization_string, no reseed (the hardware's reseed
+ * from its entropy source has no deterministic counterpart); one CTR_DRBG_Generate of 64 bits without
+ * additional_input (10.2.1.5.1) per value, the 8 bytes read little-endian. RDRAND, RDSEED (the ENRNG has no
+ * deterministic counterpart either) and x86_rdrand_bytes share one sequence, as before (U835). AES is QEMU's
+ * crypto/aes.c (as Key Locker U100 / PBNDKB U807). Independent reference: ref_ctr_drbg.py (P42; 'cryptography'
+ * AES) and the Emulator lib's emu::ctr_drbg (selftest engine_rng: equal sequences).
+ */
+#include "crypto/aes.h"
+
+/* SP 800-90A 10.2.1.2 CTR_DRBG_Update (keylen 128, blocklen 128, seedlen 256): provided_data = 'pd' (NULL = 0^256) */
+static void x86_drbg_update(CPUX86State *env, const uint8_t *pd)
+{
+    AES_KEY k;
+    uint8_t temp[32];
+    int i, j;
+
+    AES_set_encrypt_key(env->drbg_key, 128, &k);
+    for (i = 0; i < 32; i += 16) {
+        for (j = 15; j >= 0 && ++env->drbg_v[j] == 0; j--) {
+            /* V = (V + 1) mod 2^128, big-endian */
+        }
+        AES_encrypt(env->drbg_v, temp + i, &k);
+    }
+    for (i = 0; i < 32; i++) {
+        temp[i] ^= pd ? pd[i] : 0;
+    }
+    memcpy(env->drbg_key, temp, 16);
+    memcpy(env->drbg_v, temp + 16, 16);
+}
+
+/* SP 800-90A 10.2.1.3.1 CTR_DRBG_Instantiate_algorithm (no df): Key = 0^128, V = 0^128, Update(seed_material) */
+static void x86_drbg_instantiate(CPUX86State *env)
+{
+    uint8_t seed_material[32] = {0};
+
+    stq_le_p(seed_material, env->rdrand_seed);  /* entropy_input; personalization_string empty */
+    memset(env->drbg_key, 0, 16);
+    memset(env->drbg_v, 0, 16);
+    x86_drbg_update(env, seed_material);
+    env->drbg_ready = 1;
+}
+
+/* SP 800-90A 10.2.1.5.1 CTR_DRBG_Generate_algorithm (no df, no additional_input), requested_number_of_bits 64 */
 static uint64_t x86_rdrand_seeded(CPUX86State *env)
 {
-    uint64_t z = env->rdrand_seed + ++env->rdrand_count * 0x9e3779b97f4a7c15ULL;
+    AES_KEY k;
+    uint8_t out[16];
+    int j;
 
-    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
-    z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
-    return z ^ (z >> 31);
+    if (!env->drbg_ready) {
+        x86_drbg_instantiate(env);
+    }
+    AES_set_encrypt_key(env->drbg_key, 128, &k);
+    for (j = 15; j >= 0 && ++env->drbg_v[j] == 0; j--) {
+        /* V = (V + 1) mod 2^128 */
+    }
+    AES_encrypt(env->drbg_v, out, &k);
+    x86_drbg_update(env, NULL);                 /* additional_input = 0^seedlen */
+    env->rdrand_count++;
+    return ldq_le_p(out);                       /* leftmost 64 bits, little-endian */
 }
 
 /* host DRNG: 1 = success (*v valid), 0 = the host instruction reported CF = 0 */

@@ -4732,7 +4732,8 @@ void helper_invpcid(CPUX86State *env, target_ulong type, target_ulong lo, target
  * Not modelled (platform state Unicorn does not have): the 256-bit platform-specific key that
  * PBNDKB derives the wrapping key from is a fixed model constant (32 zero bytes), so the bind
  * structures are not platform-bound; the random values (key randomization, IV) come from the
- * same source as RDRAND (qemu_guest_getrandom), whose failure is the ENTROPY_ERROR path.
+ * same source as RDRAND (since U2091 x86_rdrand_bytes: the seeded CTR_DRBG or the host DRNG; U807 read
+ * qemu_guest_getrandom), whose failure is the ENTROPY_ERROR path.
  */
 static const uint32_t pb_sha256_k[64] = {
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
@@ -4968,7 +4969,7 @@ void helper_pbndkb(CPUX86State *env)
 {
     uintptr_t ra = GETPC();
     uint64_t in = env->regs[R_EBX], out = env->regs[R_ECX];
-    uint8_t s[256], o[256], rnd[64], iv[12], wkey[32], aad[176], tag[16];
+    uint8_t s[256], o[256], rnd[64], iv[12], ivb[16], wkey[32], aad[176], tag[16];   /* ivb: U2091 */
     int i;
 
 #if __Use_Original_Qemu != 1 /* ours (U1304) */
@@ -4985,7 +4986,9 @@ void helper_pbndkb(CPUX86State *env)
         raise_exception_ra(env, EXCP0D_GPF, ra);
     }
     if (s[160] == 1) {
-        if (qemu_guest_getrandom(rnd, sizeof(rnd)) < 0) {
+        /* U2091 (plan 3.M6: every emulated random source from the RDRAND source - the seeded CTR_DRBG or, with
+         * UC_X86_RDRAND_HOST, the host DRNG; U807 read the host OS generator here) */
+        if (!x86_rdrand_bytes(env, rnd, sizeof(rnd))) {
             goto entropy_error;
         }
         for (i = 0; i < 64; i++) {
@@ -4993,9 +4996,10 @@ void helper_pbndkb(CPUX86State *env)
         }
     }
     pb_hmac_sha256(pb_platform_key, s + 128, 32, wkey);     /* U1120: shared with PCONFIG */
-    if (qemu_guest_getrandom(iv, sizeof(iv)) < 0) {
+    if (!x86_rdrand_bytes(env, ivb, sizeof(ivb))) {     /* U2091: two 64-bit values, the IV = their first 12 bytes */
         goto entropy_error;
     }
+    memcpy(iv, ivb, sizeof(iv));
     memset(aad, 0, sizeof(aad));
     memcpy(aad + 8, iv, 12);
     memcpy(aad + 48, s + 128, 128);

@@ -496,6 +496,12 @@ struct uc_struct {
     void (*mem_write_notify)(struct uc_struct *uc, uint64_t addr, uint64_t len);
     // NoVmp U1622: UC_CTL_X86_WAIT_WAKE (set = 1: write *w; set = 0: read into *w)
     uc_err (*x86_wait_wake)(struct uc_struct *uc, int set, uint64_t *w);
+    // NoVmp U2090 (plan 3.M6): UC_CTL_X86_VCLOCK - the virtual time base of the TSC (unicorn.h).
+    // vclock_done = instructions of the finished uc_emu_start runs since the control was written
+    // (the running one is emu_counter); x86_vclock_wait reads the CPU's TPAUSE / UMWAIT ticks.
+    int vclock_mode;
+    uint64_t vclock_start, vclock_rate, vclock_advanced, vclock_done;
+    uint64_t (*x86_vclock_wait)(struct uc_struct *uc);
 #if defined(WIN32) && defined(WIN32_ENABLE_VEH)
     bool prealloc; // Commit the whole code gen buffer upfront instead of
                    // relying on lazy commit via the vectored exception handler.
@@ -529,6 +535,21 @@ struct uc_context {
 #endif /* __Use_Original_Qemu (U1644) */
     char data[0];         // context
 };
+
+#if __Use_Original_Qemu != 1 /* ours (U2090) */
+// NoVmp U2090 (plan 3.M6): the instructions started since UC_CTL_X86_VCLOCK was written = the finished runs
+// (vclock_done, folded at the end of each uc_emu_start) + the running one's count hook (emu_counter, only while a
+// run is in progress: it is reset at the next start); the virtual time base now (UC_X86_VCLOCK_VIRTUAL) = start +
+// that count * ticks per instruction + the advanced ticks, modulo 2^64 like the hardware counter
+static inline uint64_t uc_vclock_insns(struct uc_struct *uc)
+{
+    return uc->vclock_done + (uc->nested_level > 0 ? (uint64_t)uc->emu_counter : 0);
+}
+static inline uint64_t uc_vclock_base(struct uc_struct *uc)
+{
+    return uc->vclock_start + uc_vclock_insns(uc) * uc->vclock_rate + uc->vclock_advanced;
+}
+#endif /* __Use_Original_Qemu (U2090) */
 
 // We have to support 32bit system so we can't hold uint64_t on void*
 static inline void uc_add_exit(uc_engine *uc, uint64_t addr)

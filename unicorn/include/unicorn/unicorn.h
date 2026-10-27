@@ -824,9 +824,12 @@ typedef enum uc_control_type {
     UC_CTL_X86_APX,
     // x86 only (NoVmp U835, decision D8): where RDRAND and RDSEED take their values.
     // UC_X86_RDRAND_SEEDED (the default, seed 0): a deterministic model - the n-th value
-    // drawn (n = 0, 1, ...; RDRAND and RDSEED share one sequence) is SplitMix64 of
-    // seed + (n + 1) * 9E3779B97F4A7C15h, truncated to the operand size, and CF = 1 (the
-    // instruction always succeeds). The seed and the count of values drawn are CPU state:
+    // drawn (n = 0, 1, ...; RDRAND and RDSEED share one sequence; PCONFIG / PBNDKB take their
+    // random bytes from it too, U2091) is the n-th 64-bit CTR_DRBG_Generate output of NIST
+    // SP 800-90A Rev. 1 10.2.1 with AES-128 and no derivation function, instantiated with the
+    // entropy input = the seed (8 bytes little-endian) || 24 zero bytes and no personalization
+    // (NoVmp U2091; U835 used SplitMix64), truncated to the operand size, and CF = 1 (the
+    // instruction always succeeds). The seed, the count of values drawn and the DRBG state are CPU state:
     // uc_context_save / uc_context_restore carry them, so a restored context replays the same
     // values. UC_X86_RDRAND_HOST: the host CPU's DRNG - RDRAND / RDSEED executed on the host
     // (selected at run time from the host CPUID), value and CF as the host returns them (CF = 0
@@ -1065,7 +1068,30 @@ typedef enum uc_control_type {
     // Any time; kept across a CPU reset and uc_context_restore. Write: @args = (uint64_t w);
     // Read: @args = (uint64_t *w)
     UC_CTL_X86_WAIT_WAKE,
+    // x86 only (NoVmp U2090, plan 3.M6 "one virtual time base"): the time base of the time-stamp
+    // counter. UC_X86_VCLOCK_HOST (the default): QEMU's cpu_get_ticks(), the host's TSC (stock
+    // behaviour; emu-alltest's hardware comparison keeps it). UC_X86_VCLOCK_VIRTUAL: the time base is
+    // start + n * ticks_per_insn + advanced, where n counts the instructions started (code-hook events
+    // of Unicorn's count hook, which stays installed while the mode is virtual, also for
+    // uc_emu_start(count = 0)) since this control was written, and 'advanced' the ticks added by
+    // UC_CTL_X86_VCLOCK_ADVANCE (time that passes without instructions: a wait). RDTSC / RDTSCP /
+    // RDMSR IA32_TIME_STAMP_COUNTER read time base + IA32_TSC_ADJUST + the TPAUSE / UMWAIT wait ticks
+    // (U905 / U1620), every other TSC consumer (TPAUSE deadlines, the VMX-preemption timer) the same
+    // counter. Writing sets the mode and restarts n and 'advanced' at 0 (any time; ticks_per_insn 0 ->
+    // UC_ERR_ARG in virtual mode). Not part of a uc_context (time is monotonic: a restore never takes
+    // the clock back). Write: @args = (int mode, uint64_t start, uint64_t ticks_per_insn);
+    // Read: @args = (int *mode, uint64_t *now, uint64_t *insns) - now = the time base now + the
+    // TPAUSE / UMWAIT wait ticks (the counter RDTSC reads without IA32_TSC_ADJUST), insns = n.
+    UC_CTL_X86_VCLOCK,
+    // x86 only (NoVmp U2090): virtual mode only (UC_ERR_ARG otherwise or on 64-bit overflow): the
+    // time base advances by 'ticks' without instructions (the environment's waits: a time-out, a
+    // delay). Write: @args = (uint64_t ticks)
+    UC_CTL_X86_VCLOCK_ADVANCE,
 } uc_control_type;
+
+// UC_CTL_X86_VCLOCK modes (NoVmp U2090)
+#define UC_X86_VCLOCK_HOST 0       // the host's time-stamp counter (stock QEMU, default)
+#define UC_X86_VCLOCK_VIRTUAL 1    // start + instructions * ticks_per_insn + advanced
 
 // UC_CTL_X86_WAIT_WAKE default (NoVmp U1622): 2^21 TSC ticks (about 0.6 ms at 3494.4 MHz)
 #define UC_X86_WAIT_WAKE_DEFAULT 0x200000ull
@@ -1265,6 +1291,15 @@ See sample_ctl.c for a detailed example.
     uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_RDRAND, 2), (int)(mode), (uint64_t)(seed))
 #define uc_ctl_get_x86_rdrand(uc, mode, seed)                                  \
     uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_RDRAND, 2), (int *)(mode), (uint64_t *)(seed))
+// NoVmp U2090: UC_CTL_X86_VCLOCK / UC_CTL_X86_VCLOCK_ADVANCE
+#define uc_ctl_set_x86_vclock(uc, mode, start, ticks_per_insn)                 \
+    uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_VCLOCK, 3), (int)(mode),                \
+           (uint64_t)(start), (uint64_t)(ticks_per_insn))
+#define uc_ctl_get_x86_vclock(uc, mode, now, insns)                            \
+    uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_VCLOCK, 3), (int *)(mode),               \
+           (uint64_t *)(now), (uint64_t *)(insns))
+#define uc_ctl_x86_vclock_advance(uc, ticks)                                   \
+    uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_VCLOCK_ADVANCE, 1), (uint64_t)(ticks))
 #define uc_ctl_get_x86_exception(uc, exc)                                      \
     uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_EXCEPTION, 1), (exc))
 #define uc_ctl_get_x86_mktme_key(uc, keyid, key)                               \

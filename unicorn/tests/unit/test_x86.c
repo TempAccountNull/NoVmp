@@ -22054,14 +22054,33 @@ static void test_x86_rg_cpuid_0d1_ebx(void)
     TEST_CHECK(r[0] != 0 && r[1] == 0);
 }
 
-/* U835: the seeded model's n-th value (n = 1, 2, ...), an independent SplitMix64 */
+/*
+ * U835 / U2091 (plan 3.M6): the seeded model's n-th value (n = 1, 2, ...) - since U2091 the CTR_DRBG of NIST SP 800-90A
+ * Rev. 1 10.2.1 (AES-128, no derivation function, entropy input = the seed little-endian || 24 zero bytes, no
+ * personalization; one 64-bit Generate per value). Known answers from the independent reference model
+ * ref_ctr_drbg.py (notes/eread/P42_phase3_m6.md; AES of the 'cryptography' package, FIPS-197 C.1 self-checked) - U835's
+ * SplitMix64 values are gone.
+ */
 static uint64_t rg_splitmix(uint64_t seed, uint64_t n)
 {
-    uint64_t z = seed + n * 0x9e3779b97f4a7c15ULL;
+    static const struct {
+        uint64_t seed;
+        uint64_t v[6];
+    } kat[] = {
+        {0x0ULL, {0xBA68F086D3250ED4ULL, 0x744359FBB1126FBCULL, 0x6D3C7FD031E91FE5ULL, 0x1B5ADA15FE535E48ULL, 0x18DED4B00B933F78ULL, 0x86C55E3EBE7CACD5ULL}},
+        {0x1234ULL, {0x880DB7BEEF281D0AULL, 0xECD82F7D4F4C8C5FULL}},
+        {0xfeedULL, {0xF6C0706BDBE0667DULL}},
+        {0x4dULL, {0x2409E1EC5ABD7ACDULL, 0xCC3E31F75A2EE156ULL, 0x4FD9E5A1D2B7B6A1ULL, 0xFAF72F0A175F8F69ULL, 0x483A07CD20F9F66FULL}},
+    };
+    size_t i;
 
-    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
-    z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
-    return z ^ (z >> 31);
+    for (i = 0; i < sizeof(kat) / sizeof(kat[0]); i++) {
+        if (kat[i].seed == seed && n >= 1 && n <= 6 && kat[i].v[n - 1]) {
+            return kat[i].v[n - 1];
+        }
+    }
+    TEST_CHECK_(0, "no known answer for seed %" PRIx64 " value %" PRIu64, seed, n);
+    return 0;
 }
 
 /* rdrand rax; pushfq; pop r8; rdseed rbx; pushfq; pop r9; rdrand ecx; rdrand dx */
@@ -22100,7 +22119,7 @@ static uc_engine *rg_rdrand_open(int set, int mode, uint64_t seed)
 
 /*
  * U835 (decision D8): UC_CTL_X86_RDRAND. Default = seeded model, seed 0: RDRAND and RDSEED
- * draw SplitMix64(seed + n * 9E3779B97F4A7C15h), n = 1, 2, ... in program order, truncated to
+ * draw the model's values (U2091: CTR_DRBG; rg_splitmix keeps its name), n = 1, 2, ... in program order, truncated to
  * the operand size (a 32-bit destination zero-extends, a 16-bit one keeps bits 63:16), CF = 1
  * and OF SF ZF AF PF = 0. Same seed -> same values; another seed -> other values; writing the
  * control after init restarts the sequence; invalid modes are rejected.
@@ -22115,7 +22134,7 @@ static void test_x86_rg_rdrand_seeded(void)
     OK(uc_ctl_get_x86_rdrand(uc, &mode, &seed));
     TEST_CHECK(mode == UC_X86_RDRAND_SEEDED && seed == 0);
     rg_rdrand_run(uc, r);
-    TEST_CHECK(r[0] == rg_splitmix(0, 1) && r[0] == 0xe220a8397b1dcdafULL);
+    TEST_CHECK(r[0] == rg_splitmix(0, 1) && r[0] == 0xba68f086d3250ed4ULL);   /* U2091: the CTR_DRBG's first value for seed 0 */
     TEST_CHECK(r[1] == rg_splitmix(0, 2));
     TEST_CHECK(r[2] == (uint32_t)rg_splitmix(0, 3));
     TEST_CHECK(r[3] == (0xffffffffffff0000ULL | (uint16_t)rg_splitmix(0, 4)));
@@ -49253,6 +49272,166 @@ static void sj_tb_restart_halves(void)
 }
 /* ---- end U2045 (sj_) ---- */
 
+/*
+ * ---- NoVmp U2090 / U2091 (plan 3.M6 "one virtual time base + RNG", notes/eread/P42_phase3_m6.md), helper prefix vc_ ----
+ * U2090 UC_CTL_X86_VCLOCK: in virtual mode the TSC's time base = start + n * ticks_per_insn + advanced (n = the
+ * instructions started since the control was written, counted by Unicorn's count hook also for count = 0); RDTSC,
+ * RDMSR IA32_TIME_STAMP_COUNTER and IA32_TSC_ADJUST read the same counter; a uc_context restore never takes it back.
+ * U2091: PBNDKB takes its random bytes from the RDRAND source (the seeded CTR_DRBG): deterministic per seed.
+ */
+/* rdtsc; shl rdx, 32; or rax, rdx; mov rbx, rax; nop; nop; nop; rdtsc; shl rdx, 32; or rax, rdx  (10 instructions) */
+static const char vc_code[] = "\x0f\x31\x48\xc1\xe2\x20\x48\x09\xd0\x48\x89\xc3\x90\x90\x90"
+                              "\x0f\x31\x48\xc1\xe2\x20\x48\x09\xd0";
+
+static uc_engine *vc_open(void)
+{
+    uc_engine *uc;
+
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_MAX));
+    OK(uc_mem_map(uc, code_start, 0x8000, UC_PROT_ALL));
+    OK(uc_mem_write(uc, code_start, vc_code, sizeof(vc_code) - 1));
+    return uc;
+}
+
+static void vc_run(uc_engine *uc, size_t count, uint64_t *first, uint64_t *second)
+{
+    OK(uc_emu_start(uc, code_start, code_start + sizeof(vc_code) - 1, 0, count));
+    *first = nk_reg(uc, UC_X86_REG_RBX);
+    *second = nk_reg(uc, UC_X86_REG_RAX);
+}
+
+/* U2090: the virtual time base counts instructions, across runs, with advances, restarts on a write */
+static void test_x86_vc_virtual_rdtsc(void)
+{
+    uc_engine *uc = vc_open();
+    uint64_t a, b, now = 1, n = 1;
+    int mode = -1;
+
+    OK(uc_ctl_get_x86_vclock(uc, &mode, &now, &n));
+    TEST_CHECK(mode == UC_X86_VCLOCK_HOST && now == 0 && n == 0);     /* default: the host's counter, not reported */
+    OK(uc_ctl_set_x86_vclock(uc, UC_X86_VCLOCK_VIRTUAL, 0x1000, 3));
+    vc_run(uc, 0, &a, &b);
+    TEST_CHECK(a == 0x1000 + 1 * 3 && b == 0x1000 + 8 * 3);            /* the 1st and the 8th instruction */
+    TEST_MSG("a %" PRIx64 " b %" PRIx64, a, b);
+    OK(uc_ctl_get_x86_vclock(uc, &mode, &now, &n));
+    TEST_CHECK(mode == UC_X86_VCLOCK_VIRTUAL && n == 10 && now == 0x1000 + 10 * 3);
+    TEST_MSG("n %" PRIu64 " now %" PRIx64, n, now);
+    vc_run(uc, 0, &a, &b);                                             /* the next run continues the count */
+    TEST_CHECK(a == 0x1000 + 11 * 3 && b == 0x1000 + 18 * 3);
+    OK(uc_ctl_x86_vclock_advance(uc, 0x100));                          /* a wait: time passes without instructions */
+    vc_run(uc, 0, &a, &b);
+    TEST_CHECK(a == 0x1000 + 21 * 3 + 0x100 && b == 0x1000 + 28 * 3 + 0x100);
+    vc_run(uc, 4, &a, &b);                                             /* a count bound: 4 instructions run */
+    OK(uc_ctl_get_x86_vclock(uc, &mode, &now, &n));
+    TEST_CHECK(a == 0x1000 + 31 * 3 + 0x100 && n == 34);
+    TEST_MSG("bounded run: a %" PRIx64 " n %" PRIu64, a, n);
+    OK(uc_ctl_set_x86_vclock(uc, UC_X86_VCLOCK_VIRTUAL, 5, 1));        /* a write restarts the count */
+    vc_run(uc, 1000, &a, &b);                                          /* a bound larger than the code: the same values */
+    TEST_CHECK(a == 5 + 1 && b == 5 + 8);
+    OK(uc_close(uc));
+}
+
+/* U2090: invalid writes are refused; ADVANCE only in virtual mode, never wrapping */
+static void test_x86_vc_args(void)
+{
+    uc_engine *uc = vc_open();
+    uint64_t now = 0, n = 0;
+    int mode = 0;
+
+    TEST_CHECK(uc_ctl_set_x86_vclock(uc, 2, 0, 1) == UC_ERR_ARG);
+    TEST_CHECK(uc_ctl_set_x86_vclock(uc, -1, 0, 1) == UC_ERR_ARG);
+    TEST_CHECK(uc_ctl_set_x86_vclock(uc, UC_X86_VCLOCK_VIRTUAL, 0, 0) == UC_ERR_ARG);
+    TEST_CHECK(uc_ctl_x86_vclock_advance(uc, 1) == UC_ERR_ARG);        /* host mode */
+    TEST_CHECK(uc_ctl_get_x86_vclock(uc, NULL, &now, &n) == UC_ERR_ARG);
+    OK(uc_ctl_set_x86_vclock(uc, UC_X86_VCLOCK_VIRTUAL, 0, 1));
+    OK(uc_ctl_x86_vclock_advance(uc, ~0ULL - 1));
+    TEST_CHECK(uc_ctl_x86_vclock_advance(uc, 2) == UC_ERR_ARG);        /* would wrap */
+    OK(uc_ctl_set_x86_vclock(uc, UC_X86_VCLOCK_HOST, 0, 0));           /* back to the host's counter */
+    OK(uc_ctl_get_x86_vclock(uc, &mode, &now, &n));
+    TEST_CHECK(mode == UC_X86_VCLOCK_HOST && now == 0 && n == 0);
+    OK(uc_close(uc));
+}
+
+/* U2090: RDMSR 10H, WRMSR IA32_TSC_ADJUST (3BH) and RDTSC read one counter; the control's 'now' excludes TSC_ADJUST */
+static void test_x86_vc_msr_adjust(void)
+{
+    /* mov ecx, 10h; rdmsr; shl rdx, 32; or rax, rdx; mov rbx, rax; mov ecx, 3bh; mov eax, 500h; xor edx, edx; wrmsr;
+       rdtsc; shl rdx, 32; or rax, rdx   (12 instructions) */
+    static const char code[] = "\xb9\x10\x00\x00\x00\x0f\x32\x48\xc1\xe2\x20\x48\x09\xd0\x48\x89\xc3"
+                               "\xb9\x3b\x00\x00\x00\xb8\x00\x05\x00\x00\x31\xd2\x0f\x30"
+                               "\x0f\x31\x48\xc1\xe2\x20\x48\x09\xd0";
+    uc_engine *uc;
+    uint64_t now = 0, n = 0;
+    int mode = 0;
+
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_MAX));
+    OK(uc_ctl_set_x86_vclock(uc, UC_X86_VCLOCK_VIRTUAL, 0x10000, 2));
+    OK(uc_mem_map(uc, code_start, 0x8000, UC_PROT_ALL));
+    OK(uc_mem_write(uc, code_start, code, sizeof(code) - 1));
+    OK(uc_emu_start(uc, code_start, code_start + sizeof(code) - 1, 0, 0));
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_RBX) == 0x10000 + 2 * 2);          /* RDMSR 10H is the 2nd instruction */
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_RAX) == 0x10000 + 10 * 2 + 0x500); /* RDTSC (10th) + IA32_TSC_ADJUST */
+    TEST_MSG("rdmsr %" PRIx64 " rdtsc %" PRIx64, nk_reg(uc, UC_X86_REG_RBX), nk_reg(uc, UC_X86_REG_RAX));
+    OK(uc_ctl_get_x86_vclock(uc, &mode, &now, &n));
+    TEST_CHECK(n == 12 && now == 0x10000 + 12 * 2);
+    OK(uc_close(uc));
+}
+
+/* U2090: a uc_context restore does not take the time base back (the TSC is monotonic, as U1620's wait ticks) */
+static void test_x86_vc_context(void)
+{
+    uc_engine *uc = vc_open();
+    uc_context *ctx;
+    uint64_t a1, b1, a2, b2, a3, b3;
+
+    OK(uc_ctl_set_x86_vclock(uc, UC_X86_VCLOCK_VIRTUAL, 0, 1));
+    OK(uc_context_alloc(uc, &ctx));
+    OK(uc_context_save(uc, ctx));
+    vc_run(uc, 0, &a1, &b1);
+    vc_run(uc, 0, &a2, &b2);
+    OK(uc_context_restore(uc, ctx));
+    vc_run(uc, 0, &a3, &b3);
+    TEST_CHECK(a1 == 1 && a2 == 11 && a3 == 21 && b3 == 28);
+    OK(uc_context_free(ctx));
+    OK(uc_close(uc));
+}
+
+/*
+ * U2091: PBNDKB's random values come from the RDRAND source (x86_rdrand_bytes): with the seeded CTR_DRBG (seed 0) the IV of
+ * a KEY_GENERATION_CTRL = 1 bind is the model's values 9 and 10 (after the 64 key-randomization bytes = values 1-8) - known
+ * answers of ref_ctr_drbg.py - and two engines write the same bind structure
+ */
+static void test_x86_vc_pbndkb_seeded(void)
+{
+    static const uint8_t iv_kat[12] = {0x36, 0x01, 0xda, 0x21, 0x80, 0xc6, 0xc6, 0xb5, 0x55, 0x22, 0x88, 0x91};
+    const uint64_t in = SI_DATA + 0x1000, out = SI_DATA + 0x1100;
+    uint8_t s[256], o[2][256];
+    int i, e;
+    SiCtx c;
+
+    for (e = 0; e < 2; e++) {
+        si_open(&c, 0, 0, 0, NULL, 0);
+        for (i = 0; i < 256; i++) {
+            s[i] = (uint8_t)(i * 5 + 1);
+        }
+        memset(s + 16, 0, 8);
+        memset(s + 36, 0, 28);
+        s[160] = 1;                                                    /* KEY_GENERATION_CTRL: randomize the keys */
+        memset(s + 161, 0, 95);
+        OK(uc_mem_write(c.uc, in, s, sizeof(s)));
+        si_set(&c, UC_X86_REG_RBX, in);
+        si_set(&c, UC_X86_REG_RCX, out);
+        TEST_CHECK(si_run(&c, "\x0f\x01\xc7", 3) == -1);
+        TEST_CHECK(si_get(&c, UC_X86_REG_RAX) == 0);
+        OK(uc_mem_read(c.uc, out, o[e], sizeof(o[e])));
+        OK(uc_close(c.uc));
+    }
+    TEST_CHECK(memcmp(o[0] + 24, iv_kat, 12) == 0);
+    TEST_CHECK(memcmp(o[0], o[1], 256) == 0);
+}
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -49930,4 +50109,9 @@ TEST_LIST = {
     {"test_x86_xpg_xor_then_crossing_insn", xpg_xor_then_crossing_insn},
     {"test_x86_xpg_xor_flags_survive", xpg_xor_flags_survive},
     {"test_x86_sj_tb_restart_halves", sj_tb_restart_halves},
+    {"test_x86_vc_virtual_rdtsc", test_x86_vc_virtual_rdtsc},
+    {"test_x86_vc_args", test_x86_vc_args},
+    {"test_x86_vc_msr_adjust", test_x86_vc_msr_adjust},
+    {"test_x86_vc_context", test_x86_vc_context},
+    {"test_x86_vc_pbndkb_seeded", test_x86_vc_pbndkb_seeded},
     {NULL, NULL}};

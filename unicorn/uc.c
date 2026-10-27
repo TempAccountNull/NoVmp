@@ -1261,6 +1261,15 @@ uc_err uc_emu_start(uc_engine *uc, uint64_t begin, uint64_t until,
     uc->skip_sync_pc_on_exit = false;
     uc->stop_request = false;
 
+#if __Use_Original_Qemu != 1 /* ours (U2090) */
+    /*
+     * NoVmp (ledger U2090, plan 3.M6): with UC_X86_VCLOCK_VIRTUAL the count hook counts the instructions of
+     * the virtual time base also for count = 0 (no bound: SIZE_MAX never stops the run)
+     */
+    if (count == 0 && uc->vclock_mode == UC_X86_VCLOCK_VIRTUAL) {
+        count = SIZE_MAX;
+    }
+#endif /* __Use_Original_Qemu (U2090) */
     uc->emu_count = count;
     // remove count hook if counting isn't necessary
     if (count <= 0 && uc->count_hook != 0) {
@@ -1299,6 +1308,12 @@ uc_err uc_emu_start(uc_engine *uc, uint64_t begin, uint64_t until,
 
     uc->vm_start(uc);
 
+#if __Use_Original_Qemu != 1 /* ours (U2090) */
+    /* NoVmp (ledger U2090): the run's instructions join the virtual time base (the one the count stopped at was not executed) */
+    if (uc->vclock_mode == UC_X86_VCLOCK_VIRTUAL) {
+        uc->vclock_done += uc->emu_counter > uc->emu_count ? uc->emu_count : uc->emu_counter;
+    }
+#endif /* __Use_Original_Qemu (U2090) */
     uc->nested_level--;
 
     // emulation is done if and only if we exit the outer uc_emu_start
@@ -3849,6 +3864,67 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
         break;
 
 #endif /* __Use_Original_Qemu (U1622) */
+
+#if __Use_Original_Qemu != 1 /* ours (U2090) */
+    case UC_CTL_X86_VCLOCK:
+        /* NoVmp U2090 (plan 3.M6): the TSC's time base, host (stock) or virtual (unicorn.h) */
+        if (uc->arch != UC_ARCH_X86) {
+            err = UC_ERR_ARG;
+        } else if (rw == UC_CTL_IO_READ) {
+            int *mode = va_arg(args, int *);
+            uint64_t *now = va_arg(args, uint64_t *);
+            uint64_t *insns = va_arg(args, uint64_t *);
+
+            if (!mode || !now || !insns) {
+                err = UC_ERR_ARG;
+                break;
+            }
+            UC_INIT(uc);
+            *mode = uc->vclock_mode;
+            *insns = 0;
+            *now = 0;   /* host mode: the host's counter is not reported */
+            if (uc->vclock_mode == UC_X86_VCLOCK_VIRTUAL) {
+                *insns = uc_vclock_insns(uc);
+                *now = uc_vclock_base(uc) + (uc->x86_vclock_wait ? uc->x86_vclock_wait(uc) : 0);
+            }
+            restore_jit_state(uc);
+        } else if (rw == UC_CTL_IO_WRITE) {
+            int mode = va_arg(args, int);
+            uint64_t start = va_arg(args, uint64_t);
+            uint64_t rate = va_arg(args, uint64_t);
+
+            if ((mode != UC_X86_VCLOCK_HOST && mode != UC_X86_VCLOCK_VIRTUAL) ||
+                (mode == UC_X86_VCLOCK_VIRTUAL && rate == 0)) {
+                err = UC_ERR_ARG;
+                break;
+            }
+            uc->vclock_mode = mode;
+            uc->vclock_start = start;
+            uc->vclock_rate = rate;
+            uc->vclock_advanced = 0;
+            /* the instructions count from this write: inside a run the running count is subtracted (mod 2^64) */
+            uc->vclock_done = uc->nested_level > 0 ? 0 - (uint64_t)uc->emu_counter : 0;
+        } else {
+            err = UC_ERR_ARG;
+        }
+        break;
+
+    case UC_CTL_X86_VCLOCK_ADVANCE:
+        /* NoVmp U2090: time passes without instructions (the environment's waits) */
+        if (uc->arch != UC_ARCH_X86 || rw != UC_CTL_IO_WRITE || uc->vclock_mode != UC_X86_VCLOCK_VIRTUAL) {
+            err = UC_ERR_ARG;
+        } else {
+            uint64_t ticks = va_arg(args, uint64_t);
+
+            if (uc->vclock_advanced + ticks < uc->vclock_advanced) {
+                err = UC_ERR_ARG;
+            } else {
+                uc->vclock_advanced += ticks;
+            }
+        }
+        break;
+
+#endif /* __Use_Original_Qemu (U2090) */
 
 #if __Use_Original_Qemu != 1 /* ours (U961) */
     case UC_CTL_X86_APIC_BUS:

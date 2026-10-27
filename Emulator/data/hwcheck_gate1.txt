@@ -79,9 +79,9 @@ mov eax, 0x7fffffff; xor ecx, ecx; cpuid
 rcpps xmm0, xmm1 | xmm1=0000803F00004040ABAAAA3E0000C842
 rsqrtps xmm0, xmm1 | xmm1=0000803F00004040ABAAAA3E0000C842
 # --- RDRAND / RDSEED flags and width (values differ by nature: "# host state", U539)
-rdrand eax # host state: RDRAND/RDSEED values [rax=0x0/0xFFFFFFFF00000000(rdrand)~0x7B1DCDAF | rax=0x0~0x7B1DCDAF rflags=0x202~0x203]
-rdrand ax | rax=0xFFFFFFFFFFFFFFFF # host state: RDRAND/RDSEED values [rax=0xFFFFFFFFFFFF0000/0xFFFFFFFFFFFF0000(rdrand)~0xFFFFFFFFFFFFCDAF | rax=0xFFFFFFFFFFFF0000~0xFFFFFFFFFFFFCDAF rflags=0x202~0x203 | -]
-rdseed rax # host state: RDRAND/RDSEED values [rax=0x0/0x0(rdrand)~0xE220A8397B1DCDAF | rax=0x0~0xE220A8397B1DCDAF rflags=0x202~0x203]
+rdrand eax # host state: RDRAND/RDSEED values [rax=0x0/0xFFFFFFFF00000000(rdrand)~0xD3250ED4 | rax=0x0~0xD3250ED4 rflags=0x202~0x203]
+rdrand ax | rax=0xFFFFFFFFFFFFFFFF # host state: RDRAND/RDSEED values [rax=0xFFFFFFFFFFFF0000/0xFFFFFFFFFFFF0000(rdrand)~0xFFFFFFFFFFFF0ED4 | rax=0xFFFFFFFFFFFF0000~0xFFFFFFFFFFFF0ED4 rflags=0x202~0x203 | -]
+rdseed rax # host state: RDRAND/RDSEED values [rax=0x0/0x0(rdrand)~0xBA68F086D3250ED4 | rax=0x0~0xBA68F086D3250ED4 rflags=0x202~0x203]
 # --- FDP / FOP / FCS / FDS: updated only on an unmasked exception? (CPUID.7.EBX[6], [13])
 fld1; fdiv dword ptr [rsi+0x100]; fnstenv [rsi] | fcw=0x037B
 fld1; fdiv dword ptr [rsi+0x100]; fnstenv [rsi] | fcw=0x037F
@@ -98,8 +98,8 @@ fld1; fdiv dword ptr [rsi+0x100]; fxsave [rsi] | fcw=0x037B
 fxrstor [rsi]; fnstenv [rsi+0x200] | m+0x8000=7F0300000000AA007856341200000000F0DEBC9A00000000801F0000FFFF0000
 .byte 0x48, 0x0f, 0xae, 0x0e; fnstenv [rsi+0x200] | m+0x8000=7F0300000000AA007856341200000000F0DEBC9A00000000801F0000FFFF0000
 # --- RDRAND/RDSEED: upper bits populated, CF=1 (values differ by nature; check width)
-rdrand rax; mov rbx, rax; shr rbx, 47 # host state: RDRAND/RDSEED values [rax=0x0/0x0(rdrand)~0xE220A8397B1DCDAF | rax=0x0/0x0(rdrand)~0xE220A8397B1DCDAF rbx=0x0/0xFFFFFFFFFFFE0000(rdrand)~0x1C441 | rax=0x0/0x0(rdrand)~0xE220A8397B1DCDAF rbx=0x0/0xFFFFFFFFFFFE0000(rdrand)~0x1C441 rflags=0x202/0xFFFFFFFFFFFFF7AA(rdrand)~0x206 | rax=0x0/0x0(rdrand)~0xE220A8397B1DCDAF rflags=0x202/0xFFFFFFFFFFFFF7AA(rdrand)~0x206]
-rdrand eax; mov ebx, eax; shr ebx, 15 # host state: RDRAND/RDSEED values [rax=0x0/0xFFFFFFFF00000000(rdrand)~0x7B1DCDAF | rax=0x0/0xFFFFFFFF00000000(rdrand)~0x7B1DCDAF rbx=0x0/0xFFFFFFFFFFFE0000(rdrand)~0xF63B | rax=0x0/0xFFFFFFFF00000000(rdrand)~0x7B1DCDAF rbx=0x0/0xFFFFFFFFFFFE0000(rdrand)~0xF63B rflags=0x202/0xFFFFFFFFFFFFF7AA(rdrand)~0x203 | rax=0x0/0xFFFFFFFF00000000(rdrand)~0x7B1DCDAF rflags=0x202/0xFFFFFFFFFFFFF7AA(rdrand)~0x203]
+rdrand rax; mov rbx, rax; shr rbx, 47 # host state: RDRAND/RDSEED values [rax=0x0/0x0(rdrand)~0xBA68F086D3250ED4 | rax=0x0/0x0(rdrand)~0xBA68F086D3250ED4 rbx=0x0/0xFFFFFFFFFFFE0000(rdrand)~0x174D1 | rax=0x0/0x0(rdrand)~0xBA68F086D3250ED4 rbx=0x0/0xFFFFFFFFFFFE0000(rdrand)~0x174D1 rflags=0x202/0xFFFFFFFFFFFFF7AA(rdrand)~0x207 | rax=0x0/0x0(rdrand)~0xBA68F086D3250ED4 rflags=0x202/0xFFFFFFFFFFFFF7AA(rdrand)~0x207]
+rdrand eax; mov ebx, eax; shr ebx, 15 # host state: RDRAND/RDSEED values [rax=0x0/0xFFFFFFFF00000000(rdrand)~0xD3250ED4 | rax=0x0/0xFFFFFFFF00000000(rdrand)~0xD3250ED4 rbx=0x0/0xFFFFFFFFFFFE0000(rdrand)~0x1A64A | rax=0x0/0xFFFFFFFF00000000(rdrand)~0xD3250ED4 rbx=0x0/0xFFFFFFFFFFFE0000(rdrand)~0x1A64A rflags=0x202/0xFFFFFFFFFFFFF7AA(rdrand)~0x202 | rax=0x0/0xFFFFFFFF00000000(rdrand)~0xD3250ED4 rflags=0x202/0xFFFFFFFFFFFFF7AA(rdrand)~0x202]
 # --- XSAVEC / compacted XRSTOR round trip and #GP rules
 mov eax, 7; xor edx, edx; xsavec [rsi]; xorps xmm3, xmm3; vxorps ymm4, ymm4, ymm4; fninit; xrstor [rsi] | xmm3=11111111111111111111111111111111 st0=3FFF:8000000000000000 mxcsr=0x1FC0
 mov eax, 3; xor edx, edx; xsavec [rsi]; mov byte ptr [rsi+0x210], 1; xrstor [rsi]

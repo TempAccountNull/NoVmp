@@ -27,11 +27,24 @@
 #include "qemu/compiler.h"
 #include "sysemu/sysemu.h"
 #include "target/i386/cpu.h"
+#if __Use_Original_Qemu != 1 /* ours (U2090) */
+#include "uc_priv.h"
+#endif /* __Use_Original_Qemu (U2090) */
 
 
 /* TSC handling */
 uint64_t cpu_get_tsc(CPUX86State *env)
 {
+#if __Use_Original_Qemu != 1 /* ours (U2090) */
+    /*
+     * NoVmp (ledger U2090, plan 3.M6 "one virtual time base"): UC_CTL_X86_VCLOCK virtual mode - the time base
+     * advances with the instructions started (and the environment's waits), never with the host clock; the host
+     * mode (default) is the stock path below.
+     */
+    if (env->uc->vclock_mode == UC_X86_VCLOCK_VIRTUAL) {
+        return uc_vclock_base(env->uc);
+    }
+#endif /* __Use_Original_Qemu (U2090) */
     return cpu_get_ticks();
 }
 

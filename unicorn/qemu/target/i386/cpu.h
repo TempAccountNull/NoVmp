@@ -2775,6 +2775,17 @@ typedef struct CPUX86State {
     uint64_t rdrand_count;  /* values drawn since the seed was set */
     uint8_t rdrand_host;    /* 1 = the host CPU's DRNG (UC_X86_RDRAND_HOST) */
 #endif /* __Use_Original_Qemu (U835) */
+#if __Use_Original_Qemu != 1 /* ours (U2091) */
+    /*
+     * NoVmp (ledger U2091, plan 3.M6 / 1.K.11 P14): the working state of the seeded model's CTR_DRBG
+     * (NIST SP 800-90A Rev. 1 10.2.1, AES-128, no derivation function; int_helper.c): Key and V,
+     * instantiated from rdrand_seed at the first draw after the seed was set (drbg_ready 0 -> 1).
+     * Carried by uc_context with rdrand_seed / rdrand_count (a restore replays the same values).
+     */
+    uint8_t drbg_key[16];
+    uint8_t drbg_v[16];
+    uint8_t drbg_ready;
+#endif /* __Use_Original_Qemu (U2091) */
 
     TPRAccess tpr_access_type;
 
