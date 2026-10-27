@@ -1,7 +1,7 @@
 # Instruction sets supported (Intel + AMD/VIA)
 
-_Generated 2026-10-27 05:39 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `86bd118c Ledger: U2090-U2103 (agent/p3m6, P42 objects A / B / C - milestone
-3.M6, the one virtual time base + RNG), merged and verified`). Do not edit by hand._
+_Generated 2026-10-27 07:29 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `11415de9 Ledger: U2104-U2113 (agent/p3m7a P43 objects A / B / C + agent/p3m7b
+STEP 2 object - the KnownDlls slots, the DLL path search, nt_measured volatile fields by shape), merged and verified`). Do not edit by hand._
 
 Every instruction form (mnemonic + encoding) of the Intel SDM / XED list `Emulator/data/isa_manual_forms.tsv`, AMD and VIA forms included: **2912 forms, each
 listed exactly once**, in one of three tables by privilege class (`Emulator/data/isa_privilege.tsv`). Checked against an Intel i5-13600K (Raptor Lake) with
