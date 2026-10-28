@@ -265,6 +265,26 @@ static void tm_qip( const char* tag, ULONG cls, ULONG len, int retnull )
 	memset( g_buf, 0xCC, sizeof( g_buf ) );
 	st = NtQueryInformationProcess( (HANDLE)(LONG_PTR)-1, cls, len ? g_buf : NULL, len, retnull ? NULL : &ret );
 	w = tm_written( sizeof( g_buf ) );
+	/* k30 (1.K.30, U2176): "written" = the highest byte written over THREE identical queries with the fills CCH / 33H / 5AH - with one fill a
+	 * written last byte whose value was CCH was not counted (the process cookie 24H is random per process: its top byte is CCH once in 256
+	 * processes - "written 3H" in proof run 26 of the old tm_nt); the printed values come from the first query (fill CCH) */
+	if ( len && len <= 0x1000 )
+	{
+		static unsigned char keep[ 0x1000 ];
+		static const unsigned char fill2[ 2 ] = { 0x33, 0x5A };
+		ULONG r2;
+		size_t j, k;
+		memcpy( keep, g_buf, len );
+		for ( j = 0; j < 2; j++ )
+		{
+			memset( g_buf, fill2[ j ], len + 0x10 );
+			r2 = 0xCCCCCCCC;
+			( void )NtQueryInformationProcess( (HANDLE)(LONG_PTR)-1, cls, g_buf, len, retnull ? NULL : &r2 );
+			for ( k = len + 0x10; k > w; k-- )
+				if ( g_buf[ k - 1 ] != fill2[ j ] ) { w = k; break; }
+		}
+		memcpy( g_buf, keep, len );
+	}
 	printf( "tm_nt %s: NtQueryInformationProcess(NtCurrentProcess(), %lXH, Length %lXH, ReturnLength %s) -> status %08lXH, ReturnLength %lXH, written %zXH", tag,
 			(unsigned long)cls, (unsigned long)len, retnull ? "NULL" : "set", (unsigned long)st, (unsigned long)ret, w );
 	if ( st >= 0 && cls == 0x22 && w >= 4 ) printf( "; ExecuteFlags %lXH", (unsigned long)*(ULONG*)g_buf );
@@ -2606,6 +2626,80 @@ static ULONGLONG tm_ksystem_time( ULONG off )
 
 static const char* tm_yes( int b ) { return b ? "yes" : "no"; }
 
+/* k30 (1.K.30, U2175): QPC - KUSER InterruptTime read AT an InterruptTime update: spin until the clock interrupt writes a new
+ * InterruptTime (the kernel writes the time of that interrupt), then read QPC at once; the least of 3 such edges (a preemption between the
+ * edge and the QPC read only makes one larger). The difference is then the per-boot constant plus the interrupt latency (microseconds) -
+ * independent of the clock-tick period. The earlier bracketed read (KUSER, QPC, KUSER at any moment) adds the time since the last tick:
+ * up to one tick (the CURRENT timer resolution - 15.625 ms unless some process asked for less), so "constant within 1 ms" held only while
+ * a process of the system kept the timer at <= 1 ms (tm_nt time.probe). Returns 0 with *ok = 0 when no edge came within 100 ms (QPC). */
+static LONGLONG tm_qpc_it_edge( int* ok )
+{
+	LONGLONG best = 0;
+	int k, got = 0;
+	for ( k = 0; k < 3; k++ )
+	{
+		LARGE_INTEGER c, lim;
+		const ULONGLONG a = tm_ksystem_time( 8 );
+		ULONGLONG b = a;
+		QueryPerformanceCounter( &lim );
+		lim.QuadPart += 1000000;   /* 100 ms at 10 MHz */
+		do
+		{
+			b = tm_ksystem_time( 8 );
+			QueryPerformanceCounter( &c );
+		} while ( b == a && c.QuadPart < lim.QuadPart );
+		if ( b == a ) continue;
+		QueryPerformanceCounter( &c );
+		if ( !got || c.QuadPart - (LONGLONG)b < best ) best = c.QuadPart - (LONGLONG)b;
+		got = 1;
+	}
+	*ok = got;
+	return best;
+}
+
+/* k30 (U2175): the evidence - "tm_nt time.probe N": N sets of 5 samples 20 ms apart, both ways (bracketed / at the edge); per way how many
+ * sets spread more than 1 ms, the largest spread in 100 us steps; and the current timer resolution at the start / end (NtQueryTimerResolution
+ * CurrentTime). Relations and spreads only - the per-boot constant itself is never printed. */
+static void tm_time_probe( int n )
+{
+	ULONG mx = 0, mn = 0, cur0 = 0, cur1 = 0;
+	LONGLONG wb = 0, we = 0;
+	int s, k, over_b = 0, over_e = 0, noedge = 0;
+	NtQueryTimerResolution( &mx, &mn, &cur0 );
+	for ( s = 0; s < n; s++ )
+	{
+		LONGLONG bmin = 0, bmax = 0, emin = 0, emax = 0;
+		for ( k = 0; k < 5; k++ )
+		{
+			LARGE_INTEGER c;
+			ULONGLONG it0, it1;
+			LONGLONG d, e;
+			int ok;
+			it0 = tm_ksystem_time( 8 );
+			QueryPerformanceCounter( &c );
+			it1 = tm_ksystem_time( 8 );
+			d = c.QuadPart - (LONGLONG)( it0 / 2 + it1 / 2 );
+			e = tm_qpc_it_edge( &ok );
+			noedge += !ok;
+			if ( !k || d < bmin ) bmin = d;
+			if ( !k || d > bmax ) bmax = d;
+			if ( !k || e < emin ) emin = e;
+			if ( !k || e > emax ) emax = e;
+			Sleep( 20 );
+		}
+		over_b += bmax - bmin > 10000;
+		over_e += emax - emin > 10000;
+		if ( bmax - bmin > wb ) wb = bmax - bmin;
+		if ( emax - emin > we ) we = emax - emin;
+	}
+	NtQueryTimerResolution( &mx, &mn, &cur1 );
+	printf( "tm_nt time.probe: %d sets of 5 reads 20 ms apart; timer resolution CurrentTime at the start %lu us, at the end %lu us (MinimumTime %lu us, "
+			"MaximumTime %lu us); bracketed: sets spreading more than 1 ms %d, largest spread %lld us; at the edge (least of 3): sets spreading more "
+			"than 1 ms %d, largest spread %lld us; edges missing %d\n",
+			n, (unsigned long)cur0 / 10, (unsigned long)cur1 / 10, (unsigned long)mn / 10, (unsigned long)mx / 10, over_b, (long long)( wb / 10 ), over_e,
+			(long long)( we / 10 ), noedge );
+}
+
 static void case_time( void )
 {
 	LARGE_INTEGER f, c, c2, t;
@@ -2644,31 +2738,33 @@ static void case_time( void )
 	{
 		tq = *(volatile ULONGLONG*)( TM_KUSER + 0x320 );
 		gt = GetTickCount64();
+		it0 = tm_ksystem_time( 8 );   /* k30 (U2178): InterruptTime inside the consistent window (a preemption after it moved it alone) */
 		ok = tq == *(volatile ULONGLONG*)( TM_KUSER + 0x320 );
 	}
 	tc = ( ( tq & 0xFFFFFFFF ) * mult >> 24 ) + ( ( tq >> 32 ) * mult << 8 );
 	printf( "tm_nt time.tick: GetTickCount64() = (TickCountQuad * TickCountMultiplier) >> 24 %s; TickCountQuad = InterruptTime / MaximumTime (within 1) %s\n",
-			tm_yes( ok && gt == tc ), tm_yes( mx && ( tm_ksystem_time( 8 ) / mx - tq ) <= 1 ) );
+			tm_yes( ok && gt == tc ), tm_yes( mx && ( it0 / mx - tq ) <= 1 ) );
 
-	/* 3. QPC against the interrupt time (both 100 ns when the frequency is 10 MHz): bracketed reads; the difference QPC - InterruptTime is
-	 *    a per-boot constant (the reset-based TSC counter runs ahead of the kernel's interrupt time) - printed as its sign and whether
-	 *    it stays constant (within 1 ms over 5 reads 20 ms apart), never as a value */
+	/* 3. QPC against the interrupt time (both 100 ns when the frequency is 10 MHz); the difference QPC - InterruptTime is a per-boot
+	 *    constant (the reset-based TSC counter runs ahead of the kernel's interrupt time) - printed as its sign and whether it stays
+	 *    constant (within 1 ms over 5 reads 20 ms apart), never as a value. k30 (U2175): each read AT an InterruptTime update (the least
+	 *    of 3, tm_qpc_it_edge) - the bracketed read at any moment also measured the time since the last clock tick (up to the current
+	 *    timer resolution: 15.625 ms by default), so its "constant within 1 ms" depended on another process keeping the timer at 1 ms */
 	{
 		LONGLONG d, dmin = 0, dmax = 0;
-		int pos = 1;
+		int pos = 1, edges = 1, eok;
 		for ( k = 0; k < 5; k++ )
 		{
-			it0 = tm_ksystem_time( 8 );
-			QueryPerformanceCounter( &c );
-			it1 = tm_ksystem_time( 8 );
-			d = c.QuadPart - (LONGLONG)( it0 / 2 + it1 / 2 );
+			d = tm_qpc_it_edge( &eok );
+			if ( !eok ) edges = 0;
 			if ( !k || d < dmin ) dmin = d;
 			if ( !k || d > dmax ) dmax = d;
 			if ( d <= 0 ) pos = 0;
 			Sleep( 20 );
 		}
-		printf( "tm_nt time.qpc.it: QueryPerformanceCounter - KUSER InterruptTime (10 MHz both): positive %s, constant within 1 ms over 5 reads 20 ms apart %s\n",
-				tm_yes( f.QuadPart == 10000000 && pos ), tm_yes( f.QuadPart == 10000000 && dmax - dmin <= 10000 ) );
+		printf( "tm_nt time.qpc.it: QueryPerformanceCounter - KUSER InterruptTime (10 MHz both), read at an InterruptTime update (the least of 3): positive %s, "
+				"constant within 1 ms over 5 reads 20 ms apart %s\n",
+				tm_yes( f.QuadPart == 10000000 && edges && pos ), tm_yes( f.QuadPart == 10000000 && edges && dmax - dmin <= 10000 ) );
 	}
 	ok = 1;
 	for ( k = 0; k < 5; k++ )
@@ -2681,16 +2777,26 @@ static void case_time( void )
 	printf( "tm_nt time.qpc.sys: QueryPerformanceCounter <= NtQueryPerformanceCounter <= QueryPerformanceCounter (5 times) %s\n", tm_yes( ok ) );
 
 	/* 4. the system time */
-	it0 = tm_ksystem_time( 8 );
-	st0 = tm_ksystem_time( 0x14 );
+	/* k30 (1.K.30, U2178): InterruptTime and SystemTime as a CONSISTENT pair - InterruptTime read again after SystemTime must be unchanged
+	 * (no clock interrupt in between; up to 100 tries) - a tick or a preemption between the two reads moved one of them alone */
+	for ( k = 0; k < 100; k++ )
+	{
+		it0 = tm_ksystem_time( 8 );
+		st0 = tm_ksystem_time( 0x14 );
+		if ( it0 == tm_ksystem_time( 8 ) ) break;
+	}
 	t.QuadPart = 0;
 	st = NtQuerySystemTime( &t );
 	st1 = tm_ksystem_time( 0x14 );
 	GetSystemTimeAsFileTime( &fti );
 	ft = ( (ULONGLONG)fti.dwHighDateTime << 32 ) | fti.dwLowDateTime;
 	Sleep( 50 );
-	it1 = tm_ksystem_time( 8 );
-	gt = tm_ksystem_time( 0x14 );
+	for ( k = 0; k < 100; k++ )
+	{
+		it1 = tm_ksystem_time( 8 );
+		gt = tm_ksystem_time( 0x14 );
+		if ( it1 == tm_ksystem_time( 8 ) ) break;
+	}
 	printf( "tm_nt time.st: NtQuerySystemTime(&t) -> status %08lXH, t in [KUSER SystemTime before, after] %s; GetSystemTimeAsFileTime >= that %s; "
 			"SystemTime - InterruptTime constant within 1 ms over 50 ms %s\n", (unsigned long)st, tm_yes( (ULONGLONG)t.QuadPart >= st0 && (ULONGLONG)t.QuadPart <= st1 ),
 			tm_yes( ft >= st1 ), tm_yes( (LONGLONG)( ( gt - it1 ) - ( st0 - it0 ) ) <= 10000 && (LONGLONG)( ( gt - it1 ) - ( st0 - it0 ) ) >= -10000 ) );
@@ -2744,11 +2850,25 @@ static void case_time( void )
 			double ratio;
 			/* f * 2^64 / m: the TSC ticks per second that make umulh(TSC, m) count at f */
 			hz = _udiv128( (unsigned __int64)f.QuadPart, 0, m, &rem );
-			tsc0 = __rdtsc();
-			QueryPerformanceCounter( &q0 );
-			Sleep( 100 );
-			tsc1 = __rdtsc();
-			QueryPerformanceCounter( &q1 );
+			/* k30 (1.K.30, U2178): each QPC read bracketed by two RDTSC within 10 us (up to 100 tries; the TSC value = their middle) - an
+			 * unbracketed pair preempted for 100 us between the two reads already broke the 0.1 % (k30 proof 3, old tm_nt, 1 of 30) */
+			{
+				int pass, tries;
+				for ( pass = 0; pass < 2; pass++ )
+				{
+					ULONGLONG ta = 0, tb = ~0ull;
+					LARGE_INTEGER q;
+					if ( pass ) Sleep( 100 );
+					for ( tries = 0; tries < 100 && ( tb - ta ) > hz / 100000; tries++ )
+					{
+						ta = __rdtsc();
+						QueryPerformanceCounter( &q );
+						tb = __rdtsc();
+					}
+					if ( !pass ) { tsc0 = ta + ( tb - ta ) / 2; q0 = q; }
+					else { tsc1 = ta + ( tb - ta ) / 2; q1 = q; }
+				}
+			}
 			ratio = (double)( tsc1 - tsc0 ) / ( (double)( q1.QuadPart - q0.QuadPart ) * (double)hz / (double)f.QuadPart );
 			printf( "tm_nt time.tsc: hypervisor page QpcMultiplier non-zero, QpcBias %s; TSC frequency = QpcFrequency * 2^64 / QpcMultiplier = %llu.%llu MHz (to 0.1 MHz); "
 					"RDTSC / QPC over 100 ms agrees within 0.1%% %s\n",
@@ -2759,9 +2879,19 @@ static void case_time( void )
 			printf( "tm_nt time.tsc: no hypervisor page timing (status %08lXH)\n", (unsigned long)st );
 	}
 	{
+		/* k30 (1.K.30, U2178): the processor number read before AND after RDTSCP must agree (the thread was not moved to another processor
+		 * between the two reads) - up to 100 tries; with one unbracketed read a migration in between gave "no" (k30 proof 2, run 14 of the
+		 * old tm_nt under test.cmd's load) */
 		unsigned int aux = 0xCCCCCCCC;
-		(void)__rdtscp( &aux );
-		printf( "tm_nt time.tscaux: RDTSCP ECX (IA32_TSC_AUX) = GetCurrentProcessorNumber() %s, bits 31:12 %s\n", tm_yes( ( aux & 0xFFF ) == GetCurrentProcessorNumber() ),
+		DWORD p0 = 0, p1 = 1;
+		int tries;
+		for ( tries = 0; tries < 100 && p0 != p1; tries++ )
+		{
+			p0 = GetCurrentProcessorNumber();
+			(void)__rdtscp( &aux );
+			p1 = GetCurrentProcessorNumber();
+		}
+		printf( "tm_nt time.tscaux: RDTSCP ECX (IA32_TSC_AUX) = GetCurrentProcessorNumber() %s, bits 31:12 %s\n", tm_yes( p0 == p1 && ( aux & 0xFFF ) == p0 ),
 				( aux >> 12 ) ? "non-zero" : "0" );
 	}
 }
@@ -2784,6 +2914,109 @@ struct tm_case
  * PE's own); printed: statuses, bytes written, the FileAttributes value, the four times only as zero / non-zero, handle shapes, the
  * view's shape as in kd.map (addresses and paths never printed). */
 __declspec( dllimport ) TM_NTSTATUS NTAPI NtQueryAttributesFile( TM_OA* ObjectAttributes, PVOID FileInformation );
+/* k30 (1.K.30, U2173): "bytes written" of an NtQueryAttributesFile output is decided by THREE identical queries with three different fills
+ * (CCH, 33H, 5AH): a byte counts as NOT written only when it equals the fill after each of the three. With one fill (CCH, U2106) a written
+ * byte whose VALUE happened to be CCH was counted as not written - "bytes written 39" instead of 40 in about 1 of 22 runs of case sp, in
+ * isolation as under test.cmd's load (tm_nt sp.probe: the byte lies in LastAccessTime, the one time field that changes from query to
+ * query here - it carries the time of the latest open of the DLL by any process, a value Windows legitimately varies). A written byte
+ * keeps its value over the three back-to-back queries unless another open lands between them, and one value cannot equal three different
+ * fills; so the count is the stable quantity (the extent Windows writes). The printed values come from the first query (fill CCH); the
+ * three statuses must agree - otherwise the line says so (a loud difference). */
+static const char* g_sp_names[] = { "CreationTime", "LastAccessTime", "LastWriteTime", "ChangeTime", "FileAttributes", "padding" };
+static TM_NTSTATUS tm_sp_query( TM_OA* oa, unsigned char* fi, size_t n, unsigned char* mask, int* agree )
+{
+	static const unsigned char fill[ 3 ] = { 0xCC, 0x33, 0x5A };
+	static unsigned char f2[ 0x40 ];
+	TM_NTSTATUS st = 0, s2;
+	size_t j, k;
+	memset( mask, 0, n );
+	*agree = 1;
+	for ( j = 0; j < 3; j++ )
+	{
+		unsigned char* b = j ? f2 : fi;
+		memset( b, fill[ j ], n );
+		s2 = NtQueryAttributesFile( oa, b );
+		if ( !j ) st = s2;
+		else if ( s2 != st ) *agree = 0;
+		for ( k = 0; k < n; k++ ) mask[ k ] |= b[ k ] != fill[ j ];
+	}
+	return st;
+}
+/* k30 (U2173): the evidence behind tm_sp_query - "tm_nt sp.probe N": for each of case sp's five System32 DLLs and three ways of touching
+ * the file between two queries (q: nothing, o: NtOpenFile + NtClose as sp.open, m: open + image section + view as sp.map), N single-fill
+ * (CCH) queries: how often each time field CHANGED from the previous query, how often LastAccessTime lay within 2 s of the system time,
+ * and every byte that equalled the fill (a single-fill miscount) by field; and whether the three-fill count was 40 every time. Values,
+ * times and paths are never printed - counts and relations only. */
+static void tm_sp_probe( int n )
+{
+	static const wchar_t* const dll[] = { L"d3d11.dll", L"dxgi.dll", L"dcomp.dll", L"dwmapi.dll", L"kernel.appcore.dll" };
+	static wchar_t win[ 300 ], path[ 1000 ];
+	static const char modes[] = "qom";
+	UINT wl = GetWindowsDirectoryW( win, 300 );
+	size_t q, k, m;
+	if ( !wl || n < 1 ) { printf( "tm_nt sp.probe: no directory\n" ); return; }
+	for ( q = 0; q < sizeof( dll ) / sizeof( dll[ 0 ] ); q++ )
+		for ( m = 0; m < 3; m++ )
+		{
+			TM_USTR u;
+			TM_OA oa;
+			unsigned char fi[ 0x40 ], mask[ 0x40 ];
+			ULONGLONG prev[ 4 ] = { 0, 0, 0, 0 };
+			unsigned long changed[ 4 ] = { 0, 0, 0, 0 }, near_now = 0, coll[ 6 ] = { 0, 0, 0, 0, 0, 0 }, coll_q = 0, three40 = 0, bad = 0;
+			int i, agree;
+			wcscpy( path, L"\\??\\" );
+			wcscat( path, win );
+			wcscat( path, L"\\SYSTEM32\\" );
+			wcscat( path, dll[ q ] );
+			tm_ustr( &u, path );
+			tm_oa( &oa, NULL, &u );
+			oa.Attributes = 0x840;
+			for ( i = 0; i < n; i++ )
+			{
+				TM_NTSTATUS st;
+				FILETIME now;
+				ULONGLONG t[ 4 ], nw;
+				size_t w = 0, hit = 0;
+				memset( fi, 0xCC, sizeof( fi ) );
+				st = NtQueryAttributesFile( &oa, fi );
+				GetSystemTimeAsFileTime( &now );
+				if ( st < 0 ) { bad++; continue; }
+				for ( k = 0; k < 0x28; k++ )
+					if ( fi[ k ] == 0xCC ) { coll[ k < 0x20 ? k / 8 : ( k < 0x24 ? 4 : 5 ) ]++; hit = 1; }
+				coll_q += hit;
+				memcpy( t, fi, 0x20 );
+				nw = ( (ULONGLONG)now.dwHighDateTime << 32 ) | now.dwLowDateTime;
+				if ( t[ 1 ] <= nw + 20000000ull && nw <= t[ 1 ] + 20000000ull ) near_now++;
+				if ( i )
+					for ( k = 0; k < 4; k++ ) changed[ k ] += t[ k ] != prev[ k ];
+				memcpy( prev, t, sizeof( prev ) );
+				( void )tm_sp_query( &oa, fi, sizeof( fi ), mask, &agree );
+				for ( k = 0; k < sizeof( fi ); k++ ) w += mask[ k ];
+				three40 += w == 0x28 && agree;
+				if ( modes[ m ] != 'q' )
+				{
+					HANDLE h = NULL, sct = NULL;
+					ULONG_PTR iosb[ 2 ];
+					if ( NtOpenFile( &h, 0x100021, &oa, iosb, 5, 0x60 ) >= 0 )
+					{
+						if ( modes[ m ] == 'm' && NtCreateSection( &sct, 0xD, NULL, NULL, 0x10, 0x1000000, h ) >= 0 )
+						{
+							PVOID base = NULL;
+							SIZE_T vs = 0;
+							if ( NtMapViewOfSection( sct, (HANDLE)(LONG_PTR)-1, &base, 0, 0, NULL, &vs, 1, 0x800000, 0x80 ) >= 0 && base )
+								NtUnmapViewOfSection( (HANDLE)(LONG_PTR)-1, base );
+							NtClose( sct );
+						}
+						NtClose( h );
+					}
+				}
+			}
+			printf( "tm_nt sp.probe.%zu.%c: %d queries (%lu failed); changed from the previous query: CreationTime %lu, LastAccessTime %lu, LastWriteTime %lu, ChangeTime %lu; "
+					"LastAccessTime within 2 s of the system time %lu; single-fill (CCH) miscounts %lu (bytes by field: %s %lu, %s %lu, %s %lu, %s %lu, %s %lu, %s %lu); three-fill count 40 %lu of %d\n",
+					q, modes[ m ], n, bad, changed[ 0 ], changed[ 1 ], changed[ 2 ], changed[ 3 ], near_now, coll_q, g_sp_names[ 0 ], coll[ 0 ], g_sp_names[ 1 ], coll[ 1 ],
+					g_sp_names[ 2 ], coll[ 2 ], g_sp_names[ 3 ], coll[ 3 ], g_sp_names[ 4 ], coll[ 4 ], g_sp_names[ 5 ], coll[ 5 ], three40, n );
+		}
+}
 static void case_sp( void )
 {
 	static const wchar_t* const dll[] = { L"d3d11.dll", L"dxgi.dll", L"dcomp.dll", L"dwmapi.dll", L"kernel.appcore.dll" };
@@ -2798,7 +3031,8 @@ static void case_sp( void )
 	{
 		TM_USTR n;
 		TM_OA oa;
-		unsigned char fi[ 0x40 ];
+		unsigned char fi[ 0x40 ], mask[ 0x40 ];
+		int agree;
 		ULONG_PTR iosb[ 2 ];
 		HANDLE h = (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull, sct = (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull;
 		TM_NTSTATUS st;
@@ -2811,17 +3045,17 @@ static void case_sp( void )
 		tm_ustr( &n, path );
 		tm_oa( &oa, NULL, &n );
 		oa.Attributes = 0x840;
-		memset( fi, 0xCC, sizeof( fi ) );
-		st = NtQueryAttributesFile( &oa, fi );
-		for ( w = 0, k = 0; k < sizeof( fi ); k++ ) w += fi[ k ] != 0xCC;
+		st = tm_sp_query( &oa, fi, sizeof( fi ), mask, &agree );   /* k30 (U2173): three fills */
+		for ( w = 0, k = 0; k < sizeof( fi ); k++ ) w += mask[ k ];
 		printf( "tm_nt sp.%zu.app: NtQueryAttributesFile(\"\\??\\<the image's directory>\\", q );
 		tm_wprint( dll[ q ], wcslen( dll[ q ] ) );
 		{
 			size_t lo = sizeof( fi ), hi = 0, nz = 0;
 			for ( k = 0; k < sizeof( fi ); k++ )
-				if ( fi[ k ] != 0xCC ) { if ( k < lo ) lo = k; hi = k; nz += fi[ k ] != 0; }
+				if ( mask[ k ] ) { if ( k < lo ) lo = k; hi = k; nz += fi[ k ] != 0; }
 			printf( "\" 840H, buf) -> status %08lXH, bytes written %zu", (unsigned long)st, w );
 			if ( w ) printf( " (offsets %zXH..%zXH, non-zero %zu)", lo, hi, nz );
+			if ( !agree ) printf( "; the three queries' statuses DIFFER" );
 			printf( "\n" );
 		}
 		/* 2. <SystemRoot>\SYSTEM32 */
@@ -2830,9 +3064,8 @@ static void case_sp( void )
 		wcscat( path, L"\\SYSTEM32\\" );
 		wcscat( path, dll[ q ] );
 		tm_ustr( &n, path );
-		memset( fi, 0xCC, sizeof( fi ) );
-		st = NtQueryAttributesFile( &oa, fi );
-		for ( w = 0, k = 0; k < sizeof( fi ); k++ ) w += fi[ k ] != 0xCC;
+		st = tm_sp_query( &oa, fi, sizeof( fi ), mask, &agree );   /* k30 (U2173): three fills */
+		for ( w = 0, k = 0; k < sizeof( fi ); k++ ) w += mask[ k ];
 		printf( "tm_nt sp.%zu.sys: NtQueryAttributesFile(\"\\??\\<SystemRoot>\\SYSTEM32\\", q );
 		tm_wprint( dll[ q ], wcslen( dll[ q ] ) );
 		printf( "\" 840H, buf) -> status %08lXH, bytes written %zu", (unsigned long)st, w );
@@ -2840,6 +3073,7 @@ static void case_sp( void )
 			printf( "; CreationTime %s, LastAccessTime %s, LastWriteTime %s, ChangeTime %s, FileAttributes %lXH, bytes 24H..27H %02X %02X %02X %02X",
 					*(ULONGLONG*)( fi + 0 ) ? "non-zero" : "0", *(ULONGLONG*)( fi + 8 ) ? "non-zero" : "0", *(ULONGLONG*)( fi + 0x10 ) ? "non-zero" : "0",
 					*(ULONGLONG*)( fi + 0x18 ) ? "non-zero" : "0", (unsigned long)*(ULONG*)( fi + 0x20 ), fi[ 0x24 ], fi[ 0x25 ], fi[ 0x26 ], fi[ 0x27 ] );
+		if ( !agree ) printf( "; the three queries' statuses DIFFER" );
 		printf( "\n" );
 		/* 3. the open, the image section, the view */
 		iosb[ 0 ] = iosb[ 1 ] = (ULONG_PTR)0xCCCCCCCCCCCCCCCCull;
@@ -3623,6 +3857,16 @@ int main( int argc, char** argv )
 	}
 	if ( argc == 3 && !strcmp( argv[ 1 ], "run.detached" ) ) return tm_run_detached( argv[ 2 ] );   /* P41: a test PE started detached */
 	if ( argc == 3 && !strcmp( argv[ 1 ], "run.normal" ) ) return tm_run_normal( argv[ 2 ] );   /* P44: a test PE started normally */
+	if ( argc == 3 && !strcmp( argv[ 1 ], "sp.probe" ) )   /* k30 (U2173): case sp's time fields and fill collisions (N queries per DLL and way) */
+	{
+		tm_sp_probe( atoi( argv[ 2 ] ) );
+		return 0;
+	}
+	if ( argc == 3 && !strcmp( argv[ 1 ], "time.probe" ) )   /* k30 (U2175): QPC - InterruptTime bracketed / at the edge (N sets) */
+	{
+		tm_time_probe( atoi( argv[ 2 ] ) );
+		return 0;
+	}
 	if ( argc == 7 && !strcmp( argv[ 1 ], "of.probe" ) )   /* P46: one NtOpenFile (ACCESS SHARE OPTIONS ATTRIBUTES hex, the NT path) */
 	{
 		wchar_t path[ 400 ];

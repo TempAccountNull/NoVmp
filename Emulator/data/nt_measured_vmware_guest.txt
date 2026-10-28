@@ -578,7 +578,7 @@ tm_nt time.nqpc.null: NtQueryPerformanceCounter(NULL, &f) -> status C0000005H
 tm_nt time.res: NtQueryTimerResolution -> status 00000000H, MaximumTime 2625AH, MinimumTime 1388H, CurrentTime in [MinimumTime, MaximumTime] yes; KUSER TickCountMultiplier 0FA00000H = (MaximumTime << 24) / 10000 yes
 tm_nt time.kuser: TickCountLowDeprecated 0, TimeZoneBias non-zero, QpcData 0083H, QpcShift 00H
 tm_nt time.tick: GetTickCount64() = (TickCountQuad * TickCountMultiplier) >> 24 yes; TickCountQuad = InterruptTime / MaximumTime (within 1) yes
-tm_nt time.qpc.it: QueryPerformanceCounter - KUSER InterruptTime (10 MHz both): positive yes, constant within 1 ms over 5 reads 20 ms apart yes
+tm_nt time.qpc.it: QueryPerformanceCounter - KUSER InterruptTime (10 MHz both), read at an InterruptTime update (the least of 3): positive yes, constant within 1 ms over 5 reads 20 ms apart yes
 tm_nt time.qpc.sys: QueryPerformanceCounter <= NtQueryPerformanceCounter <= QueryPerformanceCounter (5 times) yes
 tm_nt time.st: NtQuerySystemTime(&t) -> status 00000000H, t in [KUSER SystemTime before, after] yes; GetSystemTimeAsFileTime >= that yes; SystemTime - InterruptTime constant within 1 ms over 50 ms yes
 tm_nt time.st.null: NtQuerySystemTime(NULL) -> status C0000005H

@@ -22,6 +22,19 @@ Checked:
      folder below %TEMP%): case sp's NtQueryAttributesFile miss writes nothing when the image's directory lies on the system volume and
      bytes 0..23H zero on the guest's other volume (E:) - the measured value belongs to the location, the location is fixed (as U2062's
      current directory) and the emulated image directory lies on the system volume.
+  5. k30 (1.K.30, U2173 / U2174): case sp's "bytes written" of NtQueryAttributesFile is counted by tm_nt with THREE fills (CCH / 33H / 5AH).
+     With one fill the native reference failed intermittently ("bytes written 39" at sp.N.sys: case sp alone 9 of 200 runs, under a
+     parallel build 143 of 3000 = 4.8 %; three fills: 0 of 3000): LastAccessTime carries the time of the latest image-section mapping of the DLL by any process
+     (tm_nt sp.probe: unchanged by queries and plain opens, changed by NtCreateSection SEC_IMAGE + a view, within 2 s of the system time),
+     so its low bytes vary and one of them equals the fill about once in 256. The count is the stable quantity (the extent Windows writes:
+     28H bytes); the time itself is printed as zero / non-zero only. On a native difference the suite prints the first differing native
+     line (value-free by tm_nt's design, screened) beside the recorded one. The proof under the full test.cmd (30 runs of this suite, old
+     vs new tm_nt interleaved) found three more native items of the same family: time.qpc.it (U2175: the bracketed QPC - InterruptTime
+     read also measured preemption - now read AT an InterruptTime update, the least of 3), qip.24 (U2176: the random process cookie's
+     top byte equal to the fill - now three fills), u32.teb.ci +900H (U2177: CLIENTINFO +100H varies - the VOLATILE rule below) and
+     the read races of case time (U2178: time.tscaux - a processor change between RDTSCP and GetCurrentProcessorNumber; time.tsc -
+     RDTSC / QPC pairs preempted - now each QPC read bracketed by two RDTSC within 10 us; time.st / time.tick - InterruptTime read in the
+     same consistent window as SystemTime / TickCountQuad).
 The emulator side (the answers implemented from these lines) is checked by emu-selftest nt_measured_services / nt_measured_pool /
 nt_measured_loader / nt_measured_csr (P40) / nt_measured_console (P41) and by suite win_env_sys_loader. Exit 0 = PASS, 1 = FAIL, 2 = usage.
 usage: python -I nt_measured.py REPO_ROOT TESTS_DIR
@@ -77,7 +90,19 @@ VOLATILE = [
               'ReplyBufferSize, Reserved1, Reserved2, the handle shape); inside: the seven fields present in order, each a hex value '
               '(< 10000000H) or its 8 bytes, IsEnabled (the low ULONG at +70H) 0 / 1 / 2, IsEnabled 0 = every enable field zero, '
               'changed bytes inside the region only'},
+    # k30 (1.K.30, U2177): TEB CLIENTINFO +100H (the u32.teb.ci token "+900H")
+    {'items': r'u32\.teb\.ci',
+     'field': 'TEB +900H = CLIENTINFO +100H (user32 / win32k thread state; the emulator does not model it: nt_kernel_win32k.cpp gui_convert writes '
+              '0 there and WATCHES it - a read by the guest stops), printed by tm_u32\'s tm_shape as "<user va, not mapped>" (a value from 10000H '
+              'to 7FFFFFFFFFFFH that is no address of the process) or as a small hex value (below 10000H)',
+     'why': 'a per-thread value set by win32k / user32 at the GUI conversion that is not an address of the process: it varies from start to '
+            'start, sometimes below 10000H (then tm_shape prints the number)',
+     'evidence': 'two measurements that differ (P48, 2026-10-28, the k30 proof under the full test.cmd: proof runs 20 / 21 / 22 natively '
+                 '"+900H 4FC0H", the recording and the other 27 runs "+900H <user va, not mapped>"); the rest of the line unchanged',
+     'shape': 'the whole line exact except the +900H token: non-zero, either "<user va, not mapped>" or a hex value 1H..FFFFH; 0, a region '
+              'shape <Rn>+X, user32+X, <kernel va> or a large value are rejected'},
 ]
+_V_CI100 = re.compile(r'^(tm_nt u32\.teb\.ci: .* \+900H )(<user va, not mapped>|[0-9A-F]{1,4}H|\S+)( \+908H .*)$')
 _V_REG = re.compile(r'^(tm_nt etw\.reg\d*: NtTraceControl\(0FH, .*?\) -> status [0-9A-F]{8}H, ReturnLength [0-9A-F]+H; changed bytes:)((?: \+[0-9A-F]{2})*)(; ReplyHandle \(\+18H\) .*)$')
 _V_FIELDS = re.compile(r'^(tm_nt etw\.reg\d*\.fields: RegType \d+, LoggerId \d+, Reserved0 \d+, ReplyCallback (?:unchanged|changed), ReplyBufferSize [0-9A-F]+H, '
                        r'Reserved1 [0-9A-F]+H, )EnableCallbackContext (?P<c>[^,]+), EnableFilterDesc (?P<f>[^,]+), EnableCallback (?P<e>[^,]+), '
@@ -99,6 +124,14 @@ def _q(s):
 def volatile_shape(line):
     """the shape of a VOLATILE line (a string two lines must share), None when the line breaks the shape, '' when no rule applies"""
     key = line.split(':', 1)[0]
+    if re.fullmatch(r'tm_nt ' + VOLATILE[1]['items'], key):   # k30 (U2177): CLIENTINFO +100H
+        m = _V_CI100.match(line)
+        if not m:
+            return None
+        tok = m.group(2)
+        if tok != '<user va, not mapped>' and not (re.fullmatch(r'[0-9A-F]{1,4}H', tok) and int(tok[:-1], 16) != 0):
+            return None
+        return m.group(1) + '<a non-zero value that is no address of the process>' + m.group(3)
     if not re.fullmatch(r'tm_nt ' + VOLATILE[0]['items'], key):
         return ''
     m = _V_REG.match(line)
@@ -137,6 +170,7 @@ def red_green_selfcheck(by_case):
     r5, f5 = rec['tm_nt etw.reg5'], rec['tm_nt etw.reg5.fields']
     r4, f4 = rec['tm_nt etw.reg4'], rec['tm_nt etw.reg4.fields']
     w4 = rec['tm_nt wnf4.1000']
+    ci = rec['tm_nt u32.teb.ci']   # k30 (U2177)
     red = [
         ('changed byte in Reserved2 (+40)', r5, r5.replace('changed bytes: +18 +2C', 'changed bytes: +18 +2C +40')),
         ('a stable changed byte missing (+2C)', r5, r5.replace('changed bytes: +18 +2C', 'changed bytes: +18')),
@@ -155,6 +189,12 @@ def red_green_selfcheck(by_case):
         ('WNF header changed (wnf4)', w4, w4.replace('header 00 00 00 00 04 00', 'header 00 00 00 00 05 00')),
         ('a stable line (qsi.c0 bytes)', rec['tm_nt qsi.c0'], rec['tm_nt qsi.c0'].replace('bytes 07 00', 'bytes 08 00')),
         ('case sp: the system-volume miss writing bytes', rec['tm_nt sp.0.app'], rec['tm_nt sp.0.app'].replace('bytes written 0', 'bytes written 36 (offsets 0H..23H, non-zero 0)')),
+        # k30 (U2177): CLIENTINFO +100H
+        ('CLIENTINFO +100H zero', ci, ci.replace('+900H <user va, not mapped>', '+900H 0')),
+        ('CLIENTINFO +100H an address of the process (<R4>+10H)', ci, ci.replace('+900H <user va, not mapped>', '+900H <R4>+10H')),
+        ('CLIENTINFO +100H a kernel address', ci, ci.replace('+900H <user va, not mapped>', '+900H <kernel va>')),
+        ('CLIENTINFO another field changed (+898H)', ci, ci.replace('+898H 4E4H', '+898H 4E5H')),
+        ('case sp: bytes written 39 (the single-fill miscount of k30)', rec['tm_nt sp.3.sys'], rec['tm_nt sp.3.sys'].replace('bytes written 40', 'bytes written 39')),
     ]
     green = [
         ('provider 5 not enabled (its session stopped)', r5, r4.replace('etw.reg4:', 'etw.reg5:').replace('provider 4, LoggerId 4', 'provider 5, LoggerId 5')),
@@ -163,6 +203,7 @@ def red_green_selfcheck(by_case):
          f4.replace('EnableCallbackContext 0H', 'EnableCallbackContext 1H').replace('EnableCallback 0H', 'EnableCallback bytes 00 00 00 00 00 00 00 80')),
         ('provider 4 enabled by a session (changed bytes)', r4, r4.replace('changed bytes: +18 +2C', 'changed bytes: +18 +2C +70 +87')),
         ('provider 5 at another level', f5, f5.replace('bytes 01 00 00 00 FF 00 00 00', 'bytes 01 00 00 00 04 00 00 00')),
+        ('CLIENTINFO +100H a small value (k30 proof runs 20 - 22: 4FC0H)', ci, ci.replace('+900H <user va, not mapped>', '+900H 4FC0H')),
     ]
     bad = []
     for what, want, got in red:
@@ -337,6 +378,15 @@ def main(argv):
             if not ok:
                 diffs.append('%s (exit %d, %d vs %d lines%s)' % (c, r.returncode, len(got), len(by_case[c]),
                                                                 ', first difference ' + next((g.split(':', 1)[0] for g, w in zip(got, by_case[c]) if not same_line(g, w)), '-') if r.returncode == EXIT_CODE.get(c, 0) else ''))
+                # k30 (1.K.30, U2174): print the first differing native line beside the recorded one - tm_nt prints shapes only (no value,
+                # address or path); the identifier screen of check 1 is applied to the native line first (withheld if it finds anything)
+                for g, w in zip(got, by_case[c]):
+                    if not same_line(g, w):
+                        hexes = [h for h in re.findall(r'\b([0-9A-F]{9,16})H?\b', g) if h not in ALLOWED_HEX and not re.fullmatch(r'(CC)+', h)]
+                        shown = '<withheld: the identifier screen found something>' if hexes or re.search(r'S-1-5-21-|DESKTOP-[A-Z0-9]{4}|\\Users\\|[A-Za-z]:\\', g) else g[:400]
+                        say('  native   %s' % shown)
+                        say('  recorded %s' % w[:400])
+                        break
         if image:
             # the image can stay held for a moment after its last process ended (a child of case con, a scanner): retry for up to 15 s
             for k in range(30):
