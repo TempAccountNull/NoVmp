@@ -58,6 +58,7 @@
 # P47 (U2165): etw.reg34 / etw.reg35 = bcrypt.dll's providers AC89E0C7... / 4B1AA7F3... (as bytes; = etw.reg31 / etw.reg32) registered as the 9th / 10th provider of a process (LoggerId 9 / 10, RegType 3) - test PE T9 under --Sys.
 # P47 (U2165): etw.reg36 / reg37 = the providers 00FE4EA7... / 4B1AA7F3... (as etw.reg33 / 35) registered by bcryptprimitives.dll as the 11th / 12th provider of a process (LoggerId 11 / 12) - test PE T9 under --Sys.
 # P47 (U2171, sample run 12 explorations s1 / y1 - y60): etw.reg38 .. etw.reg57 = the ETW providers of the DllMain phase after bcrypt (sechost, advapi32, shell32, ws2_32 ...) with their LoggerIds 33 .. 52 (etw.reg40 / reg43 / reg50 / reg54 ENABLED by a trace session of the guest: their enable state is VOLATILE, compared by shape); etwt33 / 34 / 36 / 37 / 45 / 46 / 51 = their TraceLogging traits blobs (the capture DLLs' bytes; etwt45 a blob with an empty provider name, found by content in shell32.dll). Probe mode cf.probe: one NtCreateFile from inside (the run-12 stop \Device\DeviceApi\CMApi: measured only, not modelled).
+# P49 (U2245, plan 3.M7): ahc.39 .. ahc.44 = the LookupCdb names tx1_seh.exe .. tx6_align.exe (the exception test PEs TX1 - TX6, suite win_env_exceptions).
 tm_nt sat.0: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 330H) -> status C0000225H, ReturnLength 0H, written 0H
 tm_nt sat.1: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 0H) -> status C0000225H, ReturnLength 0H, written 0H
 tm_nt sat.2: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 8H) -> status C0000225H, ReturnLength 0H, written 0H
@@ -477,6 +478,12 @@ tm_nt ahc.35: NtApphelpCacheControl(6 LookupCdb, Name "t7_vfs.exe", ParamsOut 4 
 tm_nt ahc.36: NtApphelpCacheControl(6 LookupCdb, Name "t8_pii.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
 tm_nt ahc.37: NtApphelpCacheControl(6 LookupCdb, Name "t9_rng.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
 tm_nt ahc.38: NtApphelpCacheControl(6 LookupCdb, Name "bcryptprimitives.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.39: NtApphelpCacheControl(6 LookupCdb, Name "tx1_seh.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.40: NtApphelpCacheControl(6 LookupCdb, Name "tx2_veh.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.41: NtApphelpCacheControl(6 LookupCdb, Name "tx3_step.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.42: NtApphelpCacheControl(6 LookupCdb, Name "tx4_xstate.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.43: NtApphelpCacheControl(6 LookupCdb, Name "tx5_peb.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.44: NtApphelpCacheControl(6 LookupCdb, Name "tx6_align.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
 tm_nt vmi.fresh: NtSetInformationVirtualMemory(-1, 4, 1, {a fresh image view's base, 1000H}, &1, 4) -> status C00000BBH
 tm_nt vmi.again: the same call again -> status C00000BBH
 tm_nt vmi.loaded: the same call on this process' kernelbase.dll base -> status C00000BBH

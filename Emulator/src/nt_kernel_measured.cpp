@@ -1300,12 +1300,14 @@ namespace emu::nt
 												  "t7_vfs.exe",   // P45 (U2129): ahc.35 test PE T7's image name
 												  "t8_pii.exe",   // P46 (U2144): ahc.36 test PE T8's image name
 												  "t9_rng.exe",   // P47 (U2167): ahc.37 test PE T9's image name
-												  "bcryptprimitives.dll" };   // P47 (U2167): ahc.38 bcrypt loads bcryptprimitives.dll (T9 exploration x8 system call 238)
+												  "bcryptprimitives.dll",   // P47 (U2167): ahc.38 bcrypt loads bcryptprimitives.dll (T9 exploration x8 system call 238)
+												  // P49 (U2245): ahc.39 .. ahc.44 the exception test PEs TX1 - TX6's image names
+												  "tx1_seh.exe", "tx2_veh.exe", "tx3_step.exe", "tx4_xstate.exe", "tx5_peb.exe", "tx6_align.exe" };
 		static const char* const measured80[] = { "msvcrt.dll", "oleaut32.dll", "dwmapi.dll", "setupapi.dll" };
 		uint32_t outv = 0xFFFFFFFF;
 		for ( const char* m : measured0 ) if ( ln == m ) outv = 0;
 		for ( const char* m : measured80 ) if ( ln == m ) outv = 0x80;
-		if ( outv == 0xFFFFFFFF ) return stop_( what + " - this module name is not measured (tm_nt ahc.0 .. ahc.36)" );
+		if ( outv == 0xFFFFFFFF ) return stop_( what + " - this module name is not measured (tm_nt ahc.0 .. ahc.44)" );
 		if ( !user_buffer( pout, 4, UC_PROT_WRITE ) ) return stop_( what + " - ParamsOut not writable: not measured" );
 		reply rr = done_( status::success, what + ": ParamsOut = " + hex( outv ) + ( outv ? " (as the guest's lookup answers this name)" : " (no compatibility-database entry)" ) + " (measured: tm_nt ahc)" );
 		if ( !put( pout, &outv, 4, rr ) ) return stop_( "writing ParamsOut failed after the probe" );
