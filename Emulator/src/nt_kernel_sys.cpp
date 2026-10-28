@@ -162,6 +162,11 @@ namespace emu::nt
 			r = svc_query_system_information( c );
 			return true;
 		}
+		if ( n == "NtGetContextThread" )
+		{
+			r = svc_get_context_thread( c );   // P49 (U2258)
+			return true;
+		}
 		if ( n == "NtOpenKey" || n == "NtOpenKeyEx" )
 		{
 			r = svc_open_key( c );
@@ -406,6 +411,27 @@ namespace emu::nt
 		std::string what;
 		switch ( cls )
 		{
+			case 0x1E:
+			case 0x1F:
+			{
+				// P49 (plan 3.M7 / 4.5.a, U2258): ProcessDebugObjectHandle (1EH) / ProcessDebugFlags (1FH) - phnt ntpsapi.h PROCESSINFOCLASS 30 / 31.
+				// MEASURED natively (test PE TX5, a process with no debugger; the buffer and ReturnLength pre-filled with CCH): 1EH, Length 8 =
+				// C0000353H STATUS_PORT_NOT_SET, the 8-byte handle WRITTEN 0, ReturnLength 8; 1FH, Length 4 = STATUS_SUCCESS, the ULONG 1 (no
+				// debugger: NoDebugInherit), ReturnLength 4. Other lengths: not measured - stop.
+				const bool obj = cls == 0x1E;
+				const uint32_t want = obj ? 8 : 4;
+				if ( len != want || !user_buffer( out, want, UC_PROT_WRITE ) || ( pret && !user_buffer( pret, 4, UC_PROT_WRITE ) ) )
+				{
+					r = stop_( std::string( obj ? "ProcessDebugObjectHandle (1EH)" : "ProcessDebugFlags (1FH)" ) + ", Length " + hex( len ) + ": not measured (TX5: Length " + hex( want ) +
+							   " with a writable buffer)" );
+					return true;
+				}
+				const uint64_t value = obj ? 0 : 1;
+				r = done_( obj ? 0xC0000353 : status::success, obj ? "ProcessDebugObjectHandle: STATUS_PORT_NOT_SET, the handle 0, ReturnLength 8 (no debug object; measured TX5 qip1e)"
+																	: "ProcessDebugFlags: 1 (no debugger), ReturnLength 4 (measured TX5 qip1f)" );
+				if ( !put( out, &value, want, r ) || ( pret && !put( pret, &want, 4, r ) ) ) r = stop_( "writing the result failed after the probe" );
+				return true;
+			}
 			case 0x34:
 			{
 				// P43 (U2109): ProcessMitigationPolicy (phnt ntpsapi.h PROCESSINFOCLASS 52; PROCESS_MITIGATION_POLICY_INFORMATION {Policy,
@@ -657,6 +683,13 @@ namespace emu::nt
 					   std::to_string( f_.processors ) + " processors";
 				break;
 			}
+			case 0x23:   // SystemKernelDebuggerInformation (phnt ntexapi.h SYSTEM_KERNEL_DEBUGGER_INFORMATION {BOOLEAN KernelDebuggerEnabled;
+						 // BOOLEAN KernelDebuggerNotPresent;}) - P49 (U2258): MEASURED natively (test PE TX5 qsi23, Length 2): STATUS_SUCCESS, {0, 1}
+						 // (no kernel debugger), ReturnLength 2; another length: stop (not measured)
+				if ( len != 2 ) return stop_( "SystemKernelDebuggerInformation (23H), Length " + hex( len ) + ": not measured (TX5: Length 2)" );
+				data = { 0, 1 };
+				what = "SystemKernelDebuggerInformation: KernelDebuggerEnabled 0, KernelDebuggerNotPresent 1 (measured TX5 qsi23)";
+				break;
 			case 0xC0:   // SystemFlushInformation (the name: the guest ntdll.pdb enum _SYSTEM_INFORMATION_CLASS)
 				// P39 (U2052): MEASURED natively (tm_nt qsi.c0*) - replaces the P36 answer STATUS_INVALID_INFO_CLASS ("NOT PROVIDED": no layout
 				// source then); the layout from phnt ntexapi.h:7057 SYSTEM_FLUSH_INFORMATION (nt_kernel_measured.cpp query_system_measured)
@@ -887,5 +920,26 @@ namespace emu::nt
 		const uint64_t sz = end - first;
 		if ( !put( pbase, &first, 8, rr ) || !put( psize, &sz, 8, rr ) || !put( pold, &old, 4, rr ) ) return stop_( "writing the result failed after the probe" );
 		return rr;
+	}
+
+	// ------------------------------------------------------------------------------------------------ P49 (U2258): NtGetContextThread
+	// NtGetContextThread( ThreadHandle, ThreadContext ) - phnt ntpsapi.h; GetThreadContext's system service. MEASURED natively (test PE TX5:
+	// GetThreadContext( GetCurrentThread(), CONTEXT with ContextFlags CONTEXT_DEBUG_REGISTERS 100010H ), Dr0-3 / Dr6 / Dr7 pre-filled with CCH):
+	// STATUS_SUCCESS (TRUE), Dr0 - Dr3, Dr6, Dr7 written 0 (no debug register is set in a thread without a debugger - the emulated thread never
+	// has one), ContextFlags unchanged. Only NtCurrentThread() ((HANDLE)-2) and exactly CONTEXT_DEBUG_REGISTERS are measured; anything else
+	// stops. The CONTEXT must be 16-byte aligned and writable (not measured otherwise: stop).
+	reply kernel::svc_get_context_thread( const call& c )
+	{
+		const uint64_t h = c.args[ 0 ], ctx = c.args[ 1 ];
+		if ( h != uint64_t( -2 ) ) return stop_( "NtGetContextThread( " + hex( h ) + " ): only NtCurrentThread() is measured (TX5)" );
+		if ( ( ctx & 15 ) || !user_buffer( ctx, 0x4D0, UC_PROT_READ | UC_PROT_WRITE ) ) return stop_( "NtGetContextThread: the CONTEXT " + hex( ctx ) + " is not an aligned writable CONTEXT - not measured" );
+		uint32_t flags = 0;
+		std::string err;
+		e_.read( ctx + 0x30, &flags, 4, err );
+		if ( flags != 0x100010 ) return stop_( "NtGetContextThread: ContextFlags " + hex( flags ) + " - only CONTEXT_DEBUG_REGISTERS (100010H) is measured (TX5)" );
+		const uint64_t zero[ 6 ] = {};
+		reply r = done_( status::success, "NtGetContextThread( NtCurrentThread(), CONTEXT_DEBUG_REGISTERS ): Dr0 - Dr3, Dr6, Dr7 = 0 (no debug register set; measured TX5)" );
+		if ( !put( ctx + 0x48, zero, sizeof( zero ), r ) ) return stop_( "writing the CONTEXT failed after the probe" );
+		return r;
 	}
 }

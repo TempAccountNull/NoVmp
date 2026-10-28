@@ -36,6 +36,20 @@
 // NtQueryAttributesFile, NtQueryFullAttributesFile, NtQueryDirectoryFile(Ex), NtClose (prototypes phnt ntioapi.h / ntobapi.h) - their code is a
 // system-call stub, so the stub here IS the kernel layer's service of that name with the stub's arguments (test PE T7: the same answers as
 // under --Sys, from the emulated file system of nt_kernel_vfs.cpp).
+// P49 (plan 3.M7, U2257; the exception test PEs TX2 - TX6; Windows SDK 10.0.26100.0 prototypes, Learn semantics, results measured natively):
+//   AddVectoredExceptionHandler( First, Handler ) / AddVectoredContinueHandler - um\errhandlingapi.h; Learn "AddVectoredExceptionHandler": a
+//                                handle (non-zero; here the address of the handler's record in a guest page of this layer), First != 0 = the
+//                                head of the list; RemoveVectoredExceptionHandler / RemoveVectoredContinueHandler( Handle ) = 1 removed, 0 not
+//                                found (measured TX2: removed 1, a second removal 0); the --HLE dispatcher (win_exception.cpp) calls them
+//   IsDebuggerPresent()          um\debugapi.h - the PEB's BeingDebugged (+2H)
+//   CheckRemoteDebuggerPresent( NtCurrentProcess(), pb ) - the kernel layer's NtQueryInformationProcess ProcessDebugPort: *pb = port != 0,
+//                                TRUE (measured TX5: returned 1, *pb 0); another process handle / a NULL pb = stop
+//   GetCurrentProcess() / GetCurrentThread() - the pseudo handles (HANDLE)-1 / (HANDLE)-2 (Learn)
+//   GetThreadContext( h, ctx ) = the kernel layer's NtGetContextThread (TRUE on STATUS_SUCCESS)
+//   GetProcessHeap()             the PEB's ProcessHeap (+30H)
+//   TlsAlloc / TlsSetValue / TlsFree - the TEB's TlsSlots (+1480H, indexes 0 .. 63; a slot is zeroed by TlsAlloc; um\processthreadsapi.h)
+//   SetLastError( code )         the TEB's LastErrorValue (+68H)
+// ntdll.dll NtQuerySystemInformation / NtGetContextThread are, like P45 / P46's exports, the kernel layer's services of that name.
 // The TLS start (U2010): under --HLE the loader's part of process start for TLS - the index, the thread's TLS block from the
 // template, the callbacks with DLL_PROCESS_ATTACH before the entry point - is done by emu::win (win_env.cpp) with a user-mode
 // trampoline in this page (start_trampoline).
@@ -62,7 +76,19 @@ namespace emu::hle
 					 get_std_handle, write_file, write_console_a, write_console_w, get_last_error,   // P41 (U2083): the last five
 					 char_upper_w,   // P44 (U2123): user32.dll CharUpperW
 					 nt_file_service,   // P45 (U2131): ntdll.dll's file-system system-service exports (the kernel layer's service of that name)
-					 bcrypt_gen_random };   // P47 (U2168): bcrypt.dll BCryptGenRandom (test PE T9)
+					 bcrypt_gen_random,   // P47 (U2168): bcrypt.dll BCryptGenRandom (test PE T9)
+					 // P49 (plan 3.M7, U2257): the exception / debug-surface APIs of the test PEs TX2 - TX6 (kernel32.dll)
+					 add_vectored_exception_handler, remove_vectored_exception_handler, add_vectored_continue_handler, remove_vectored_continue_handler,
+					 is_debugger_present, check_remote_debugger_present, get_current_process, get_current_thread, get_thread_context, get_process_heap,
+					 tls_alloc, tls_set_value, tls_free, set_last_error };
+
+	// P49 (U2256 / U2257): the --HLE exception dispatcher's return point (in this page, INT3-filled: the code hook runs the dispatcher before
+	// it executes) and one vectored / continue handler of the lists AddVectoredExceptionHandler / AddVectoredContinueHandler keep
+	inline constexpr uint64_t dispatch_return_va = 0x7FFA0000F000ull;
+	struct vectored
+	{
+		uint64_t handle = 0, handler = 0;
+	};
 
 	struct binding
 	{
@@ -96,6 +122,9 @@ namespace emu::hle
 		// the entry point with the entry's stack unchanged ([RSP] = the return sentinel); returns its address
 		bool write_trampoline( engine& e, uint64_t image_base, const std::vector<uint64_t>& callbacks, uint64_t entry, uint64_t& start, std::string& error );
 		const std::vector<binding>& bindings() const { return b_; }
+		// P49 (U2257): the vectored exception handlers / continue handlers in call order
+		const std::vector<vectored>& vectored_handlers() const { return veh_; }
+		const std::vector<vectored>& continue_handlers() const { return vch_; }
 		bool mapped() const { return mapped_; }
 
 		// the stub at ADDRESS was reached: run the API (arguments from the engine's registers)
@@ -105,5 +134,8 @@ namespace emu::hle
 		bool map_page( engine& e, std::string& error );
 		std::vector<binding> b_;
 		bool mapped_ = false;
+		std::vector<vectored> veh_, vch_;   // P49 (U2257)
+		uint64_t handle_page_ = 0, handle_used_ = 0;   // the guest page the handler records live in (the handles are their addresses)
+		uint64_t tls_used_ = 0;                       // TlsAlloc's slots in use (bit i = TLS index i, 0 .. 63)
 	};
 }

@@ -7,6 +7,7 @@
 #include <emu/output_file.hpp>
 #include <emu/win_fields.hpp>
 #include <emu/vclock.hpp>   // U2095 (plan 3.M6)
+#include "win_env_hooks.hpp"   // P49 (U2250): process::hook_ctx
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -203,61 +204,7 @@ namespace emu::win
 	}
 
 	// ------------------------------------------------------------------------------------------------ hooks
-	struct process::hook_ctx
-	{
-		process* p = nullptr;
-		run_result* r = nullptr;
-		uint64_t last_insn = 0;
-		bool stopped = false;
-		// U2020: instrumentation (process_options::counters / trace_path)
-		bool counting = false;
-		bool cpuid_pending = false;
-		std::pair<uint32_t, uint32_t> cpuid_key{};
-		size_t tail_next = 0;
-		std::unique_ptr<output_file> trace;   // the audited writer (no_native_check)
-		std::unique_ptr<disassembler> dis;
-		// U2040: register-level trace lines (process_options::trace_regs) and the ring of the last lines (trace_last)
-		bool regs = false;
-		uint64_t last = 0;
-		std::vector<std::string> ring;
-		size_t ring_next = 0;
-		std::string pending;          // the current instruction's line: written when the next instruction starts / the run stops
-		bool have_pending = false;
-		bool pending_mem = false;
-		// P41 (U2084): the console capture - the --Sys entry hooks (address -> export), the calls waiting for their return, the file
-		std::map<uint64_t, std::string> con_hooks;
-		struct con_wait
-		{
-			uint64_t ret = 0, rsp = 0, pwritten = 0;
-			console_attempt a;
-		};
-		std::vector<con_wait> con_waits;
-		std::unique_ptr<output_file> con;
-		// P44 (U2122): the guest bytes written inside watched regions (address -> 1); a read of a watched byte neither known nor written stops
-		std::set<uint64_t> watch_written;
-		// P44 (U2118): the user state of each service SYSCALL interrupted by a kernel -> user callback (innermost last)
-		struct cb_saved
-		{
-			uint64_t gpr[ 16 ] = {};   // RAX .. R15 at the SYSCALL (RSP = the user RSP; RCX = the return RIP, R11 = RFLAGS)
-			std::string service;
-		};
-		std::vector<cb_saved> cb_stack;
-		std::string con_dir;
-		uint64_t con_max = 0;
-		bool con_failed = false;
-		// P45 (U2128): the file-system access log <out dir>\fs_access.txt (the console capture's folder) - created at the first access
-		std::unique_ptr<output_file> fs;
-		size_t fs_written = 0;
-		bool fs_failed = false;
-
-		void stop( stop_kind k, const std::string& detail )
-		{
-			if ( stopped ) return;
-			stopped = true;
-			r->stop = k;
-			r->detail = detail;
-		}
-	};
+	// struct process::hook_ctx: src/win_env_hooks.hpp (P49: shared with win_exception.cpp)
 
 	namespace
 	{
@@ -656,12 +603,61 @@ namespace emu::win
 			auto& c = *static_cast<process::hook_ctx*>( user );
 			const bool fetch = type == UC_MEM_FETCH_UNMAPPED || type == UC_MEM_FETCH_PROT;
 			const bool write = type == UC_MEM_WRITE_UNMAPPED || type == UC_MEM_WRITE_PROT;
+			// P49 (plan 3.M7, U2250): a user-mode access (CPL 3) is a #PF of the program - the run stops here and continues in the exception
+			// path (process::run, win_exception.cpp page_fault); the entry's return to the sentinel and a kernel-mode access keep the stop below
+			uint64_t cs = 0;
+			uc_reg_read( uc, UC_X86_REG_CS, &cs );
+			if ( !c.stopped && ( cs & 3 ) == 3 && !( fetch && address == guest_return_sentinel ) )
+			{
+				c.pf_pending = true;
+				c.pf_rip = read_reg( uc, UC_X86_REG_RIP );
+				c.pf_rflags = read_reg( uc, UC_X86_REG_RFLAGS );
+				c.pf_address = address;
+				c.pf_access = fetch ? 8 : write ? 1 : 0;   // ExceptionInformation[0] (measured TX1 e07 / e08 / e09)
+				return false;
+			}
 			c.r->fault_vector = 14;
 			c.r->fault_address = address;
 			c.stop( stop_kind::fault, std::string( "#PF " ) + ( fetch ? "execute" : write ? "write" : "read" ) + " access to " + hex( address ) +
 										  ( type == UC_MEM_FETCH_PROT || type == UC_MEM_READ_PROT || type == UC_MEM_WRITE_PROT ? " (against the page's protection)" : " (not mapped)" ) +
 										  " at rip " + hex( read_reg( uc, UC_X86_REG_RIP ) ) + " - exception dispatch is milestone M7" );
 			return false;
+		}
+
+		// P49 (plan 3.M7, U2250-U2256): the exception path's code hooks (win_exception.cpp) - a failure is a loud stop with the reason
+		void exc_stop( uc_engine* uc, process::hook_ctx& c, const std::string& why )
+		{
+			c.stop( stop_kind::fault, why + " - stopped with a state dump" );
+			uc_emu_stop( uc );
+		}
+		void on_idt_stub( uc_engine* uc, uint64_t address, uint32_t, void* user )
+		{
+			auto& c = *static_cast<process::hook_ctx*>( user );
+			const uint64_t off = address - c.p->idt_stub_va();
+			if ( c.stopped || off % 4 ) return;
+			std::string why;
+			if ( !c.p->exception_gate( uc, c, unsigned( off / 4 ), why ) ) exc_stop( uc, c, why );
+		}
+		void on_save_end( uc_engine* uc, uint64_t, uint32_t, void* user )
+		{
+			auto& c = *static_cast<process::hook_ctx*>( user );
+			if ( c.stopped ) return;
+			std::string why;
+			if ( !c.p->exception_saved( uc, c, why ) ) exc_stop( uc, c, why );
+		}
+		void on_restore_end( uc_engine* uc, uint64_t, uint32_t, void* user )
+		{
+			auto& c = *static_cast<process::hook_ctx*>( user );
+			if ( c.stopped ) return;
+			std::string why;
+			if ( !c.p->context_restored( uc, c, why ) ) exc_stop( uc, c, why );
+		}
+		void on_dispatch_return( uc_engine* uc, uint64_t, uint32_t, void* user )
+		{
+			auto& c = *static_cast<process::hook_ctx*>( user );
+			if ( c.stopped ) return;
+			std::string why;
+			if ( !c.p->hle_dispatch_return( uc, c, why ) ) exc_stop( uc, c, why );
 		}
 
 		// P45 (U2128): the kernel layer's new file-system accesses -> <out dir>\fs_access.txt (observation only; created at the first one)
@@ -1212,8 +1208,24 @@ namespace emu::win
 		uc_x86_msr efer{ msr_efer, 0 };
 		uc_reg_read( uc, UC_X86_REG_MSR, &efer );
 		if ( !( efer.value & 1 ) ) return refuse( "IA32_EFER.SCE is 0 in the engine's reset state" );
+		// P49 (plan 3.M7, U2259): CR0.AM = 1 - Windows x64 enables the alignment check for user mode (measured: test PE TX6 natively gets #AC as
+		// STATUS_DATATYPE_MISALIGNMENT for a misaligned load with EFLAGS.AC = 1; the #AC conditions CPL 3, CR0.AM = 1, EFLAGS.AC = 1: 253668-093
+		// Vol3A 7.15 "Interrupt 17 - Alignment Check Exception (#AC)")
+		{
+			uint64_t cr0 = 0;
+			uc_reg_read( uc, UC_X86_REG_CR0, &cr0 );
+			cr0 |= 0x40000;
+			if ( uc_reg_write( uc, UC_X86_REG_CR0, &cr0 ) != UC_ERR_OK ) return refuse( "CR0.AM write failed" );
+			log_.push_back( "CPU: CR0 " + hex( cr0 ) + " (AM set: Windows' user-mode alignment check, P49 TX6)" );
+		}
 		log_.push_back( "CPU: GDTR " + hex( guest_kernel_gdt_va ) + "/" + hex( layout::gdt_limit ) + ", IA32_STAR " + hex( star_value ) + ", IA32_LSTAR " +
 						hex( guest_kernel_entry_va ) + " (SYSRETQ), IA32_FMASK " + hex( fmask_value ) + " (chosen), IA32_EFER " + hex( efer.value ) + " (SCE 1)" );
+		// P49 (plan 3.M7, U2250): the exception path - the IDT, the TSS, the kernel stubs, KUSER XState (win_exception.cpp)
+		{
+			std::vector<std::string> xl;
+			if ( !build_exceptions( xl, err ) ) return refuse( "the exception path: " + err );
+			for ( auto& l : xl ) log_.push_back( l );
+		}
 		// plan 3.M5 (U2007 / U2012): the one kernel layer of this process
 		nt::kernel_facts kf;
 		kf.min_app_address = f.min_app_address;
@@ -1426,6 +1438,21 @@ namespace emu::win
 				log_.push_back( "FAILED: " + error );
 				return false;
 			}
+		// P49 (plan 3.M7, U2259): the x87 control word / MXCSR a Windows thread starts with - "FPCSR 0x27F, MXCSR 0x1F80" (Microsoft Learn
+		// "x64 ABI conventions", register usage / the floating-point state at process start; the exception CONTEXT's FCW measured 27FH in
+		// TX1 - TX6); the engine starts with its processor-reset x87 state (FCW 40H, seen in the first --HLE run of TX1, P49)
+		{
+			// and the x87 registers empty (tag word FFFFH: the FNINIT state the exception CONTEXT of TX4 shows - abridged FTW 0)
+			const uint16_t fcw = 0x27F, ftw = 0xFFFF;
+			const uint32_t mxcsr = 0x1F80;
+			if ( uc_reg_write( uc, UC_X86_REG_FPCW, &fcw ) != UC_ERR_OK || uc_reg_write( uc, UC_X86_REG_MXCSR, &mxcsr ) != UC_ERR_OK ||
+				 uc_reg_write( uc, UC_X86_REG_FPTAG, &ftw ) != UC_ERR_OK )
+			{
+				error = "FPCW / MXCSR write before the start failed";
+				log_.push_back( "FAILED: " + error );
+				return false;
+			}
+		}
 		uint64_t begin = start_sysret_;
 		if ( loader_start_ )
 		{
@@ -1467,6 +1494,16 @@ namespace emu::win
 					log_.push_back( "FAILED: " + error );
 					return false;
 				}
+		// P49 (U2250): the exception path's hooks
+		if ( uc_hook_add( uc, &h, UC_HOOK_CODE, (void*)on_idt_stub, hc_.get(), idt_stub_va_, idt_stub_va_ + 0x3FF ) != UC_ERR_OK ||
+			 uc_hook_add( uc, &h, UC_HOOK_CODE, (void*)on_save_end, hc_.get(), save_stub_end_, save_stub_end_ ) != UC_ERR_OK ||
+			 uc_hook_add( uc, &h, UC_HOOK_CODE, (void*)on_restore_end, hc_.get(), restore_stub_end_, restore_stub_end_ ) != UC_ERR_OK ||
+			 ( hle_->mapped() && uc_hook_add( uc, &h, UC_HOOK_CODE, (void*)on_dispatch_return, hc_.get(), hle::dispatch_return_va, hle::dispatch_return_va ) != UC_ERR_OK ) )
+		{
+			error = "uc_hook_add (the exception path) failed";
+			log_.push_back( "FAILED: " + error );
+			return false;
+		}
 		// P44 (U2122): the measured-region watch - the win32k view window and the TEB's CLIENTINFO (only under --Sys: the views exist there)
 		if ( po_.boundary != env_boundary::hle &&
 			 ( uc_hook_add( uc, &h, UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE, (void*)on_watch_access, hc_.get(), nt::win32k_view_window, nt::win32k_view_window + nt::win32k_view_window_size - 1 ) != UC_ERR_OK ||
@@ -1571,8 +1608,22 @@ namespace emu::win
 			log_.push_back( "console capture: " + std::to_string( hc_->con_hooks.size() ) + " output exports of kernelbase.dll hooked (WriteFile on a standard handle, WriteConsoleA / W, "
 							"OutputDebugStringA / W) + NtWriteFile on a standard handle; observation only" );
 		}
-		// 4. the run: until the return sentinel, a stop of the hooks, or the instruction bound (no host time)
+		// 4. the run: until the return sentinel, a stop of the hooks, or the instruction bound (no host time); P49 (U2250): a #PF of the
+		// program (the memory hook stopped the engine at the fault) continues in the exception path's save stub
 		ue = e_->emulate( begin, guest_return_sentinel, po_.max_insns );
+		while ( !hc_->stopped && hc_->pf_pending )
+		{
+			hc_->pf_pending = false;
+			std::string why;
+			if ( !page_fault( uc, *hc_, hc_->pf_rip, hc_->pf_rflags, hc_->pf_address, hc_->pf_access, why ) )
+			{
+				hc_->stop( stop_kind::fault, "#PF " + std::string( hc_->pf_access == 8 ? "execute" : hc_->pf_access == 1 ? "write" : "read" ) + " access to " + hex( hc_->pf_address ) +
+												 " at rip " + hex( hc_->pf_rip ) + ": " + why + " - stopped with a state dump" );
+				break;
+			}
+			if ( r.insns >= po_.max_insns ) break;
+			ue = e_->emulate( save_stub_, guest_return_sentinel, po_.max_insns - r.insns );
+		}
 		std::string rerr;
 		r.have_final = reg::read( uc, r.final, rerr );
 		const uint64_t rip = read_reg( uc, UC_X86_REG_RIP );
@@ -1635,6 +1686,9 @@ namespace emu::win
 			return v;
 		};
 		const uint32_t flags = uint32_t( g( ctx_flags, 4 ) );
+		// P49 (plan 3.M7, U2255): a CONTEXT with CONTEXT_XSTATE (an exception's: 10005FH) - the whole FltSave and the XSAVE area through the
+		// kernel's restore stub (win_exception.cpp restore_full_context)
+		if ( ( flags & 0x100040 ) == 0x100040 ) return restore_full_context( uc, *hc_, ctx, why );
 		if ( ( flags & context_control ) != context_control )
 		{
 			why = "CONTEXT " + hex( ctx ) + " ContextFlags " + hex( flags ) + " without CONTEXT_CONTROL: not modelled";
@@ -1941,6 +1995,15 @@ namespace emu::win
 						 " ) -> " + a.outcome );
 		for ( auto& l : kernel_->describe() ) o.push_back( "kernel: " + l );
 		if ( r.fault_vector >= 0 ) o.push_back( "fault vector " + std::to_string( r.fault_vector ) + ", error code " + std::to_string( r.fault_error_code ) + ", address " + hex( r.fault_address ) );
+		for ( const auto& x : r.exceptions )   // P49 (U2250)
+		{
+			char b[ 32 ];
+			std::snprintf( b, sizeof( b ), "%08X", x.code );
+			o.push_back( "exception " + std::to_string( x.index ) + " (insn " + std::to_string( x.insn ) + "): vector " + std::to_string( x.vector ) +
+						 ( x.has_error_code ? " error code " + hex( x.error_code ) : std::string() ) + ", pushed rip " + hex( x.frame_rip ) + " rflags " + hex( x.frame_rflags ) +
+						 " rsp " + hex( x.frame_rsp ) + " -> " + ( x.how.rfind( "silent", 0 ) == 0 ? std::string() : std::string( "code " ) + b + "H, address " + hex( x.address ) +
+						 ", CONTEXT.Rip " + hex( x.context_rip ) + ", parameters " + std::to_string( x.parameters ) + " {" + hex( x.info[ 0 ] ) + ", " + hex( x.info[ 1 ] ) + "}; " ) + x.how );
+		}
 		o.push_back( "image: base " + hex( map_.base ) + ", entry " + hex( map_.entry ) + ( map_.relocated ? ", relocated (" + std::to_string( map_.relocations ) + " fixups)" : "" ) );
 		for ( auto& l : env_lines_ ) o.push_back( "env: " + l );
 		if ( r.have_final )

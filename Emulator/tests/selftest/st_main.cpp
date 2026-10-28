@@ -1935,8 +1935,21 @@ namespace
 			CHECK( w5_ok( r ) && ( w4_read( *p, S, 8 ) & ( len == 8 ? ~0ull : 0xFFFFFFFFull ) ) == 0, "class " + std::to_string( cls ) + ": 0 (" + r.text + ")" );
 		}
 		CHECK( w5_stop( w5_call( *p, "NtQueryInformationProcess", { cp, 0, S, 0x20, 0 } ) ), "class 0 with length 20H: stop (status not documented)" );
-		for ( uint64_t cls : { 1ull, 27ull, 30ull, 31ull, 0x100000000ull + 5 } )
+		for ( uint64_t cls : { 1ull, 27ull, 0x100000000ull + 5 } )
 			CHECK( w5_stop( w5_call( *p, "NtQueryInformationProcess", { cp, cls, S, 8, 0 } ) ), "class " + std::to_string( cls & 0xFFFFFFFF ) + ": stop (not documented in winternl.h)" );
+		// P49 (U2258): ProcessDebugObjectHandle (1EH) / ProcessDebugFlags (1FH) as measured natively by test PE TX5 (buffer / ReturnLength pre-filled)
+		w5_put( *p, S, 0xEEEEEEEEEEEEEEEEull );
+		w5_put( *p, S + 0x80, 0xEEEEEEEEEEEEEEEEull );
+		r = w5_call( *p, "NtQueryInformationProcess", { cp, 0x1E, S, 8, S + 0x80 } );
+		CHECK( w5_status( r, 0xC0000353 ) && w4_read( *p, S, 8 ) == 0 && w4_read( *p, S + 0x80, 8 ) == 0xEEEEEEEE00000008ull,
+			   "ProcessDebugObjectHandle: STATUS_PORT_NOT_SET, the handle 0, ReturnLength 8 (TX5 qip1e): " + r.text );
+		w5_put( *p, S, 0xEEEEEEEEEEEEEEEEull );
+		w5_put( *p, S + 0x80, 0xEEEEEEEEEEEEEEEEull );
+		r = w5_call( *p, "NtQueryInformationProcess", { cp, 0x1F, S, 4, S + 0x80 } );
+		CHECK( w5_ok( r ) && w4_read( *p, S, 8 ) == 0xEEEEEEEE00000001ull && w4_read( *p, S + 0x80, 8 ) == 0xEEEEEEEE00000004ull,
+			   "ProcessDebugFlags: 1, ReturnLength 4 (TX5 qip1f): " + r.text );
+		for ( auto [ cls, len ] : { std::pair<uint64_t, uint64_t>{ 0x1E, 4 }, { 0x1F, 8 } } )
+			CHECK( w5_stop( w5_call( *p, "NtQueryInformationProcess", { cp, cls, S, len, 0 } ) ), "class " + std::to_string( cls ) + " with another length: stop (not measured)" );
 		CHECK( w5_status( w5_call( *p, "NtQueryInformationProcess", { cp, 7, 0x10, 8, 0 } ), N::status::access_violation ), "unmapped buffer: STATUS_ACCESS_VIOLATION" );
 		CHECK( w5_status( w5_call( *p, "NtQueryInformationProcess", { cp, 7, S, 8, emu::win::guest_kuser_va } ), N::status::access_violation ), "read-only ReturnLength: STATUS_ACCESS_VIOLATION" );
 		CHECK( w5_stop( w5_call( *p, "NtQueryInformationProcess", { 4, 7, S, 8, 0 } ) ), "another process handle: stop" );

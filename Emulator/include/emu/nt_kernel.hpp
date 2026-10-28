@@ -277,6 +277,7 @@ namespace emu::nt
 		reply svc_protect_virtual_memory( const call& c );
 		reply svc_event( const call& c );
 		reply svc_query_system_information( const call& c );
+		reply svc_get_context_thread( const call& c );   // P49 (U2258)
 		bool query_process_more( const call& c, reply& r );
 		bool query_image_information( const call& c, reply& r );   // P46 (U2142): ProcessImageInformation 25H (nt_kernel_measured.cpp; tm_nt pii, T8)
 		reply query_memory_image( const call& c );

@@ -759,6 +759,11 @@ Add-Suite 'win_env_process' 'emulator win_env' 'py' ( Join-Path $Root 'Emulator\
 # its frontier - every service before it answered in order, a loud stop at the first service without a source (P36); T2 --Sys
 # without --loader refused as in M5.
 Add-Suite 'win_env_sys_loader' 'emulator win_env' 'py' ( Join-Path $Root 'Emulator\tools\win_env_sys_loader.py' ) @( $Root, $T )
+# U2260 (agent p3m7, plan 3.M7 = the Gate 6 / G3.B exception set, notes\eread\P49_phase3_m7.md): the exception test PEs TX1 - TX6 (SEH through
+# the x64 unwind data and 35 CPU events, vectored / continue handlers, single-step over REP strings, CONTEXT / CONTEXT_EX / XSTATE, the
+# anti-debug surface and PEB / TEB relations, #AC) under --Sys --loader (the real ntdll dispatch) and --HLE (win_exception.cpp): the same
+# exit statuses, CPU events and printed observations, equal to the native reference of decision 3.0.7 (detached and on a pipe).
+Add-Suite 'win_env_exceptions' 'emulator win_env' 'py' ( Join-Path $Root 'Emulator\tools\win_env_exceptions.py' ) @( $Root, $T )
 # U2051 (coordinator p3sys, plan 3.M5 --Sys, notes\eread\P39_sys_loader.md): the native measurements of the undocumented services of
 # the --Sys loader (Emulator\data\nt_measured_vmware_guest.txt, our own test PE tm_nt; USER DECISION 2026-10-25: phnt prototypes,
 # behaviour measured natively in the VMware guest, decision 3.0.7): the file's shape and identifier screen, and - when the live ntdll is

@@ -40,7 +40,14 @@ namespace emu::hle
 								   { "ExitProcess", api::exit_process }, { "GetModuleHandleW", api::get_module_handle_w }, { "GetModuleHandleA", api::get_module_handle_a },
 								   // P41 (U2083): a process without a console prints
 								   { "GetStdHandle", api::get_std_handle }, { "WriteFile", api::write_file }, { "WriteConsoleA", api::write_console_a },
-								   { "WriteConsoleW", api::write_console_w }, { "GetLastError", api::get_last_error } };
+								   { "WriteConsoleW", api::write_console_w }, { "GetLastError", api::get_last_error },
+								   // P49 (U2257): the exception / debug-surface APIs of TX2 - TX6
+								   { "AddVectoredExceptionHandler", api::add_vectored_exception_handler }, { "RemoveVectoredExceptionHandler", api::remove_vectored_exception_handler },
+								   { "AddVectoredContinueHandler", api::add_vectored_continue_handler }, { "RemoveVectoredContinueHandler", api::remove_vectored_continue_handler },
+								   { "IsDebuggerPresent", api::is_debugger_present }, { "CheckRemoteDebuggerPresent", api::check_remote_debugger_present },
+								   { "GetCurrentProcess", api::get_current_process }, { "GetCurrentThread", api::get_current_thread },
+								   { "GetThreadContext", api::get_thread_context }, { "GetProcessHeap", api::get_process_heap }, { "TlsAlloc", api::tls_alloc },
+								   { "TlsSetValue", api::tls_set_value }, { "TlsFree", api::tls_free }, { "SetLastError", api::set_last_error } };
 		// P44 (U2123): user32.dll APIs (test PE T6)
 		const known user32[] = { { "CharUpperW", api::char_upper_w } };
 		// P45 (U2131): ntdll.dll's file-system system-service exports (test PE T7) - each IS the kernel layer's service of that name (D3: one
@@ -49,7 +56,9 @@ namespace emu::hle
 								{ "NtQueryFullAttributesFile", api::nt_file_service }, { "NtQueryDirectoryFile", api::nt_file_service },
 								{ "NtQueryDirectoryFileEx", api::nt_file_service }, { "NtClose", api::nt_file_service },
 								// P46 (U2146): NtQueryInformationProcess (test PE T8: ProcessImageInformation) - the kernel layer's service the same way
-								{ "NtQueryInformationProcess", api::nt_file_service } };
+								{ "NtQueryInformationProcess", api::nt_file_service },
+								// P49 (U2257): TX5's NtQuerySystemInformation (SystemKernelDebuggerInformation) - the kernel layer's service the same way
+								{ "NtQuerySystemInformation", api::nt_file_service }, { "NtGetContextThread", api::nt_file_service } };
 		// P47 (U2168): bcrypt.dll's BCryptGenRandom (test PE T9)
 		const known bcrypt[] = { { "BCryptGenRandom", api::bcrypt_gen_random } };
 	}
@@ -404,6 +413,206 @@ namespace emu::hle
 				r.rax = 0;
 				r.text = "BCryptGenRandom( NULL, " + hex( args[ 1 ] ) + ", " + hex( cb ) + ", BCRYPT_USE_SYSTEM_PREFERRED_RNG ): " + hex( cb ) +
 						 " bytes of the environment's seeded generator (CTR_DRBG), STATUS_SUCCESS";
+				return r;
+			}
+			case api::add_vectored_exception_handler:
+			case api::add_vectored_continue_handler:
+			{
+				// P49 (U2257): PVOID AddVectoredExceptionHandler / AddVectoredContinueHandler( ULONG First, PVECTORED_EXCEPTION_HANDLER Handler ):
+				// the handle = the address of a 10H-byte record {Handler, First} in a guest page this layer allocates (the kernel layer's
+				// NtAllocateVirtualMemory core); First != 0 = the head of the list
+				const bool cont = b.id == api::add_vectored_continue_handler;
+				if ( !args[ 1 ] )
+				{
+					r.text = b.label() + "( " + hex( args[ 0 ] ) + ", NULL ): a NULL handler is not modelled";
+					return r;
+				}
+				if ( !handle_page_ || handle_used_ + 0x10 > 0x1000 )
+				{
+					uint64_t base = 0, size = 0x1000;
+					const nt::reply ra = k.allocate( base, size, nt::mem::commit | nt::mem::reserve, nt::page::readwrite );
+					if ( ra.kind != nt::reply_kind::done || ra.status )
+					{
+						r.text = b.label() + ": the handler records' page: " + ra.text;
+						return r;
+					}
+					handle_page_ = base;
+					handle_used_ = 0;
+				}
+				const uint64_t h = handle_page_ + handle_used_;
+				const uint64_t recd[ 2 ] = { args[ 1 ], uint32_t( args[ 0 ] ) };
+				if ( uc_mem_write( uc, h, recd, sizeof( recd ) ) != UC_ERR_OK )
+				{
+					r.text = b.label() + ": the handler record is not writable";
+					return r;
+				}
+				handle_used_ += 0x10;
+				auto& list = cont ? vch_ : veh_;
+				const vectored v{ h, args[ 1 ] };
+				if ( uint32_t( args[ 0 ] ) ) list.insert( list.begin(), v );
+				else list.push_back( v );
+				r.kind = result_kind::returned;
+				r.rax = h;
+				r.text = b.label() + "( " + hex( uint32_t( args[ 0 ] ) ) + ", " + hex( args[ 1 ] ) + " ) = the handle " + hex( h ) +
+						 ( uint32_t( args[ 0 ] ) ? " (the head of the list)" : " (the tail)" ) + ", " + std::to_string( list.size() ) + " handler(s)";
+				return r;
+			}
+			case api::remove_vectored_exception_handler:
+			case api::remove_vectored_continue_handler:
+			{
+				auto& list = b.id == api::remove_vectored_continue_handler ? vch_ : veh_;
+				const auto it = std::find_if( list.begin(), list.end(), [ & ]( const vectored& v ) { return v.handle == args[ 0 ]; } );
+				r.kind = result_kind::returned;
+				r.rax = it != list.end() ? 1 : 0;
+				if ( it != list.end() ) list.erase( it );
+				r.text = b.label() + "( " + hex( args[ 0 ] ) + " ) = " + std::to_string( r.rax ) + ( r.rax ? " (removed)" : " (not a handle of the list)" );
+				return r;
+			}
+			case api::is_debugger_present:
+			{
+				uint8_t bd = 0;
+				if ( uc_mem_read( uc, f.peb + 2, &bd, 1 ) != UC_ERR_OK )
+				{
+					r.text = "IsDebuggerPresent: the PEB is not readable";
+					return r;
+				}
+				r.kind = result_kind::returned;
+				r.rax = bd;
+				r.text = "the PEB's BeingDebugged " + hex( bd );
+				return r;
+			}
+			case api::check_remote_debugger_present:
+			{
+				if ( args[ 0 ] != nt::current_process || !args[ 1 ] || !k.user_buffer( args[ 1 ], 4, UC_PROT_WRITE ) )
+				{
+					r.text = "CheckRemoteDebuggerPresent( " + hex( args[ 0 ] ) + ", " + hex( args[ 1 ] ) + " ): only NtCurrentProcess() with a writable BOOL is modelled";
+					return r;
+				}
+				// the kernel layer's ProcessDebugPort into the handler-record page's scratch slot (no guest-visible allocation)
+				if ( !handle_page_ || handle_used_ + 0x10 > 0x1000 )
+				{
+					uint64_t base = 0, size = 0x1000;
+					const nt::reply ra = k.allocate( base, size, nt::mem::commit | nt::mem::reserve, nt::page::readwrite );
+					if ( ra.kind != nt::reply_kind::done || ra.status )
+					{
+						r.text = "CheckRemoteDebuggerPresent: scratch memory: " + ra.text;
+						return r;
+					}
+					handle_page_ = base;
+					handle_used_ = 0;
+				}
+				const uint64_t scratch = handle_page_ + 0xFF0;
+				nt::call c;
+				c.name = "NtQueryInformationProcess";
+				c.args = { nt::current_process, 7, scratch, 8, 0, 0, 0, 0, 0, 0, 0, 0 };
+				c.stack_args = true;
+				const nt::reply rep = k.dispatch( c );
+				uint64_t port = 0;
+				if ( rep.kind != nt::reply_kind::done || rep.status || uc_mem_read( uc, scratch, &port, 8 ) != UC_ERR_OK )
+				{
+					r.text = "CheckRemoteDebuggerPresent: the kernel layer's ProcessDebugPort: " + rep.text;
+					return r;
+				}
+				const uint32_t present = port != 0;
+				if ( uc_mem_write( uc, args[ 1 ], &present, 4 ) != UC_ERR_OK )
+				{
+					r.text = "CheckRemoteDebuggerPresent: *pbDebuggerPresent not writable after the probe";
+					return r;
+				}
+				r.kind = result_kind::returned;
+				r.rax = 1;
+				r.text = "CheckRemoteDebuggerPresent( NtCurrentProcess(), " + hex( args[ 1 ] ) + " ): ProcessDebugPort " + hex( port ) + " -> *pbDebuggerPresent = " +
+						 std::to_string( present ) + ", TRUE";
+				return r;
+			}
+			case api::get_current_process:
+			case api::get_current_thread:
+				r.kind = result_kind::returned;
+				r.rax = b.id == api::get_current_process ? ~0ull : ~1ull;
+				r.text = std::string( b.id == api::get_current_process ? "the pseudo handle (HANDLE)-1" : "the pseudo handle (HANDLE)-2" );
+				return r;
+			case api::get_thread_context:
+			{
+				nt::call c;
+				c.name = "NtGetContextThread";
+				c.args = { args[ 0 ], args[ 1 ], 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+				c.insns = insns;
+				const nt::reply rep = k.dispatch( c );
+				if ( rep.kind != nt::reply_kind::done || rep.status )
+				{
+					r.text = "GetThreadContext: the kernel layer's NtGetContextThread did not succeed (" + rep.text + ") - the LastError mapping is not modelled";
+					return r;
+				}
+				r.kind = result_kind::returned;
+				r.rax = 1;
+				r.text = "GetThreadContext -> the kernel layer's NtGetContextThread: " + rep.text;
+				return r;
+			}
+			case api::get_process_heap:
+			{
+				uint64_t heap = 0;
+				if ( uc_mem_read( uc, f.peb + 0x30, &heap, 8 ) != UC_ERR_OK )
+				{
+					r.text = "GetProcessHeap: the PEB is not readable";
+					return r;
+				}
+				r.kind = result_kind::returned;
+				r.rax = heap;
+				r.text = "the PEB's ProcessHeap " + hex( heap );
+				return r;
+			}
+			case api::tls_alloc:
+			{
+				unsigned i = 0;
+				while ( i < 64 && ( tls_used_ >> i & 1 ) ) i++;
+				if ( i == 64 )
+				{
+					r.text = "TlsAlloc: the 64 TEB slots are in use - the expansion slots are not modelled";
+					return r;
+				}
+				const uint64_t zero = 0;
+				if ( uc_mem_write( uc, f.teb + 0x1480 + 8ull * i, &zero, 8 ) != UC_ERR_OK )
+				{
+					r.text = "TlsAlloc: the TEB is not writable";
+					return r;
+				}
+				tls_used_ |= 1ull << i;
+				r.kind = result_kind::returned;
+				r.rax = i;
+				r.text = "TLS index " + std::to_string( i ) + " (its TEB slot zeroed)";
+				return r;
+			}
+			case api::tls_set_value:
+			case api::tls_free:
+			{
+				const uint32_t i = uint32_t( args[ 0 ] );
+				if ( i >= 64 || !( tls_used_ >> i & 1 ) )
+				{
+					r.text = b.label() + "( " + std::to_string( i ) + " ): not an index TlsAlloc returned - not modelled";
+					return r;
+				}
+				if ( b.id == api::tls_free ) tls_used_ &= ~( 1ull << i );
+				else if ( uc_mem_write( uc, f.teb + 0x1480 + 8ull * i, &args[ 1 ], 8 ) != UC_ERR_OK )
+				{
+					r.text = "TlsSetValue: the TEB is not writable";
+					return r;
+				}
+				r.kind = result_kind::returned;
+				r.rax = 1;
+				r.text = b.id == api::tls_free ? "TLS index " + std::to_string( i ) + " freed" : "TEB TlsSlots[" + std::to_string( i ) + "] = " + hex( args[ 1 ] );
+				return r;
+			}
+			case api::set_last_error:
+			{
+				const uint32_t v = uint32_t( args[ 0 ] );
+				if ( uc_mem_write( uc, f.teb + 0x68, &v, 4 ) != UC_ERR_OK )
+				{
+					r.text = "SetLastError: the TEB is not writable";
+					return r;
+				}
+				r.kind = result_kind::returned;
+				r.rax = 0;
+				r.text = "the TEB's LastErrorValue := " + hex( v );
 				return r;
 			}
 			default:

@@ -241,6 +241,24 @@ namespace emu::win
 		bool trace_truncated = false;
 	};
 
+	// P49 (plan 3.M7, U2250): one CPU event of the user-mode program and what the emulated kernel made of it (observation; the same
+	// record in --Sys and --HLE). vector = the CPU vector delivered through the emulated IDT (14 = a #PF from an unmapped / protected
+	// access), how = "dispatched" (KiUserExceptionDispatcher / the --HLE dispatcher), "silent" (INT 2DH services 1 / 3 / 4 / 5: no
+	// exception, measured TX1 e18 / e31 / e34 / e35)
+	struct exception_event
+	{
+		uint64_t index = 0, insn = 0;
+		int vector = -1;
+		uint32_t error_code = 0;
+		bool has_error_code = false;
+		uint64_t frame_rip = 0, frame_rflags = 0, frame_rsp = 0;   // what the CPU pushed (the #PF path: the state at the fault, RF = 1)
+		uint32_t code = 0;                                          // ExceptionCode
+		uint64_t address = 0, context_rip = 0;                      // ExceptionAddress, CONTEXT.Rip
+		uint32_t parameters = 0;
+		uint64_t info[ 2 ] = {};
+		std::string how;
+	};
+
 	struct run_result
 	{
 		stop_kind stop = stop_kind::none;
@@ -265,6 +283,7 @@ namespace emu::win
 		uint64_t fs_accesses = 0;
 		std::string fs_file;                   // "" = none: no access, or no folder
 		bool fs_truncated = false;
+		std::vector<exception_event> exceptions;   // P49 (U2250): the CPU events of the run, in order
 	};
 
 	class process
@@ -351,6 +370,17 @@ namespace emu::win
 		uint64_t tsc_hz_ = 0;     // U2095 (plan 3.M6): the virtual time base's TSC rate
 		std::string tsc_source_;
 		bool build_kernel_views( const environment_facts& f, std::vector<std::string>& lines, std::string& error );
+		// P49 (plan 3.M7, U2250-U2256; win_exception.cpp): the exception path - the emulated IDT / TSS and the kernel stubs, KUSER XState
+		bool build_exceptions( std::vector<std::string>& lines, std::string& error );
+		uint64_t idt_va_ = 0, tss_va_ = 0, ksave_va_ = 0, idt_stub_va_ = 0, save_stub_ = 0, save_stub_end_ = 0, restore_stub_ = 0,
+				 restore_stub_end_ = 0;
+		uint64_t xstate_user_mask_ = 0;     // the user XSAVE components a frame carries (XCR0 without x87 / SSE: the legacy area is FltSave)
+		uint64_t xstate_user_size_ = 0;     // the compacted XSAVE size of those (header 40H + the components; Vol1 13.4.3)
+		bool xstate_ok_ = false;            // the profile gives the layout and XSAVEC (CPUID.(EAX=0DH, ECX=1):EAX[1])
+		uint64_t ki_user_exception_dispatcher_ = 0;   // --Sys: ntdll!KiUserExceptionDispatcher
+		// the x64 unwind of one frame (win_exception.cpp): G = RAX .. R15 in / out, RIP in = the control PC, out = the caller's
+		bool virtual_unwind( uint64_t image_base, uint64_t control_pc, uint64_t function_entry, uint64_t* g, uint64_t& rip, uint64_t& handler, uint64_t& handler_data,
+							 uint64_t& establisher, std::string& why );
 
 	public:
 		bool loader_start() const { return loader_start_; }
@@ -363,5 +393,21 @@ namespace emu::win
 		const process_state& state() const { return pstate_; }
 		// P41 (U2084): HANDLE is one of the process' standard handles (the current process parameters) or 0
 		bool std_handle( uc_engine* uc, uint64_t handle ) const;
+
+		// P49 (plan 3.M7, win_exception.cpp): the hooks of the exception path - an IDT gate stub reached (the CPU delivered VECTOR at CPL 0),
+		// the save / restore stubs' end, a #PF from an unmapped / protected access (the memory hook), the --HLE dispatcher's return point;
+		// each returns false with WHY = a loud stop
+		bool exception_gate( uc_engine* uc, hook_ctx& c, unsigned vector, std::string& why );
+		bool exception_saved( uc_engine* uc, hook_ctx& c, std::string& why );
+		bool exception_saved_body( uc_engine* uc, hook_ctx& c, std::string& why );
+		bool context_restored( uc_engine* uc, hook_ctx& c, std::string& why );
+		bool page_fault( uc_engine* uc, hook_ctx& c, uint64_t rip, uint64_t rflags, uint64_t address, int access, std::string& why );
+		bool hle_dispatch_return( uc_engine* uc, hook_ctx& c, std::string& why );
+		// NtContinue / the end of a dispatch: CONTEXT at CTX with CONTEXT_XSTATE - FltSave / the XSAVE area through FXRSTOR64 / XRSTOR64 in a kernel
+		// stub, then IRETQ (false = not this path: CONTEXT_XSTATE absent; WHY non-empty = a loud stop)
+		bool restore_full_context( uc_engine* uc, hook_ctx& c, uint64_t ctx, std::string& why );
+		uint64_t idt_stub_va() const { return idt_stub_va_; }
+		uint64_t save_stub_end() const { return save_stub_end_; }
+		uint64_t restore_stub_end() const { return restore_stub_end_; }
 	};
 }
