@@ -17,7 +17,9 @@
  *
  * usage: tm_nt.exe [CASE ...]   (no argument = every case, in table order); exit 0 = every case ran, 2 = unknown case
  *        tm_nt.exe run.detached IMAGE   (P41: our own test PE IMAGE started detached; prints its exit code)
- *        tm_nt.exe run.normal IMAGE     (P44: our own test PE IMAGE started normally, no creation flags; prints its exit code) */
+ *        tm_nt.exe run.normal IMAGE     (P44: our own test PE IMAGE started normally, no creation flags; prints its exit code)
+ *        tm_nt.exe ksec.probe CODE INLEN OUTLEN RANDOM   (P47: one request on \Device\KsecDD, twice, zero input; RANDOM 1 = the output's shape only)
+ *        tm_nt.exe cf.probe ACCESS SHARE DISPOSITION OPTIONS ATTRIBUTES FILEATTR PATH   (P47: one NtCreateFile; status, handle shape, IoStatus) */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <stdio.h>
@@ -590,7 +592,7 @@ static void case_etw( void )
 		 * (as bytes; RegType 3, LoggerId 4, ReplyCallback = a kernelbase function) - tag etw.reg4 */
 		/* P41 exploration x4 (system calls 137 / 139 / 143): three more providers of the start in a process without a console -
 		 * 0A27EFF1-..., FE5EF905-... (kernelbase) and 58446CE3-... (kernel32), RegType 3, LoggerId 5 / 6 / 7, ReplyCallback set */
-		static const unsigned char guids[ 32 ][ 16 ] = {
+		static const unsigned char guids[ 57 ][ 16 ] = {
 			{ 0x5C, 0xAB, 0x95, 0x35, 0x2A, 0x04, 0x8E, 0x4C, 0xB9, 0x42, 0x2D, 0x05, 0x9B, 0xFE, 0xB1, 0xB1 },
 			{ 0x7B, 0xC8, 0x5F, 0x30, 0x2A, 0x00, 0x26, 0x5E, 0xD2, 0x97, 0x60, 0x22, 0x30, 0x12, 0xCA, 0x9C },
 			{ 0xFA, 0x2A, 0x1D, 0x90, 0xF6, 0x4F, 0xD7, 0x46, 0x8D, 0x0E, 0x53, 0x64, 0x5E, 0x1A, 0x47, 0xF5 },
@@ -650,12 +652,62 @@ static void case_etw( void )
 			/* P46 (U2147; sample run 11 exploration x70): provider (as bytes) - RegType 3, LoggerId 31, ReplyCallback set */
 			{ 0xAC, 0x89, 0xE0, 0xC7, 0x2A, 0xBA, 0xE0, 0x11, 0x9A, 0xF7, 0x68, 0x38, 0x48, 0x24, 0x01, 0x9B },
 			/* P46 (U2147; sample run 11 exploration x76): provider (as bytes) - RegType 3, LoggerId 32, ReplyCallback set */
-			{ 0x4B, 0x1A, 0xA7, 0xF3, 0x18, 0x61, 0x57, 0x42, 0x8C, 0xCB, 0x39, 0xA3, 0x3B, 0xA0, 0x59, 0xD4 } };
-		static const USHORT logger[ 32 ] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32 };
-		static const int with_cb[ 32 ] = { 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 };
-		static const ULONG regtype[ 32 ] = { 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 3, 2, 3, 3 };   /* P46: per provider */
+			{ 0x4B, 0x1A, 0xA7, 0xF3, 0x18, 0x61, 0x57, 0x42, 0x8C, 0xCB, 0x39, 0xA3, 0x3B, 0xA0, 0x59, 0xD4 },
+			/* P47 (U2165; test PE T9 exploration x1 system call 210: bcrypt.dll DllMain, the 8th provider of the process): provider (as bytes) - RegType 2, LoggerId 8, ReplyCallback set */
+			{ 0x00, 0xFE, 0x4E, 0xA7, 0xBE, 0x14, 0xF9, 0x4E, 0x9D, 0xA9, 0x14, 0x84, 0xD5, 0x47, 0x33, 0x02 },
+			/* P47 (U2165; test PE T9 exploration x2 system call 211: bcrypt.dll DllMain, the 9th provider of the process): provider (as bytes) - RegType 3, LoggerId 9, ReplyCallback set */
+			{ 0xAC, 0x89, 0xE0, 0xC7, 0x2A, 0xBA, 0xE0, 0x11, 0x9A, 0xF7, 0x68, 0x38, 0x48, 0x24, 0x01, 0x9B },
+			/* P47 (U2165; test PE T9 (expected after x2): bcrypt.dll DllMain, the 10th provider of the process): provider (as bytes) - RegType 3, LoggerId 10, ReplyCallback set */
+			{ 0x4B, 0x1A, 0xA7, 0xF3, 0x18, 0x61, 0x57, 0x42, 0x8C, 0xCB, 0x39, 0xA3, 0x3B, 0xA0, 0x59, 0xD4 },
+			/* P47 (U2165; test PE T9 exploration x9 system call 242: bcryptprimitives.dll DllMain, the 11th provider of the process): provider (as bytes) - RegType 2, LoggerId 11, ReplyCallback set */
+			{ 0x00, 0xFE, 0x4E, 0xA7, 0xBE, 0x14, 0xF9, 0x4E, 0x9D, 0xA9, 0x14, 0x84, 0xD5, 0x47, 0x33, 0x02 },
+			/* P47 (U2165; test PE T9: bcryptprimitives.dll DllMain, the 12th provider of the process): provider (as bytes) - RegType 3, LoggerId 12, ReplyCallback set */
+			{ 0x4B, 0x1A, 0xA7, 0xF3, 0x18, 0x61, 0x57, 0x42, 0x8C, 0xCB, 0x39, 0xA3, 0x3B, 0xA0, 0x59, 0xD4 },
+			/* P47 (U2165; sample run 12 exploration s1_1): provider (as bytes) - RegType 3, LoggerId 33, ReplyCallback set */
+			{ 0x75, 0x7C, 0x96, 0xCA, 0xBF, 0x04, 0xB5, 0x40, 0x9A, 0x16, 0x98, 0xB5, 0xF9, 0x33, 0x2A, 0x92 },
+			/* P47 (U2165; sample run 12 exploration y2): provider (as bytes) - RegType 3, LoggerId 34, ReplyCallback set */
+			{ 0x0B, 0x71, 0xFD, 0xB6, 0x83, 0xF7, 0x1C, 0x4B, 0xAB, 0x9C, 0xC6, 0x80, 0x99, 0xDC, 0xC0, 0xC7 },
+			/* P47 (U2165; sample run 12 exploration y4): provider (as bytes) - RegType 3, LoggerId 35, ReplyCallback set */
+			{ 0xD8, 0xDD, 0x65, 0xFC, 0xEF, 0xD6, 0x62, 0x49, 0x83, 0xD5, 0x6E, 0x5C, 0xFE, 0x9C, 0xE1, 0x48 },
+			/* P47 (U2165; sample run 12 exploration y5): provider (as bytes) - RegType 3, LoggerId 36, ReplyCallback set */
+			{ 0x5B, 0x46, 0x30, 0xBF, 0x3C, 0xE9, 0xFD, 0x46, 0x9C, 0xDF, 0xF4, 0x1C, 0x89, 0x04, 0xA0, 0x1F },
+			/* P47 (U2165; sample run 12 exploration y37): provider (as bytes) - RegType 3, LoggerId 37, ReplyCallback set */
+			{ 0x38, 0x63, 0x37, 0xC1, 0x84, 0x09, 0xB8, 0x48, 0xB9, 0x33, 0x9C, 0x7D, 0x77, 0x9F, 0xD8, 0x4D },
+			/* P47 (U2165; sample run 12 exploration y39): provider (as bytes) - RegType 3, LoggerId 38, ReplyCallback set */
+			{ 0xE6, 0x9F, 0xDA, 0xB9, 0x5F, 0xAE, 0x3E, 0x4F, 0xB2, 0xFA, 0x8E, 0x62, 0x3C, 0x11, 0xDC, 0x75 },
+			/* P47 (U2165; sample run 12 exploration y41): provider (as bytes) - RegType 2, LoggerId 39, ReplyCallback set */
+			{ 0x3C, 0xE2, 0x55, 0x29, 0x0B, 0x4E, 0xCA, 0x45, 0xA1, 0x81, 0x6E, 0xE4, 0x42, 0xCA, 0x1F, 0xC0 },
+			/* P47 (U2165; sample run 12 exploration y42): provider (as bytes) - RegType 2, LoggerId 40, ReplyCallback set */
+			{ 0x0D, 0xB7, 0xA7, 0xA3, 0x30, 0xA4, 0x3E, 0x4F, 0xAC, 0x8B, 0x32, 0xDC, 0x24, 0xE1, 0x2D, 0x7E },
+			/* P47 (U2165; sample run 12 exploration y43): provider (as bytes) - RegType 2, LoggerId 41, ReplyCallback set */
+			{ 0xC2, 0xCD, 0x23, 0xA3, 0xB0, 0x81, 0xB2, 0x48, 0x80, 0xC8, 0xB7, 0x49, 0xA2, 0x21, 0x47, 0x8A },
+			/* P47 (U2165; sample run 12 exploration y44): provider (as bytes) - RegType 2, LoggerId 42, ReplyCallback set */
+			{ 0xAB, 0x16, 0x26, 0x01, 0x6D, 0xFF, 0x03, 0x45, 0xA6, 0xF0, 0xEF, 0xFD, 0x05, 0x23, 0xAC, 0xE6 },
+			/* P47 (U2165; sample run 12 exploration y45): provider (as bytes) - RegType 2, LoggerId 43, ReplyCallback set */
+			{ 0x3A, 0x55, 0xC2, 0xCE, 0x61, 0x89, 0x34, 0x4D, 0x92, 0xCA, 0xAB, 0x2E, 0xCE, 0xF6, 0x46, 0xC5 },
+			/* P47 (U2165; sample run 12 exploration y46): provider (as bytes) - RegType 2, LoggerId 44, ReplyCallback set */
+			{ 0x2D, 0xD7, 0xD7, 0xD1, 0xD5, 0x00, 0x56, 0x4E, 0x8B, 0xAC, 0x23, 0xFA, 0xC0, 0xF9, 0xED, 0x4E },
+			/* P47 (U2165; sample run 12 exploration y47): provider (as bytes) - RegType 3, LoggerId 45, ReplyCallback set */
+			{ 0xD4, 0x6E, 0x33, 0x30, 0x27, 0xE3, 0x7C, 0x44, 0x9D, 0xE0, 0x51, 0xB6, 0x52, 0xC8, 0x61, 0x08 },
+			/* P47 (U2165; sample run 12 exploration y51): provider (as bytes) - RegType 3, LoggerId 46, ReplyCallback set */
+			{ 0x26, 0x0F, 0x98, 0x32, 0xF5, 0xC8, 0x67, 0x57, 0x6B, 0x26, 0x63, 0x5B, 0x3F, 0xA8, 0x3C, 0x61 },
+			/* P47 (U2165; sample run 12 exploration y53): provider (as bytes) - RegType 3, LoggerId 47, ReplyCallback set */
+			{ 0x13, 0xCC, 0x3F, 0x70, 0x6F, 0xB6, 0x68, 0x58, 0xDD, 0xD9, 0xE2, 0xDB, 0x7F, 0x38, 0x1F, 0xFB },
+			/* P47 (U2165; sample run 12 exploration y54): provider (as bytes) - RegType 3, LoggerId 48, ReplyCallback set */
+			{ 0xC4, 0x52, 0x2A, 0x29, 0x27, 0xFA, 0x61, 0x44, 0xB5, 0x26, 0x54, 0xA4, 0x64, 0x30, 0xBD, 0x54 },
+			/* P47 (U2165; sample run 12 exploration y55): provider (as bytes) - RegType 3, LoggerId 49, ReplyCallback set */
+			{ 0xD4, 0x6E, 0x33, 0x30, 0x27, 0xE3, 0x7C, 0x44, 0x9D, 0xE0, 0x51, 0xB6, 0x52, 0xC8, 0x61, 0x08 },
+			/* P47 (U2165; sample run 12 exploration y56): provider (as bytes) - RegType 2, LoggerId 50, ReplyCallback set */
+			{ 0x7B, 0x95, 0x44, 0x1D, 0x81, 0x71, 0x35, 0x48, 0xB7, 0x0A, 0xD0, 0xB1, 0x61, 0x12, 0xA4, 0xDE },
+			/* P47 (U2165; sample run 12 exploration y57): provider (as bytes) - RegType 3, LoggerId 51, ReplyCallback set */
+			{ 0xC6, 0xA5, 0xF1, 0xD0, 0x43, 0xFC, 0xAE, 0x48, 0x99, 0xBF, 0xEF, 0xB1, 0xC3, 0x8B, 0xE9, 0xD1 },
+			/* P47 (U2165; sample run 12 exploration y59): provider (as bytes) - RegType 3, LoggerId 52, ReplyCallback set */
+			{ 0x71, 0x4E, 0x40, 0x55, 0xB9, 0x4D, 0xEB, 0x4D, 0xA5, 0xF5, 0x8F, 0x86, 0xE4, 0x6D, 0xDE, 0x56 } };
+		static const USHORT logger[ 57 ] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 8, 9, 10, 11, 12, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52 };
+		static const int with_cb[ 57 ] = { 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 };
+		static const ULONG regtype[ 57 ] = { 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 3, 2, 3, 3, 2, 3, 3, 2, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 2, 3, 3 };   /* P46: per provider */
 		int g;
-		for ( g = 0; g < 32; g++ )
+		for ( g = 0; g < 57; g++ )
 		{
 			unsigned char io[ 0xA0 ], in0[ 0xA0 ];
 			size_t k;
@@ -757,6 +809,72 @@ static void case_etwt( void )
                                              0x00, 0x13, 0x00, 0x01, 0x1A, 0x73, 0x50, 0x4F, 0xCF, 0x89, 0x82, 0x47, 0xB3, 0xE0, 0xDC, 0xE8, 0xC9,
                                              0x04, 0x76, 0xBA };
 		tm_etwt_bytes( "etwt14", g14, 14, t14, 0x36 );
+	}
+	{
+		/* P46 (U2147; sample run 12 exploration y58): the traits of provider 51 (etw.reg51): 30H bytes - "Microsoft-Windows-Winsock2" + the bytes after it, from the capture's ws2_32.dll
+		 * (file offset 4DEBEH), passed from a buffer of this program */
+		static const unsigned char g51[ 16 ] = { 0xC6, 0xA5, 0xF1, 0xD0, 0x43, 0xFC, 0xAE, 0x48, 0x99, 0xBF, 0xEF, 0xB1, 0xC3, 0x8B, 0xE9, 0xD1 };
+		static const unsigned char t51[ 0x30 ] = { 0x30, 0x00, 0x4D, 0x69, 0x63, 0x72, 0x6F, 0x73, 0x6F, 0x66, 0x74, 0x2D, 0x57, 0x69, 0x6E, 0x64, 0x6F,
+                                             0x77, 0x73, 0x2D, 0x57, 0x69, 0x6E, 0x73, 0x6F, 0x63, 0x6B, 0x32, 0x00, 0x13, 0x00, 0x01, 0x1A, 0x73,
+                                             0x50, 0x4F, 0xCF, 0x89, 0x82, 0x47, 0xB3, 0xE0, 0xDC, 0xE8, 0xC9, 0x04, 0x76, 0xBA };
+		tm_etwt_bytes( "etwt51", g51, 51, t51, 0x30 );
+	}
+	{
+		/* P46 (U2147; sample run 12 exploration y52): the traits of provider 46 (etw.reg46): 44H bytes - "Microsoft.Windows.Shell.FileExplorer.Aggregate" + the bytes after it, from the capture's shell32.dll
+		 * (file offset 6479CEH), passed from a buffer of this program */
+		static const unsigned char g46[ 16 ] = { 0x26, 0x0F, 0x98, 0x32, 0xF5, 0xC8, 0x67, 0x57, 0x6B, 0x26, 0x63, 0x5B, 0x3F, 0xA8, 0x3C, 0x61 };
+		static const unsigned char t46[ 0x44 ] = { 0x44, 0x00, 0x4D, 0x69, 0x63, 0x72, 0x6F, 0x73, 0x6F, 0x66, 0x74, 0x2E, 0x57, 0x69, 0x6E, 0x64, 0x6F,
+                                             0x77, 0x73, 0x2E, 0x53, 0x68, 0x65, 0x6C, 0x6C, 0x2E, 0x46, 0x69, 0x6C, 0x65, 0x45, 0x78, 0x70, 0x6C,
+                                             0x6F, 0x72, 0x65, 0x72, 0x2E, 0x41, 0x67, 0x67, 0x72, 0x65, 0x67, 0x61, 0x74, 0x65, 0x00, 0x13, 0x00,
+                                             0x01, 0x1A, 0x73, 0x50, 0x4F, 0xCF, 0x89, 0x82, 0x47, 0xB3, 0xE0, 0xDC, 0xE8, 0xC9, 0x04, 0x76, 0xBA };
+		tm_etwt_bytes( "etwt46", g46, 46, t46, 0x44 );
+	}
+	{
+		/* P46 (U2147; sample run 12 exploration y50): the traits of provider 45 (etw.reg45): 16H bytes - "" + the bytes after it, from the capture's shell32.dll
+		 * (file offset 619350H), passed from a buffer of this program */
+		static const unsigned char g45[ 16 ] = { 0xD4, 0x6E, 0x33, 0x30, 0x27, 0xE3, 0x7C, 0x44, 0x9D, 0xE0, 0x51, 0xB6, 0x52, 0xC8, 0x61, 0x08 };
+		static const unsigned char t45[ 0x16 ] = { 0x16, 0x00, 0x00, 0x13, 0x00, 0x01, 0x1A, 0x73, 0x50, 0x4F, 0xCF, 0x89, 0x82, 0x47, 0xB3, 0xE0, 0xDC,
+                                             0xE8, 0xC9, 0x04, 0x76, 0xBA };
+		tm_etwt_bytes( "etwt45", g45, 45, t45, 0x16 );
+	}
+	{
+		/* P46 (U2147; sample run 12 exploration y38): the traits of provider 37 (etw.reg37): 39H bytes - "Microsoft.Windows.Security.Shutinit" + the bytes after it, from the capture's advapi32.dll
+		 * (file offset 8B7BFH), passed from a buffer of this program */
+		static const unsigned char g37[ 16 ] = { 0x38, 0x63, 0x37, 0xC1, 0x84, 0x09, 0xB8, 0x48, 0xB9, 0x33, 0x9C, 0x7D, 0x77, 0x9F, 0xD8, 0x4D };
+		static const unsigned char t37[ 0x39 ] = { 0x39, 0x00, 0x4D, 0x69, 0x63, 0x72, 0x6F, 0x73, 0x6F, 0x66, 0x74, 0x2E, 0x57, 0x69, 0x6E, 0x64, 0x6F,
+                                             0x77, 0x73, 0x2E, 0x53, 0x65, 0x63, 0x75, 0x72, 0x69, 0x74, 0x79, 0x2E, 0x53, 0x68, 0x75, 0x74, 0x69,
+                                             0x6E, 0x69, 0x74, 0x00, 0x13, 0x00, 0x01, 0x1A, 0x73, 0x50, 0x4F, 0xCF, 0x89, 0x82, 0x47, 0xB3, 0xE0,
+                                             0xDC, 0xE8, 0xC9, 0x04, 0x76, 0xBA };
+		tm_etwt_bytes( "etwt37", g37, 37, t37, 0x39 );
+	}
+	{
+		/* P46 (U2147; sample run 12 exploration y36): the traits of provider 36 (etw.reg36): 24H bytes - "EventLogEvents" + the bytes after it, from the capture's advapi32.dll
+		 * (file offset 8B809H), passed from a buffer of this program */
+		static const unsigned char g36[ 16 ] = { 0x5B, 0x46, 0x30, 0xBF, 0x3C, 0xE9, 0xFD, 0x46, 0x9C, 0xDF, 0xF4, 0x1C, 0x89, 0x04, 0xA0, 0x1F };
+		static const unsigned char t36[ 0x24 ] = { 0x24, 0x00, 0x45, 0x76, 0x65, 0x6E, 0x74, 0x4C, 0x6F, 0x67, 0x45, 0x76, 0x65, 0x6E, 0x74, 0x73, 0x00,
+                                             0x13, 0x00, 0x01, 0x1A, 0x73, 0x50, 0x4F, 0xCF, 0x89, 0x82, 0x47, 0xB3, 0xE0, 0xDC, 0xE8, 0xC9, 0x04,
+                                             0x76, 0xBA };
+		tm_etwt_bytes( "etwt36", g36, 36, t36, 0x24 );
+	}
+	{
+		/* P46 (U2147; sample run 12 exploration y3): the traits of provider 34 (etw.reg34): 3DH bytes - "Microsoft.Windows.Security.IsolationApi" + the bytes after it, from the capture's sechost.dll
+		 * (file offset 853CBH), passed from a buffer of this program */
+		static const unsigned char g34[ 16 ] = { 0x0B, 0x71, 0xFD, 0xB6, 0x83, 0xF7, 0x1C, 0x4B, 0xAB, 0x9C, 0xC6, 0x80, 0x99, 0xDC, 0xC0, 0xC7 };
+		static const unsigned char t34[ 0x3D ] = { 0x3D, 0x00, 0x4D, 0x69, 0x63, 0x72, 0x6F, 0x73, 0x6F, 0x66, 0x74, 0x2E, 0x57, 0x69, 0x6E, 0x64, 0x6F,
+                                             0x77, 0x73, 0x2E, 0x53, 0x65, 0x63, 0x75, 0x72, 0x69, 0x74, 0x79, 0x2E, 0x49, 0x73, 0x6F, 0x6C, 0x61,
+                                             0x74, 0x69, 0x6F, 0x6E, 0x41, 0x70, 0x69, 0x00, 0x13, 0x00, 0x01, 0x1A, 0x73, 0x50, 0x4F, 0xCF, 0x89,
+                                             0x82, 0x47, 0xB3, 0xE0, 0xDC, 0xE8, 0xC9, 0x04, 0x76, 0xBA };
+		tm_etwt_bytes( "etwt34", g34, 34, t34, 0x3D );
+	}
+	{
+		/* P46 (U2147; sample run 12 exploration y1): the traits of provider 33 (etw.reg33): 41H bytes - "Microsoft.Windows.Security.MitigationPolicy" + the bytes after it, from the capture's sechost.dll
+		 * (file offset 85379H), passed from a buffer of this program */
+		static const unsigned char g33[ 16 ] = { 0x75, 0x7C, 0x96, 0xCA, 0xBF, 0x04, 0xB5, 0x40, 0x9A, 0x16, 0x98, 0xB5, 0xF9, 0x33, 0x2A, 0x92 };
+		static const unsigned char t33[ 0x41 ] = { 0x41, 0x00, 0x4D, 0x69, 0x63, 0x72, 0x6F, 0x73, 0x6F, 0x66, 0x74, 0x2E, 0x57, 0x69, 0x6E, 0x64, 0x6F,
+                                             0x77, 0x73, 0x2E, 0x53, 0x65, 0x63, 0x75, 0x72, 0x69, 0x74, 0x79, 0x2E, 0x4D, 0x69, 0x74, 0x69, 0x67,
+                                             0x61, 0x74, 0x69, 0x6F, 0x6E, 0x50, 0x6F, 0x6C, 0x69, 0x63, 0x79, 0x00, 0x13, 0x00, 0x01, 0x1A, 0x73,
+                                             0x50, 0x4F, 0xCF, 0x89, 0x82, 0x47, 0xB3, 0xE0, 0xDC, 0xE8, 0xC9, 0x04, 0x76, 0xBA };
+		tm_etwt_bytes( "etwt33", g33, 33, t33, 0x41 );
 	}
 	{
 		/* P46 (U2147; sample run 11 exploration x77): the traits of provider 32 (etw.reg32): 37H bytes - "Microsoft.Windows.Security.BCrypt" + the bytes after it, from the capture's bcrypt.dll
@@ -1245,7 +1363,9 @@ static void case_ahc( void )
 											L"transparent_makimav2.exe",
 											L"t6_user32.exe", L"IMM32.DLL",   /* P44 (U2116): ahc.34 - user32 loads the IMM file (its _InitializeImmEntryTable) */   /* P44 (U2115): ahc.33 - test PE T6's image name (its loader's LookupCdb) */
 											L"t7_vfs.exe",   /* P45 (U2125): ahc.35 - test PE T7's image name (its loader's LookupCdb) */
-											L"t8_pii.exe" };   /* P46 (U2144): ahc.36 - test PE T8's image name (its loader's LookupCdb) */
+											L"t8_pii.exe",   /* P46 (U2144): ahc.36 - test PE T8's image name (its loader's LookupCdb) */
+											L"t9_rng.exe",   /* P47 (U2167): ahc.37 - test PE T9's image name (its loader's LookupCdb) */
+											L"bcryptprimitives.dll" };   /* P47 (U2167): ahc.38 - bcrypt loads bcryptprimitives.dll (T9 exploration x8 system call 238) */
 	size_t q, k;
 	for ( q = 0; q < sizeof( names ) / sizeof( names[ 0 ] ); q++ )
 	{
@@ -3843,7 +3963,241 @@ static void case_reg( void )
 	}
 }
 
-static const struct tm_case g_cases[] = { { "sat", case_sat }, { "qsi", case_qsi }, { "hvp", case_hvp }, { "qip", case_qip }, { "wcp", case_wcp }, { "qsix", case_qsix }, { "iocp", case_iocp }, { "wkf", case_wkf }, { "tmr2", case_tmr2 }, { "awcp", case_awcp }, { "swf", case_swf }, { "etw", case_etw }, { "kd", case_kd }, { "of", case_of }, { "tls", case_tls }, { "ahc", case_ahc }, { "vmi", case_vmi }, { "csr", case_csr }, { "sec", case_sec }, { "csrc", case_csrc }, { "nls", case_nls }, { "con", case_con }, { "etwt", case_etwt }, { "tok", case_tok }, { "acc", case_acc }, { "bno", case_bno }, { "mut", case_mut }, { "wil", case_wil }, { "wnf", case_wnf }, { "wnfe", case_wnfe }, { "wnfs", case_wnfs }, { "t2s", case_t2s }, { "hku", case_hku }, { "alert", case_alert }, { "term", case_term }, { "time", case_time }, { "sp", case_sp }, { "mit", case_mit }, { "u32", case_u32 }, { "u32k", case_u32k }, { "fs", case_fs }, { "rvm", case_rvm }, { "atom", case_atom }, { "pii", case_pii }, { "reg", case_reg } };
+/* ------------------------------------------------------------------------------------------------ \Device\KsecDD (P47, U2165)
+ * USER DECISION 2026-10-28 (P47 STEP 2, "\Device\KsecDD: model it as a device"): sample run 11 system call 759 - bcrypt.dll's DllMain
+ * (bcrypt.dll+3AA4 .. +6490) calls NtOpenFile( &h, 100003H (SYNCHRONIZE | FILE_READ_DATA | FILE_WRITE_DATA), "\Device\KsecDD" attributes 0,
+ * &iosb, ShareAccess 7, OpenOptions 20H (FILE_SYNCHRONOUS_IO_NONALERT) ) - prototype phnt ntioapi.h:2294-2301 NtOpenFile; the device name /
+ * IOCTL codes phnt ntseapi.h:1458-1488 (KSEC_DEVICE_NAME, IOCTL_KSEC_* = CTL_CODE( FILE_DEVICE_KSEC 39H, n, ... )). Then the device requests
+ * bcrypt sends - NtDeviceIoControlFile( h, Event, ApcRoutine, ApcContext, &iosb, IoControlCode, InputBuffer, InputBufferLength, OutputBuffer,
+ * OutputBufferLength ) - phnt ntioapi.h NtDeviceIoControlFile - with the codes / lengths of the emulated trace (named per item).
+ * Printed: the status, the handle's shape, the IoStatusBlock (written or not, Status, Information), how many output bytes were written (the
+ * buffer pre-filled with CCH) and, for a random-number request, only the SHAPE of the output (its length, "not the fill", two requests'
+ * outputs equal or not) - the random bytes themselves are host entropy: never printed, never kept. */
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtDeviceIoControlFile( HANDLE FileHandle, HANDLE Event, PVOID ApcRoutine, PVOID ApcContext, PVOID IoStatusBlock, ULONG IoControlCode,
+																 PVOID InputBuffer, ULONG InputBufferLength, PVOID OutputBuffer, ULONG OutputBufferLength );
+static HANDLE tm_ksec_open( const char* tag )
+{
+	TM_USTR u;
+	TM_OA oa;
+	HANDLE h = (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull;
+	ULONGLONG iosb[ 2 ] = { 0xCCCCCCCCCCCCCCCCull, 0xCCCCCCCCCCCCCCCCull };
+	TM_NTSTATUS st;
+	tm_ustr( &u, L"\\Device\\KsecDD" );
+	tm_oa( &oa, NULL, &u );
+	oa.Attributes = 0;
+	st = NtOpenFile( &h, 0x100003, &oa, iosb, 7, 0x20 );
+	printf( "tm_nt %s: NtOpenFile(&h, 100003H, \"\\Device\\KsecDD\" attributes 0, &iosb, share 7H, options 20H) -> status %08lXH, handle %s, IoStatus %s (Status %08lXH, upper half %s, "
+			"Information %llXH)\n", tag, (unsigned long)st, h == (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull ? "not written" : tm_hshape( h ),
+			iosb[ 0 ] == 0xCCCCCCCCCCCCCCCCull && iosb[ 1 ] == 0xCCCCCCCCCCCCCCCCull ? "not written" : "written", (unsigned long)(ULONG)iosb[ 0 ],
+			( iosb[ 0 ] >> 32 ) == 0xCCCCCCCCull ? "not written" : ( iosb[ 0 ] >> 32 ) ? "non-zero" : "zero", iosb[ 1 ] );
+	return st >= 0 ? h : NULL;
+}
+
+/* one device request; RANDOM = the output is random bytes: only its shape is printed */
+static void tm_ksec_ioctl( const char* tag, HANDLE h, ULONG code, ULONG inlen, ULONG outlen, int random, unsigned char* keep )
+{
+	static unsigned char in[ 0x100 ];
+	ULONGLONG iosb[ 2 ] = { 0xCCCCCCCCCCCCCCCCull, 0xCCCCCCCCCCCCCCCCull };
+	TM_NTSTATUS st;
+	size_t w, k, cc = 0;
+	memset( in, 0, sizeof( in ) );
+	memset( g_buf, 0xCC, sizeof( g_buf ) );
+	st = NtDeviceIoControlFile( h, NULL, NULL, NULL, iosb, code, inlen ? in : NULL, inlen, outlen ? g_buf : NULL, outlen );
+	w = tm_written( sizeof( g_buf ) );
+	for ( k = 0; k < outlen && k < sizeof( g_buf ); k++ )
+		if ( g_buf[ k ] == 0xCC ) cc++;
+	printf( "tm_nt %s: NtDeviceIoControlFile(h, NULL, NULL, NULL, &iosb, %lXH, %s, %lXH, %s, %lXH) -> status %08lXH, IoStatus %s (Status %08lXH, upper half %s, Information %llXH), "
+			"written %zXH%s\n", tag, (unsigned long)code, inlen ? "<zero input>" : "NULL", (unsigned long)inlen, outlen ? "out" : "NULL", (unsigned long)outlen, (unsigned long)st,
+			iosb[ 0 ] == 0xCCCCCCCCCCCCCCCCull && iosb[ 1 ] == 0xCCCCCCCCCCCCCCCCull ? "not written" : "written", (unsigned long)(ULONG)iosb[ 0 ],
+			( iosb[ 0 ] >> 32 ) == 0xCCCCCCCCull ? "not written" : ( iosb[ 0 ] >> 32 ) ? "non-zero" : "zero", iosb[ 1 ], w,
+			random ? ( w == outlen && outlen && cc < outlen ? "; the output: random bytes (shape only)" : "; the output: not the random shape" ) : "" );
+	if ( keep && outlen <= 0x100 ) memcpy( keep, g_buf, outlen );
+}
+
+/* the input bcrypt.dll's DllMain sends with IoControlCode 390400H (test PE T9 exploration x4 system call 220 under --Sys; CTL_CODE( 39H
+ * FILE_DEVICE_KSEC, function 100H, METHOD_BUFFERED, FILE_ANY_ACCESS ) - a function phnt ntseapi.h:1461-1488 does not list (its IOCTL_KSEC_*
+ * end at function 27; not documented): 68H bytes {+0 ULONG 1A2B3C4DH, +4 ULONG 00010500H, +8 0, +10H -1, +18H 0, +20H / +28H / +30H -1,
+ * +38H 0, +40H / +48H -1, +50H 0, +58H -1, +60H the handle of a synchronization event it created just before (NtCreateEvent( 1F0003H, NULL,
+ * SynchronizationEvent, FALSE ), system call 218)}, an 8-byte output. Here the same bytes with OUR OWN event at +60H. */
+static void tm_ksec_cfg_input( unsigned char* in, HANDLE ev )
+{
+	static const unsigned char pat[ 13 ] = { 0, 1, 0, 1, 1, 1, 0, 1, 1, 0, 1, 2, 0 };   /* per 8-byte field from +8: 0 = zero, 1 = -1, 2 = the event */
+	int k;
+	memset( in, 0, 0x68 );
+	*(ULONG*)( in + 0 ) = 0x1A2B3C4D;
+	*(ULONG*)( in + 4 ) = 0x00010500;
+	for ( k = 0; k < 12; k++ )
+	{
+		ULONGLONG v = pat[ k ] == 1 ? 0xFFFFFFFFFFFFFFFFull : pat[ k ] == 2 ? (ULONGLONG)(ULONG_PTR)ev : 0;
+		memcpy( in + 8 + 8 * k, &v, 8 );
+	}
+}
+
+static void tm_ksec_cfg( const char* tag, HANDLE h, HANDLE ev, ULONG inlen, ULONG outlen )
+{
+	static unsigned char in[ 0x100 ];
+	ULONGLONG iosb[ 2 ] = { 0xCCCCCCCCCCCCCCCCull, 0xCCCCCCCCCCCCCCCCull };
+	ULONGLONG o;
+	TM_NTSTATUS st;
+	DWORD w;
+	size_t wr;
+	tm_ksec_cfg_input( in, ev );
+	memset( g_buf, 0xCC, sizeof( g_buf ) );
+	st = NtDeviceIoControlFile( h, NULL, NULL, NULL, iosb, 0x390400, in, inlen, outlen ? g_buf : NULL, outlen );
+	wr = tm_written( sizeof( g_buf ) );
+	memcpy( &o, g_buf, 8 );
+	w = WaitForSingleObject( ev, 0 );
+	printf( "tm_nt %s: NtDeviceIoControlFile(h, NULL, NULL, NULL, &iosb, 390400H, <the 68H-byte input, own event at +60H>, %lXH, out, %lXH) -> status %08lXH, IoStatus %s "
+			"(Status %08lXH, upper half %s, Information %llXH), written %zXH, output %s; the event %s; input bytes changed %s\n", tag, (unsigned long)inlen, (unsigned long)outlen,
+			(unsigned long)st, iosb[ 0 ] == 0xCCCCCCCCCCCCCCCCull && iosb[ 1 ] == 0xCCCCCCCCCCCCCCCCull ? "not written" : "written", (unsigned long)(ULONG)iosb[ 0 ],
+			( iosb[ 0 ] >> 32 ) == 0xCCCCCCCCull ? "not written" : ( iosb[ 0 ] >> 32 ) ? "non-zero" : "zero", iosb[ 1 ], wr,
+			wr == 0 ? "not written" : o == 0 ? "0" : o < 0x10000 ? "a small value" : "<value:8> (non-zero)", w == WAIT_OBJECT_0 ? "signaled" : w == WAIT_TIMEOUT ? "not signaled" : "wait failed",
+			( in[ 0 ] == 0x4D && in[ 4 ] == 0 && *(ULONG*)( in + 0x60 ) == (ULONG)(ULONG_PTR)ev ) ? "no" : "yes" );
+	if ( wr && o && o < 0x10000 ) printf( "tm_nt %s.value: the output %llXH\n", tag, o );
+}
+
+/* the content of an output that is NOT random (equal in the three requests): 16 bytes per line; an 8-byte-aligned value that points into
+ * the output buffer is printed as <ptr:+XH> (the buffer's address is never printed); characters 20H..7EH also as text */
+static void tm_ksec_dump( const char* tag, const unsigned char* b, size_t n, const unsigned char* base )
+{
+	size_t k, q;
+	for ( k = 0; k < n; k += 16 )
+	{
+		char line[ 512 ], txt[ 20 ];
+		snprintf( line, sizeof( line ), "tm_nt %s.+%03zX:", tag, k );
+		for ( q = k; q < k + 16 && q < n; q += 8 )
+		{
+			ULONGLONG v = 0;
+			size_t j;
+			memcpy( &v, b + q, q + 8 <= n ? 8 : n - q );
+			if ( q + 8 <= n && v >= (ULONGLONG)(ULONG_PTR)base && v < (ULONGLONG)(ULONG_PTR)base + 0x400 )
+				snprintf( line + strlen( line ), sizeof( line ) - strlen( line ), " <ptr:+%llXH>", v - (ULONGLONG)(ULONG_PTR)base );
+			else
+				for ( j = q; j < q + 8 && j < n; j++ ) snprintf( line + strlen( line ), sizeof( line ) - strlen( line ), " %02X", b[ j ] );
+		}
+		for ( q = 0; q < 16 && k + q < n; q++ ) txt[ q ] = ( b[ k + q ] >= 0x20 && b[ k + q ] < 0x7F ) ? (char)b[ k + q ] : '.';
+		txt[ q ] = 0;
+		printf( "%s  |%s|\n", line, txt );
+	}
+}/* the request bcrypt.dll's BCryptGenRandom( NULL, ..., BCRYPT_USE_SYSTEM_PREFERRED_RNG ) sends (test PE T9 exploration x5 system call 228
+ * under --Sys): IoControlCode 390400H, 30H input bytes {+0 ULONG 1A2B3C4DH, +4 ULONG 00020000H, +8 -1, +10H 6, +18H -1, +20H -1, +28H 1},
+ * a 180H-byte output. Three requests on one handle; per request the status, the IoStatusBlock and how many output bytes were written; then
+ * the output's SHAPE over the three: the byte ranges equal in all three (structure - printed with their bytes) and the count of the others
+ * (random - never printed). */
+static void tm_ksec_req( const char* tag, HANDLE h, ULONG code, const unsigned char* src, ULONG inlen, ULONG outlen )
+{
+	static unsigned char in[ 0x100 ], outs[ 3 ][ 0x400 ];
+	char line[ 4096 ];
+	size_t k, fixed = 0, other = 0;
+	int n;
+	if ( outlen > 0x400 || inlen > sizeof( in ) ) return;
+	for ( n = 0; n < 3; n++ )
+	{
+		ULONGLONG iosb[ 2 ] = { 0xCCCCCCCCCCCCCCCCull, 0xCCCCCCCCCCCCCCCCull };
+		TM_NTSTATUS st;
+		size_t w;
+		if ( inlen ) memcpy( in, src, inlen );
+		char inbuf[ 48 ];
+		snprintf( inbuf, sizeof( inbuf ), "<the %lXH-byte input>", (unsigned long)inlen );
+		memset( g_buf, 0xCC, sizeof( g_buf ) );
+		st = NtDeviceIoControlFile( h, NULL, NULL, NULL, iosb, code, inlen ? in : NULL, inlen, g_buf, outlen );
+		w = tm_written( sizeof( g_buf ) );
+		memcpy( outs[ n ], g_buf, outlen );
+		printf( "tm_nt %s.%d: NtDeviceIoControlFile(h, NULL, NULL, NULL, &iosb, %lXH, %s, %lXH, out, %lXH) -> status %08lXH, IoStatus %s (Status %08lXH, upper half %s, "
+				"Information %llXH), written %zXH, the input %s\n", tag, n + 1, (unsigned long)code, inlen ? inbuf : "NULL", (unsigned long)inlen, (unsigned long)outlen, (unsigned long)st,
+				iosb[ 0 ] == 0xCCCCCCCCCCCCCCCCull && iosb[ 1 ] == 0xCCCCCCCCCCCCCCCCull ? "not written" : "written", (unsigned long)(ULONG)iosb[ 0 ],
+				( iosb[ 0 ] >> 32 ) == 0xCCCCCCCCull ? "not written" : ( iosb[ 0 ] >> 32 ) ? "non-zero" : "zero", iosb[ 1 ], w, inlen && memcmp( in, src, inlen ) ? "changed" : "unchanged" );
+	}
+	snprintf( line, sizeof( line ), "tm_nt %s.shape: bytes equal in all three outputs:", tag );
+	for ( k = 0; k < outlen; )
+	{
+		size_t e = k;
+		while ( e < outlen && outs[ 0 ][ e ] == outs[ 1 ][ e ] && outs[ 1 ][ e ] == outs[ 2 ][ e ] ) e++;
+		if ( e > k + 1 )   /* a run of 2 bytes or more (one equal byte in three random outputs: chance 1 / 65536 per byte) */
+		{
+			size_t q;
+			snprintf( line + strlen( line ), sizeof( line ) - strlen( line ), " [+%zXH, +%zXH)", k, e );
+			for ( q = k; q < e && q < k + 16; q++ ) snprintf( line + strlen( line ), sizeof( line ) - strlen( line ), " %02X", outs[ 0 ][ q ] );
+			if ( e - k > 16 ) snprintf( line + strlen( line ), sizeof( line ) - strlen( line ), " ..." );
+			fixed += e - k;
+			k = e;
+		}
+		else
+		{
+			other++;
+			k++;
+		}
+	}
+	snprintf( line + strlen( line ), sizeof( line ) - strlen( line ), "; %zu bytes equal (runs of 2 or more), %zu bytes differ (random - not printed)", fixed, other );
+	printf( "%s\n", line );
+	if ( !other ) tm_ksec_dump( tag, g_buf, (size_t)( outlen < 0x400 ? tm_written( outlen ) : 0 ), g_buf );
+}
+
+static void tm_ksec_rng( const char* tag, HANDLE h, ULONG outlen, ULONG inlen )
+{
+	static const ULONGLONG f[ 6 ] = { 0x000200001A2B3C4Dull, 0xFFFFFFFFFFFFFFFFull, 6, 0xFFFFFFFFFFFFFFFFull, 0xFFFFFFFFFFFFFFFFull, 1 };
+	tm_ksec_req( tag, h, 0x390400, (const unsigned char*)f, inlen, outlen );
+}
+
+/* the next request of BCryptGenRandom (T9 exploration x7 system call 229): 38H input bytes {+0 ULONG 1A2B3C4DH, +4 ULONG 00020000H, +8 -1,
+ * +10H 0, +18H 30H (the offset of the name), +20H -1, +28H ULONG 1, ULONG 2, +30H L"RNG"}, a 180H-byte output */
+static void tm_ksec_q2( const char* tag, HANDLE h )
+{
+	static const ULONGLONG f[ 7 ] = { 0x000200001A2B3C4Dull, 0xFFFFFFFFFFFFFFFFull, 0, 0x30, 0xFFFFFFFFFFFFFFFFull, 0x0000000200000001ull, 0x00000047004E0052ull };
+	tm_ksec_req( tag, h, 0x390400, (const unsigned char*)f, 0x38, 0x180 );
+}
+/* P47 (U2165): \Device\CNG as bcryptprimitives.dll opens it after the provider resolution (test PE T9 exploration r1_6 system call 256):
+ * NtOpenFile( &h, 100001H (SYNCHRONIZE | FILE_READ_DATA), "\Device\CNG" attributes 40H (OBJ_CASE_INSENSITIVE), &iosb, share 7, options 20H ) */
+static HANDLE tm_cng_open( const char* tag )
+{
+	TM_USTR u;
+	TM_OA oa;
+	HANDLE h = (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull;
+	ULONGLONG iosb[ 2 ] = { 0xCCCCCCCCCCCCCCCCull, 0xCCCCCCCCCCCCCCCCull };
+	TM_NTSTATUS st;
+	tm_ustr( &u, L"\\Device\\CNG" );
+	tm_oa( &oa, NULL, &u );
+	oa.Attributes = 0x40;
+	st = NtOpenFile( &h, 0x100001, &oa, iosb, 7, 0x20 );
+	printf( "tm_nt %s: NtOpenFile(&h, 100001H, \"\\Device\\CNG\" attributes 40H, &iosb, share 7H, options 20H) -> status %08lXH, handle %s, IoStatus %s (Status %08lXH, upper half %s, "
+			"Information %llXH)\n", tag, (unsigned long)st, h == (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull ? "not written" : tm_hshape( h ),
+			iosb[ 0 ] == 0xCCCCCCCCCCCCCCCCull && iosb[ 1 ] == 0xCCCCCCCCCCCCCCCCull ? "not written" : "written", (unsigned long)(ULONG)iosb[ 0 ],
+			( iosb[ 0 ] >> 32 ) == 0xCCCCCCCCull ? "not written" : ( iosb[ 0 ] >> 32 ) ? "non-zero" : "zero", iosb[ 1 ] );
+	return st >= 0 ? h : NULL;
+}
+static void case_ksec( void )
+{
+	HANDLE h = tm_ksec_open( "ksec.open" ), e = NULL;
+	TM_NTSTATUS st;
+	if ( !h ) return;
+	/* bcrypt's DllMain (T9 x4 system calls 218-220): a synchronization event, then the 390400H request naming it */
+	st = NtCreateEvent( &e, 0x1F0003, NULL, 1, FALSE );
+	printf( "tm_nt ksec.ev: NtCreateEvent(&e, 1F0003H, NULL, SynchronizationEvent, FALSE) -> status %08lXH\n", (unsigned long)st );
+	if ( st >= 0 )
+	{
+		DWORD w;
+		tm_ksec_cfg( "ksec.cfg", h, e, 0x68, 8 );
+		Sleep( 200 );
+		w = WaitForSingleObject( e, 0 );
+		printf( "tm_nt ksec.cfg.later: after 200 ms the event %s\n", w == WAIT_OBJECT_0 ? "signaled" : w == WAIT_TIMEOUT ? "not signaled" : "wait failed" );
+	}
+	/* BCryptGenRandom's request (T9 x5 system call 228) */
+	tm_ksec_rng( "ksec.res", h, 0x180, 0x30 );   /* NOT random: CNG's provider resolution of "RNG" (measured) */
+	tm_ksec_q2( "ksec.q2", h );
+	printf( "tm_nt ksec.close: NtClose -> %08lXH\n", (unsigned long)NtClose( h ) );
+	{
+		HANDLE c = tm_cng_open( "ksec.cng.open" );
+		/* bcryptprimitives' request (T9 exploration x13 system call 257): IOCTL_KSEC_RNG_REKEY 390008H (phnt ntseapi.h:1463), no input, 30H output */
+		if ( c ) tm_ksec_req( "ksec.cng.rekey", c, 0x390008, NULL, 0, 0x30 );
+		if ( c ) printf( "tm_nt ksec.cng.close: NtClose -> %08lXH\n", (unsigned long)NtClose( c ) );
+	}
+	if ( e )
+	{
+		DWORD w = WaitForSingleObject( e, 0 );
+		printf( "tm_nt ksec.closed: after the device handle's close the event %s; NtClose(the event) -> %08lXH\n", w == WAIT_OBJECT_0 ? "signaled" : w == WAIT_TIMEOUT ? "not signaled" : "wait failed",
+				(unsigned long)NtClose( e ) );
+	}
+}static const struct tm_case g_cases[] = { { "sat", case_sat }, { "qsi", case_qsi }, { "hvp", case_hvp }, { "qip", case_qip }, { "wcp", case_wcp }, { "qsix", case_qsix }, { "iocp", case_iocp }, { "wkf", case_wkf }, { "tmr2", case_tmr2 }, { "awcp", case_awcp }, { "swf", case_swf }, { "etw", case_etw }, { "kd", case_kd }, { "of", case_of }, { "tls", case_tls }, { "ahc", case_ahc }, { "vmi", case_vmi }, { "csr", case_csr }, { "sec", case_sec }, { "csrc", case_csrc }, { "nls", case_nls }, { "con", case_con }, { "etwt", case_etwt }, { "tok", case_tok }, { "acc", case_acc }, { "bno", case_bno }, { "mut", case_mut }, { "wil", case_wil }, { "wnf", case_wnf }, { "wnfe", case_wnfe }, { "wnfs", case_wnfs }, { "t2s", case_t2s }, { "hku", case_hku }, { "alert", case_alert }, { "term", case_term }, { "time", case_time }, { "sp", case_sp }, { "mit", case_mit }, { "u32", case_u32 }, { "u32k", case_u32k }, { "fs", case_fs }, { "rvm", case_rvm }, { "atom", case_atom }, { "pii", case_pii }, { "reg", case_reg }, { "ksec", case_ksec } };
 
 int main( int argc, char** argv )
 {
@@ -3886,7 +4240,39 @@ int main( int argc, char** argv )
 		if ( st >= 0 ) NtClose( h );
 		return 0;
 	}
-	if ( argc == 4 && !strcmp( argv[ 1 ], "hku.probe" ) )   /* P46 (U2156): one key of the user's hive (ACCESS hex, the rest of the path) */
+	if ( argc == 9 && !strcmp( argv[ 1 ], "cf.probe" ) )   /* P47 (U2165): one NtCreateFile (ACCESS SHARE DISPOSITION OPTIONS ATTRIBUTES FILEATTR hex, the NT path) */
+	{
+		wchar_t path[ 400 ];
+		TM_USTR u;
+		TM_OA oa;
+		HANDLE h = (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull;
+		ULONGLONG iosb[ 2 ] = { 0xCCCCCCCCCCCCCCCCull, 0xCCCCCCCCCCCCCCCCull };
+		TM_NTSTATUS st;
+		if ( MultiByteToWideChar( CP_ACP, 0, argv[ 8 ], -1, path, 400 ) <= 0 ) return 2;
+		tm_ustr( &u, path );
+		tm_oa( &oa, NULL, &u );
+		oa.Attributes = strtoul( argv[ 6 ], NULL, 16 );
+		st = NtCreateFile( &h, strtoul( argv[ 2 ], NULL, 16 ), &oa, iosb, NULL, strtoul( argv[ 7 ], NULL, 16 ), strtoul( argv[ 3 ], NULL, 16 ), strtoul( argv[ 4 ], NULL, 16 ),
+						   strtoul( argv[ 5 ], NULL, 16 ), NULL, 0 );
+		printf( "tm_nt cf.probe: NtCreateFile(&h, %sH, \"%S\" attributes %sH, &iosb, NULL, file attributes %sH, share %sH, disposition %sH, options %sH, NULL, 0) -> status %08lXH, handle %s, "
+				"IoStatus %s (Status %08lXH, Information %llXH)\n", argv[ 2 ], path, argv[ 6 ], argv[ 7 ], argv[ 3 ], argv[ 4 ], argv[ 5 ], (unsigned long)st,
+				h == (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull ? "not written" : tm_hshape( h ), iosb[ 0 ] == 0xCCCCCCCCCCCCCCCCull ? "not written" : "written",
+				(unsigned long)(ULONG)iosb[ 0 ], iosb[ 1 ] );
+		if ( st >= 0 ) NtClose( h );
+		return 0;
+	}	if ( argc == 6 && !strcmp( argv[ 1 ], "ksec.probe" ) )   /* P47 (U2165): one device request on \Device\KsecDD, twice (CODE INLEN OUTLEN hex, RANDOM 0 / 1) */
+	{
+		static unsigned char o1[ 0x100 ], o2[ 0x100 ];
+		HANDLE h = tm_ksec_open( "ksec.probe.open" );
+		const ULONG code = strtoul( argv[ 2 ], NULL, 16 ), inlen = strtoul( argv[ 3 ], NULL, 16 ), outlen = strtoul( argv[ 4 ], NULL, 16 );
+		const int rnd = atoi( argv[ 5 ] );
+		if ( !h || outlen > 0x100 || inlen > 0x100 ) return 2;
+		tm_ksec_ioctl( "ksec.probe.1", h, code, inlen, outlen, rnd, o1 );
+		tm_ksec_ioctl( "ksec.probe.2", h, code, inlen, outlen, rnd, o2 );
+		printf( "tm_nt ksec.probe.cmp: the two outputs %s\n", outlen ? ( memcmp( o1, o2, outlen ) ? "differ" : "are equal" ) : "(none)" );
+		printf( "tm_nt ksec.probe.close: NtClose -> %08lXH\n", (unsigned long)NtClose( h ) );
+		return 0;
+	}	if ( argc == 4 && !strcmp( argv[ 1 ], "hku.probe" ) )   /* P46 (U2156): one key of the user's hive (ACCESS hex, the rest of the path) */
 	{
 		wchar_t rest[ 400 ];
 		if ( MultiByteToWideChar( CP_ACP, 0, argv[ 3 ], -1, rest, 400 ) <= 0 ) return 2;

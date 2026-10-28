@@ -472,7 +472,13 @@ namespace emu::nt
 		// EnableCallbackContext .. HasPayload stay 0). Other providers / inputs (their enable state is the environment's): stop until measured.
 		if ( fn == 0xF )
 		{
-			struct prov { uint8_t guid[ 16 ]; uint16_t logger; bool callback; const char* tag; uint8_t regtype = 3; };   // P46 (U2148): + RegType
+			struct prov { uint8_t guid[ 16 ]; uint16_t logger; bool callback; const char* tag; uint8_t regtype = 3; const uint64_t* en = nullptr; };   // P46 (U2148): + RegType; P47 (U2166): + en
+			// P47 (U2166): the MEASURED enable state of a provider an ETW session of the guest enables (tm_nt etw.reg<N>.fields): EnableCallbackContext
+			// (+70H), EnableFilterDesc (+78H), EnableCallback (+80H), ProviderTraits (+90H), TraitsFlags (+98H, 4 bytes) - written as measured
+			static const uint64_t en43[ 5 ] = { 0xFF00000001ULL, 0x41ULL, 0x4000000000000000ULL, 0x8ULL, 0x1ULL };   // tm_nt etw.reg43.fields (enabled in the guest)
+			static const uint64_t en50[ 5 ] = { 0xFF00000001ULL, 0x43ULL, 0x7800000006000000ULL, 0x600000000040011ULL, 0x1ULL };   // tm_nt etw.reg50.fields (enabled in the guest)
+			static const uint64_t en54[ 5 ] = { 0xFF00000001ULL, 0x43ULL, 0x7800000006000000ULL, 0x600000000040011ULL, 0x1ULL };   // tm_nt etw.reg54.fields (enabled in the guest)
+			static const uint64_t en40[ 5 ] = { ( uint64_t( 0xFF ) << 32 ) | 1, 0x41, uint64_t( 0x20 ) << 56, 0, 0 };   // tm_nt etw.reg40 (sechost, LoggerId 35)
 			static const prov provs[] = {
 				{ { 0x5C, 0xAB, 0x95, 0x35, 0x2A, 0x04, 0x8E, 0x4C, 0xB9, 0x42, 0x2D, 0x05, 0x9B, 0xFE, 0xB1, 0xB1 }, 1, false, "tm_nt etw.reg" },
 				{ { 0x7B, 0xC8, 0x5F, 0x30, 0x2A, 0x00, 0x26, 0x5E, 0xD2, 0x97, 0x60, 0x22, 0x30, 0x12, 0xCA, 0x9C }, 2, true, "tm_nt etw.reg2" },
@@ -559,7 +565,82 @@ namespace emu::nt
 				{ { 0xAC, 0x89, 0xE0, 0xC7, 0x2A, 0xBA, 0xE0, 0x11, 0x9A, 0xF7, 0x68, 0x38, 0x48, 0x24, 0x01, 0x9B }, 31, true, "tm_nt etw.reg31" },
 				// P46 (U2148): provider 4B1AA7F3186157428CCB39A33BA059D4 (sample run 11 exploration x76: RegType 3, LoggerId 32, ReplyCallback set) - MEASURED tm_nt etw.reg32:
 				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
-				{ { 0x4B, 0x1A, 0xA7, 0xF3, 0x18, 0x61, 0x57, 0x42, 0x8C, 0xCB, 0x39, 0xA3, 0x3B, 0xA0, 0x59, 0xD4 }, 32, true, "tm_nt etw.reg32" } };
+				{ { 0x4B, 0x1A, 0xA7, 0xF3, 0x18, 0x61, 0x57, 0x42, 0x8C, 0xCB, 0x39, 0xA3, 0x3B, 0xA0, 0x59, 0xD4 }, 32, true, "tm_nt etw.reg32" },
+				// P47 (U2166): provider 00FE4EA7BE14F94E9DA91484D5473302 (test PE T9 exploration x1 system call 210: bcrypt.dll DllMain, the 8th provider of the process: RegType 2, LoggerId 8, ReplyCallback set) - MEASURED tm_nt etw.reg33:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0x00, 0xFE, 0x4E, 0xA7, 0xBE, 0x14, 0xF9, 0x4E, 0x9D, 0xA9, 0x14, 0x84, 0xD5, 0x47, 0x33, 0x02 }, 8, true, "tm_nt etw.reg33", 2 },
+				// P47 (U2166): provider AC89E0C72ABAE0119AF768384824019B (test PE T9 exploration x2 system call 211: bcrypt.dll DllMain, the 9th provider of the process: RegType 3, LoggerId 9, ReplyCallback set) - MEASURED tm_nt etw.reg34:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0xAC, 0x89, 0xE0, 0xC7, 0x2A, 0xBA, 0xE0, 0x11, 0x9A, 0xF7, 0x68, 0x38, 0x48, 0x24, 0x01, 0x9B }, 9, true, "tm_nt etw.reg34" },
+				// P47 (U2166): provider 4B1AA7F3186157428CCB39A33BA059D4 (test PE T9: bcrypt.dll DllMain, the 10th provider of the process: RegType 3, LoggerId 10, ReplyCallback set) - MEASURED tm_nt etw.reg35:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0x4B, 0x1A, 0xA7, 0xF3, 0x18, 0x61, 0x57, 0x42, 0x8C, 0xCB, 0x39, 0xA3, 0x3B, 0xA0, 0x59, 0xD4 }, 10, true, "tm_nt etw.reg35" },
+				// P47 (U2166): provider 00FE4EA7BE14F94E9DA91484D5473302 (test PE T9 exploration x9 system call 242: bcryptprimitives.dll DllMain, the 11th provider of the process: RegType 2, LoggerId 11, ReplyCallback set) - MEASURED tm_nt etw.reg36:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0x00, 0xFE, 0x4E, 0xA7, 0xBE, 0x14, 0xF9, 0x4E, 0x9D, 0xA9, 0x14, 0x84, 0xD5, 0x47, 0x33, 0x02 }, 11, true, "tm_nt etw.reg36", 2 },
+				// P47 (U2166): provider 4B1AA7F3186157428CCB39A33BA059D4 (test PE T9: bcryptprimitives.dll DllMain, the 12th provider of the process: RegType 3, LoggerId 12, ReplyCallback set) - MEASURED tm_nt etw.reg37:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0x4B, 0x1A, 0xA7, 0xF3, 0x18, 0x61, 0x57, 0x42, 0x8C, 0xCB, 0x39, 0xA3, 0x3B, 0xA0, 0x59, 0xD4 }, 12, true, "tm_nt etw.reg37" },
+				// P47 (U2166): provider 757C96CABF04B5409A1698B5F9332A92 (sample run 12 exploration s1_1: RegType 3, LoggerId 33, ReplyCallback set) - MEASURED tm_nt etw.reg38:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0x75, 0x7C, 0x96, 0xCA, 0xBF, 0x04, 0xB5, 0x40, 0x9A, 0x16, 0x98, 0xB5, 0xF9, 0x33, 0x2A, 0x92 }, 33, true, "tm_nt etw.reg38" },
+				// P47 (U2166): provider 0B71FDB683F71C4BAB9CC68099DCC0C7 (sample run 12 exploration y2: RegType 3, LoggerId 34, ReplyCallback set) - MEASURED tm_nt etw.reg39:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0x0B, 0x71, 0xFD, 0xB6, 0x83, 0xF7, 0x1C, 0x4B, 0xAB, 0x9C, 0xC6, 0x80, 0x99, 0xDC, 0xC0, 0xC7 }, 34, true, "tm_nt etw.reg39" },
+				// P47 (U2166): provider D8DD65FCEFD6624983D56E5CFE9CE148 (sample run 12 exploration y4: RegType 3, LoggerId 35, ReplyCallback set) - MEASURED tm_nt etw.reg40:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, ENABLED (an ETW session of the guest enables it - the measured enable state en40)
+				{ { 0xD8, 0xDD, 0x65, 0xFC, 0xEF, 0xD6, 0x62, 0x49, 0x83, 0xD5, 0x6E, 0x5C, 0xFE, 0x9C, 0xE1, 0x48 }, 35, true, "tm_nt etw.reg40", 3, en40 },
+				// P47 (U2166): provider 5B4630BF3CE9FD469CDFF41C8904A01F (sample run 12 exploration y5: RegType 3, LoggerId 36, ReplyCallback set) - MEASURED tm_nt etw.reg41:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0x5B, 0x46, 0x30, 0xBF, 0x3C, 0xE9, 0xFD, 0x46, 0x9C, 0xDF, 0xF4, 0x1C, 0x89, 0x04, 0xA0, 0x1F }, 36, true, "tm_nt etw.reg41" },
+				// P47 (U2166): provider 386337C18409B848B9339C7D779FD84D (sample run 12 exploration y37: RegType 3, LoggerId 37, ReplyCallback set) - MEASURED tm_nt etw.reg42:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0x38, 0x63, 0x37, 0xC1, 0x84, 0x09, 0xB8, 0x48, 0xB9, 0x33, 0x9C, 0x7D, 0x77, 0x9F, 0xD8, 0x4D }, 37, true, "tm_nt etw.reg42" },
+				// P47 (U2166): provider E69FDAB95FAE3E4FB2FA8E623C11DC75 (sample run 12 exploration y39: RegType 3, LoggerId 38, ReplyCallback set) - MEASURED tm_nt etw.reg43:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, ENABLED (an ETW session of the guest enables it - the measured enable state en43)
+				{ { 0xE6, 0x9F, 0xDA, 0xB9, 0x5F, 0xAE, 0x3E, 0x4F, 0xB2, 0xFA, 0x8E, 0x62, 0x3C, 0x11, 0xDC, 0x75 }, 38, true, "tm_nt etw.reg43", 3, en43 },
+				// P47 (U2166): provider 3CE255290B4ECA45A1816EE442CA1FC0 (sample run 12 exploration y41: RegType 2, LoggerId 39, ReplyCallback set) - MEASURED tm_nt etw.reg44:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0x3C, 0xE2, 0x55, 0x29, 0x0B, 0x4E, 0xCA, 0x45, 0xA1, 0x81, 0x6E, 0xE4, 0x42, 0xCA, 0x1F, 0xC0 }, 39, true, "tm_nt etw.reg44", 2 },
+				// P47 (U2166): provider 0DB7A7A330A43E4FAC8B32DC24E12D7E (sample run 12 exploration y42: RegType 2, LoggerId 40, ReplyCallback set) - MEASURED tm_nt etw.reg45:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0x0D, 0xB7, 0xA7, 0xA3, 0x30, 0xA4, 0x3E, 0x4F, 0xAC, 0x8B, 0x32, 0xDC, 0x24, 0xE1, 0x2D, 0x7E }, 40, true, "tm_nt etw.reg45", 2 },
+				// P47 (U2166): provider C2CD23A3B081B24880C8B749A221478A (sample run 12 exploration y43: RegType 2, LoggerId 41, ReplyCallback set) - MEASURED tm_nt etw.reg46:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0xC2, 0xCD, 0x23, 0xA3, 0xB0, 0x81, 0xB2, 0x48, 0x80, 0xC8, 0xB7, 0x49, 0xA2, 0x21, 0x47, 0x8A }, 41, true, "tm_nt etw.reg46", 2 },
+				// P47 (U2166): provider AB1626016DFF0345A6F0EFFD0523ACE6 (sample run 12 exploration y44: RegType 2, LoggerId 42, ReplyCallback set) - MEASURED tm_nt etw.reg47:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0xAB, 0x16, 0x26, 0x01, 0x6D, 0xFF, 0x03, 0x45, 0xA6, 0xF0, 0xEF, 0xFD, 0x05, 0x23, 0xAC, 0xE6 }, 42, true, "tm_nt etw.reg47", 2 },
+				// P47 (U2166): provider 3A55C2CE6189344D92CAAB2ECEF646C5 (sample run 12 exploration y45: RegType 2, LoggerId 43, ReplyCallback set) - MEASURED tm_nt etw.reg48:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0x3A, 0x55, 0xC2, 0xCE, 0x61, 0x89, 0x34, 0x4D, 0x92, 0xCA, 0xAB, 0x2E, 0xCE, 0xF6, 0x46, 0xC5 }, 43, true, "tm_nt etw.reg48", 2 },
+				// P47 (U2166): provider 2DD7D7D1D500564E8BAC23FAC0F9ED4E (sample run 12 exploration y46: RegType 2, LoggerId 44, ReplyCallback set) - MEASURED tm_nt etw.reg49:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0x2D, 0xD7, 0xD7, 0xD1, 0xD5, 0x00, 0x56, 0x4E, 0x8B, 0xAC, 0x23, 0xFA, 0xC0, 0xF9, 0xED, 0x4E }, 44, true, "tm_nt etw.reg49", 2 },
+				// P47 (U2166): provider D46E333027E37C449DE051B652C86108 (sample run 12 exploration y47: RegType 3, LoggerId 45, ReplyCallback set) - MEASURED tm_nt etw.reg50:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, ENABLED (an ETW session of the guest enables it - the measured enable state en50)
+				{ { 0xD4, 0x6E, 0x33, 0x30, 0x27, 0xE3, 0x7C, 0x44, 0x9D, 0xE0, 0x51, 0xB6, 0x52, 0xC8, 0x61, 0x08 }, 45, true, "tm_nt etw.reg50", 3, en50 },
+				// P47 (U2166): provider 260F9832F5C867576B26635B3FA83C61 (sample run 12 exploration y51: RegType 3, LoggerId 46, ReplyCallback set) - MEASURED tm_nt etw.reg51:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0x26, 0x0F, 0x98, 0x32, 0xF5, 0xC8, 0x67, 0x57, 0x6B, 0x26, 0x63, 0x5B, 0x3F, 0xA8, 0x3C, 0x61 }, 46, true, "tm_nt etw.reg51" },
+				// P47 (U2166): provider 13CC3F706FB66858DDD9E2DB7F381FFB (sample run 12 exploration y53: RegType 3, LoggerId 47, ReplyCallback set) - MEASURED tm_nt etw.reg52:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0x13, 0xCC, 0x3F, 0x70, 0x6F, 0xB6, 0x68, 0x58, 0xDD, 0xD9, 0xE2, 0xDB, 0x7F, 0x38, 0x1F, 0xFB }, 47, true, "tm_nt etw.reg52" },
+				// P47 (U2166): provider C4522A2927FA6144B52654A46430BD54 (sample run 12 exploration y54: RegType 3, LoggerId 48, ReplyCallback set) - MEASURED tm_nt etw.reg53:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0xC4, 0x52, 0x2A, 0x29, 0x27, 0xFA, 0x61, 0x44, 0xB5, 0x26, 0x54, 0xA4, 0x64, 0x30, 0xBD, 0x54 }, 48, true, "tm_nt etw.reg53" },
+				// P47 (U2166): provider D46E333027E37C449DE051B652C86108 (sample run 12 exploration y55: RegType 3, LoggerId 49, ReplyCallback set) - MEASURED tm_nt etw.reg54:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, ENABLED (an ETW session of the guest enables it - the measured enable state en54)
+				{ { 0xD4, 0x6E, 0x33, 0x30, 0x27, 0xE3, 0x7C, 0x44, 0x9D, 0xE0, 0x51, 0xB6, 0x52, 0xC8, 0x61, 0x08 }, 49, true, "tm_nt etw.reg54", 3, en54 },
+				// P47 (U2166): provider 7B95441D81713548B70AD0B16112A4DE (sample run 12 exploration y56: RegType 2, LoggerId 50, ReplyCallback set) - MEASURED tm_nt etw.reg55:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0x7B, 0x95, 0x44, 0x1D, 0x81, 0x71, 0x35, 0x48, 0xB7, 0x0A, 0xD0, 0xB1, 0x61, 0x12, 0xA4, 0xDE }, 50, true, "tm_nt etw.reg55", 2 },
+				// P47 (U2166): provider C6A5F1D043FCAE4899BFEFB1C38BE9D1 (sample run 12 exploration y57: RegType 3, LoggerId 51, ReplyCallback set) - MEASURED tm_nt etw.reg56:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0xC6, 0xA5, 0xF1, 0xD0, 0x43, 0xFC, 0xAE, 0x48, 0x99, 0xBF, 0xEF, 0xB1, 0xC3, 0x8B, 0xE9, 0xD1 }, 51, true, "tm_nt etw.reg56" },
+				// P47 (U2166): provider 714E4055B94DEB4DA5F58F86E46DDE56 (sample run 12 exploration y59: RegType 3, LoggerId 52, ReplyCallback set) - MEASURED tm_nt etw.reg57:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0x71, 0x4E, 0x40, 0x55, 0xB9, 0x4D, 0xEB, 0x4D, 0xA5, 0xF5, 0x8F, 0x86, 0xE4, 0x6D, 0xDE, 0x56 }, 52, true, "tm_nt etw.reg57" } };
 			uint8_t d[ 0xA0 ] = {};
 			std::string err, guid;
 			if ( ilen != 0xA0 || olen != 0xA0 || c.args[ 1 ] != c.args[ 3 ] || !user_buffer( c.args[ 1 ], 0xA0, UC_PROT_READ | UC_PROT_WRITE ) )
@@ -582,13 +663,20 @@ namespace emu::nt
 			o.kind = "etw registration";
 			o.name = guid;
 			const uint64_t h = open_handle( o );
-			const bool enabled = hit->logger == 5;
+			const bool enabled = hit->logger == 5 || hit->en;
 			reply rr = done_( status::success, what + ": provider " + guid + " (LoggerId " + std::to_string( d[ 0x14 ] ) + ", ReplyCallback " + ( ( d[ 0x20 ] | d[ 0x21 ] | d[ 0x22 ] | d[ 0x23 ] | d[ 0x24 ] | d[ 0x25 ] | d[ 0x26 ] | d[ 0x27 ] ) ? "set" : "NULL" ) +
 												 ") registered, ReplyHandle " + hex( h ) + ( enabled ? ", ENABLED as in the guest (the measured enable fields +70H .. +98H)" : ", not enabled" ) + " (measured: " + hit->tag + ")" );
 			const uint32_t a0 = 0xA0;
 			if ( !put( c.args[ 1 ] + 0x18, &h, 8, rr ) || !put( c.args[ 1 ] + 0x2C, &a0, 4, rr ) || ( c.args[ 5 ] && !put( c.args[ 5 ], &a0, 4, rr ) ) )
 				return stop_( "writing the result failed after the probe" );
-			if ( enabled )
+			if ( hit->en )
+			{
+				const uint32_t tf = uint32_t( hit->en[ 4 ] );
+				if ( !put( c.args[ 1 ] + 0x70, &hit->en[ 0 ], 8, rr ) || !put( c.args[ 1 ] + 0x78, &hit->en[ 1 ], 8, rr ) || !put( c.args[ 1 ] + 0x80, &hit->en[ 2 ], 8, rr ) ||
+					 ( hit->en[ 3 ] && !put( c.args[ 1 ] + 0x90, &hit->en[ 3 ], 8, rr ) ) || ( tf && !put( c.args[ 1 ] + 0x98, &tf, 4, rr ) ) )
+					return stop_( "writing the result failed after the probe" );
+			}
+			else if ( enabled )
 			{
 				const uint64_t ctx = ( uint64_t( 0xFF ) << 32 ) | 1, filt = 0x41, cb = uint64_t( 0xA0 ) << 56, traits = 8;
 				const uint32_t tf = 1;
@@ -649,6 +737,37 @@ namespace emu::nt
                                              0x77, 0x73, 0x2E, 0x53, 0x65, 0x63, 0x75, 0x72, 0x69, 0x74, 0x79, 0x2E, 0x42, 0x43, 0x72, 0x79, 0x70,
                                              0x74, 0x00, 0x13, 0x00, 0x01, 0x1A, 0x73, 0x50, 0x4F, 0xCF, 0x89, 0x82, 0x47, 0xB3, 0xE0, 0xDC, 0xE8,
                                              0xC9, 0x04, 0x76, 0xBA };
+			// P46 (U2148): provider 33's traits as measured (tm_nt etwt33: the capture's sechost.dll at file offset 85379H, "Microsoft.Windows.Security.MitigationPolicy")
+			static const uint8_t traits33[ 0x41 ] = { 0x41, 0x00, 0x4D, 0x69, 0x63, 0x72, 0x6F, 0x73, 0x6F, 0x66, 0x74, 0x2E, 0x57, 0x69, 0x6E, 0x64, 0x6F,
+                                             0x77, 0x73, 0x2E, 0x53, 0x65, 0x63, 0x75, 0x72, 0x69, 0x74, 0x79, 0x2E, 0x4D, 0x69, 0x74, 0x69, 0x67,
+                                             0x61, 0x74, 0x69, 0x6F, 0x6E, 0x50, 0x6F, 0x6C, 0x69, 0x63, 0x79, 0x00, 0x13, 0x00, 0x01, 0x1A, 0x73,
+                                             0x50, 0x4F, 0xCF, 0x89, 0x82, 0x47, 0xB3, 0xE0, 0xDC, 0xE8, 0xC9, 0x04, 0x76, 0xBA };
+			// P46 (U2148): provider 34's traits as measured (tm_nt etwt34: the capture's sechost.dll at file offset 853CBH, "Microsoft.Windows.Security.IsolationApi")
+			static const uint8_t traits34[ 0x3D ] = { 0x3D, 0x00, 0x4D, 0x69, 0x63, 0x72, 0x6F, 0x73, 0x6F, 0x66, 0x74, 0x2E, 0x57, 0x69, 0x6E, 0x64, 0x6F,
+                                             0x77, 0x73, 0x2E, 0x53, 0x65, 0x63, 0x75, 0x72, 0x69, 0x74, 0x79, 0x2E, 0x49, 0x73, 0x6F, 0x6C, 0x61,
+                                             0x74, 0x69, 0x6F, 0x6E, 0x41, 0x70, 0x69, 0x00, 0x13, 0x00, 0x01, 0x1A, 0x73, 0x50, 0x4F, 0xCF, 0x89,
+                                             0x82, 0x47, 0xB3, 0xE0, 0xDC, 0xE8, 0xC9, 0x04, 0x76, 0xBA };
+			// P46 (U2148): provider 36's traits as measured (tm_nt etwt36: the capture's advapi32.dll at file offset 8B809H, "EventLogEvents")
+			static const uint8_t traits36[ 0x24 ] = { 0x24, 0x00, 0x45, 0x76, 0x65, 0x6E, 0x74, 0x4C, 0x6F, 0x67, 0x45, 0x76, 0x65, 0x6E, 0x74, 0x73, 0x00,
+                                             0x13, 0x00, 0x01, 0x1A, 0x73, 0x50, 0x4F, 0xCF, 0x89, 0x82, 0x47, 0xB3, 0xE0, 0xDC, 0xE8, 0xC9, 0x04,
+                                             0x76, 0xBA };
+			// P46 (U2148): provider 37's traits as measured (tm_nt etwt37: the capture's advapi32.dll at file offset 8B7BFH, "Microsoft.Windows.Security.Shutinit")
+			static const uint8_t traits37[ 0x39 ] = { 0x39, 0x00, 0x4D, 0x69, 0x63, 0x72, 0x6F, 0x73, 0x6F, 0x66, 0x74, 0x2E, 0x57, 0x69, 0x6E, 0x64, 0x6F,
+                                             0x77, 0x73, 0x2E, 0x53, 0x65, 0x63, 0x75, 0x72, 0x69, 0x74, 0x79, 0x2E, 0x53, 0x68, 0x75, 0x74, 0x69,
+                                             0x6E, 0x69, 0x74, 0x00, 0x13, 0x00, 0x01, 0x1A, 0x73, 0x50, 0x4F, 0xCF, 0x89, 0x82, 0x47, 0xB3, 0xE0,
+                                             0xDC, 0xE8, 0xC9, 0x04, 0x76, 0xBA };
+			// P46 (U2148): provider 45's traits as measured (tm_nt etwt45: the capture's shell32.dll at file offset 619350H, "")
+			static const uint8_t traits45[ 0x16 ] = { 0x16, 0x00, 0x00, 0x13, 0x00, 0x01, 0x1A, 0x73, 0x50, 0x4F, 0xCF, 0x89, 0x82, 0x47, 0xB3, 0xE0, 0xDC,
+                                             0xE8, 0xC9, 0x04, 0x76, 0xBA };
+			// P46 (U2148): provider 46's traits as measured (tm_nt etwt46: the capture's shell32.dll at file offset 6479CEH, "Microsoft.Windows.Shell.FileExplorer.Aggregate")
+			static const uint8_t traits46[ 0x44 ] = { 0x44, 0x00, 0x4D, 0x69, 0x63, 0x72, 0x6F, 0x73, 0x6F, 0x66, 0x74, 0x2E, 0x57, 0x69, 0x6E, 0x64, 0x6F,
+                                             0x77, 0x73, 0x2E, 0x53, 0x68, 0x65, 0x6C, 0x6C, 0x2E, 0x46, 0x69, 0x6C, 0x65, 0x45, 0x78, 0x70, 0x6C,
+                                             0x6F, 0x72, 0x65, 0x72, 0x2E, 0x41, 0x67, 0x67, 0x72, 0x65, 0x67, 0x61, 0x74, 0x65, 0x00, 0x13, 0x00,
+                                             0x01, 0x1A, 0x73, 0x50, 0x4F, 0xCF, 0x89, 0x82, 0x47, 0xB3, 0xE0, 0xDC, 0xE8, 0xC9, 0x04, 0x76, 0xBA };
+			// P46 (U2148): provider 51's traits as measured (tm_nt etwt51: the capture's ws2_32.dll at file offset 4DEBEH, "Microsoft-Windows-Winsock2")
+			static const uint8_t traits51[ 0x30 ] = { 0x30, 0x00, 0x4D, 0x69, 0x63, 0x72, 0x6F, 0x73, 0x6F, 0x66, 0x74, 0x2D, 0x57, 0x69, 0x6E, 0x64, 0x6F,
+                                             0x77, 0x73, 0x2D, 0x57, 0x69, 0x6E, 0x73, 0x6F, 0x63, 0x6B, 0x32, 0x00, 0x13, 0x00, 0x01, 0x1A, 0x73,
+                                             0x50, 0x4F, 0xCF, 0x89, 0x82, 0x47, 0xB3, 0xE0, 0xDC, 0xE8, 0xC9, 0x04, 0x76, 0xBA };
 			auto traits_are = [ & ]( const uint8_t* want ) {
 				uint8_t got[ 0x100 ] = {};
 				std::string e2;
@@ -674,9 +793,37 @@ namespace emu::nt
 							   // P46 (U2148): provider 26's traits (tm_nt etwt26: STATUS_SUCCESS, ReturnLength 0, no output) - only with the measured bytes
 							   ( pn == "E22D1193A30AD74E91E34264555220C1" && sz == 0x31 && traits_are( traits26 ) ) ||
 							   // P46 (U2148): provider 32's traits (tm_nt etwt32: STATUS_SUCCESS, ReturnLength 0, no output) - only with the measured bytes
-							   ( pn == "4B1AA7F3186157428CCB39A33BA059D4" && sz == 0x37 && traits_are( traits32 ) );
+							   ( pn == "4B1AA7F3186157428CCB39A33BA059D4" && sz == 0x37 && traits_are( traits32 ) ) ||
+							   // P46 (U2148): provider 33's traits (tm_nt etwt33: STATUS_SUCCESS, ReturnLength 0, no output) - only with the measured bytes
+							   ( pn == "757C96CABF04B5409A1698B5F9332A92" && sz == 0x41 && traits_are( traits33 ) ) ||
+							   // P46 (U2148): provider 34's traits (tm_nt etwt34: STATUS_SUCCESS, ReturnLength 0, no output) - only with the measured bytes
+							   ( pn == "0B71FDB683F71C4BAB9CC68099DCC0C7" && sz == 0x3D && traits_are( traits34 ) ) ||
+							   // P46 (U2148): provider 36's traits (tm_nt etwt36: STATUS_SUCCESS, ReturnLength 0, no output) - only with the measured bytes
+							   ( pn == "5B4630BF3CE9FD469CDFF41C8904A01F" && sz == 0x24 && traits_are( traits36 ) ) ||
+							   // P46 (U2148): provider 37's traits (tm_nt etwt37: STATUS_SUCCESS, ReturnLength 0, no output) - only with the measured bytes
+							   ( pn == "386337C18409B848B9339C7D779FD84D" && sz == 0x39 && traits_are( traits37 ) ) ||
+							   // P46 (U2148): provider 45's traits (tm_nt etwt45: STATUS_SUCCESS, ReturnLength 0, no output) - only with the measured bytes
+							   ( pn == "D46E333027E37C449DE051B652C86108" && sz == 0x16 && traits_are( traits45 ) ) ||
+							   // P46 (U2148): provider 46's traits (tm_nt etwt46: STATUS_SUCCESS, ReturnLength 0, no output) - only with the measured bytes
+							   ( pn == "260F9832F5C867576B26635B3FA83C61" && sz == 0x44 && traits_are( traits46 ) ) ||
+							   // P46 (U2148): provider 51's traits (tm_nt etwt51: STATUS_SUCCESS, ReturnLength 0, no output) - only with the measured bytes
+							   ( pn == "C6A5F1D043FCAE4899BFEFB1C38BE9D1" && sz == 0x30 && traits_are( traits51 ) );
 			if ( hr == handles_.end() || hr->second.kind != "etw registration" || !known || !user_buffer( blob, sz, UC_PROT_READ ) )
-				return stop_( what + " - EtwSetProviderTraitsCode for handle " + hex( h ) + ", traits size " + hex( sz ) + ": not measured (tm_nt etwt*: the four providers' blobs are)" );
+			{
+				// P47 (U2166): the blob's address (its image view) and bytes in the stop text - the measurement replays them (observation only)
+				std::string bb, where;
+				if ( sz && sz <= 0x100 && user_buffer( blob, sz, UC_PROT_READ ) )
+				{
+					uint8_t tb[ 0x100 ] = {};
+					std::string e2;
+					if ( e_.read( blob, tb, sz, e2 ) )
+						for ( uint32_t i = 0; i < sz; i++ ) { char t2[ 4 ]; std::snprintf( t2, sizeof( t2 ), "%02X", tb[ i ] ); bb += ( i ? " " : "" ) + std::string( t2 ); }
+					for ( const auto& v : views_ )
+						if ( blob >= v.first && blob < v.first + v.second.size ) where = " (" + v.second.name + " + " + hex( blob - v.first ) + ")";
+				}
+				return stop_( what + " - EtwSetProviderTraitsCode for handle " + hex( h ) + ", traits size " + hex( sz ) + ": not measured (tm_nt etwt*: the four providers' blobs are); blob at " +
+							  hex( blob ) + where + ( bb.empty() ? std::string() : ": " + bb ) );
+			}
 			if ( c.args[ 5 ] && !user_buffer( c.args[ 5 ], 4, UC_PROT_WRITE ) ) return done_( status::access_violation, what + ": ReturnLength not writable" );
 			reply rr = done_( status::success, what + ": EtwSetProviderTraitsCode for registration " + hex( h ) + " (provider " + hr->second.name + "), traits " + hex( sz ) + " bytes at " + hex( blob ) + " -" +
 												 " STATUS_SUCCESS, ReturnLength 0, no output written (measured: tm_nt etwt*.set)" );
@@ -1002,6 +1149,10 @@ namespace emu::nt
 			if ( !put( ph, &h, 8, rs ) || !put( iosb, io, 16, rs ) ) return stop_( "writing the result failed after the probe" );
 			return rs;
 		}
+		{
+			reply kr;
+			if ( ksec_open( c, oa, what, kr ) ) return kr;   // P47 (U2165): \Device\KsecDD, the device of the environment (nt_kernel_vfs.cpp)
+		}
 		if ( !curdir || access != 0x100020 || share != 3 || options != 0x21 || oa.attributes != 0x40 ) return vfs_open_file( c, oa, what );   // P45 (U2129)
 		if ( !user_buffer( ph, 8, UC_PROT_WRITE ) || !user_buffer( iosb, 16, UC_PROT_WRITE ) ) return done_( status::access_violation, what + ": FileHandle / IoStatusBlock not writable" );
 		object o;
@@ -1147,7 +1298,9 @@ namespace emu::nt
 												  "advapi32.dll", "cfgmgr32.dll", "transparent_makimav2.exe",
 												  "t6_user32.exe", "imm32.dll",   // P44 (U2121): ahc.33 test PE T6's image name, ahc.34 IMM32.DLL (user32 loads it)
 												  "t7_vfs.exe",   // P45 (U2129): ahc.35 test PE T7's image name
-												  "t8_pii.exe" };   // P46 (U2144): ahc.36 test PE T8's image name
+												  "t8_pii.exe",   // P46 (U2144): ahc.36 test PE T8's image name
+												  "t9_rng.exe",   // P47 (U2167): ahc.37 test PE T9's image name
+												  "bcryptprimitives.dll" };   // P47 (U2167): ahc.38 bcrypt loads bcryptprimitives.dll (T9 exploration x8 system call 238)
 		static const char* const measured80[] = { "msvcrt.dll", "oleaut32.dll", "dwmapi.dll", "setupapi.dll" };
 		uint32_t outv = 0xFFFFFFFF;
 		for ( const char* m : measured0 ) if ( ln == m ) outv = 0;

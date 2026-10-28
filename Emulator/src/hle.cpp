@@ -50,6 +50,8 @@ namespace emu::hle
 								{ "NtQueryDirectoryFileEx", api::nt_file_service }, { "NtClose", api::nt_file_service },
 								// P46 (U2146): NtQueryInformationProcess (test PE T8: ProcessImageInformation) - the kernel layer's service the same way
 								{ "NtQueryInformationProcess", api::nt_file_service } };
+		// P47 (U2168): bcrypt.dll's BCryptGenRandom (test PE T9)
+		const known bcrypt[] = { { "BCryptGenRandom", api::bcrypt_gen_random } };
 	}
 
 	std::string binding::label() const
@@ -74,6 +76,7 @@ namespace emu::hle
 		for ( const auto& m : mods )
 		{
 			const bool is_k32 = lower( m.dll ) == "kernel32.dll", is_u32 = lower( m.dll ) == "user32.dll", is_nt = lower( m.dll ) == "ntdll.dll";
+			const bool is_bc = lower( m.dll ) == "bcrypt.dll";   // P47 (U2168)
 			for ( const auto& en : m.entries )
 			{
 				if ( b_.size() >= max_stubs )
@@ -93,6 +96,9 @@ namespace emu::hle
 						if ( en.name == k.name ) b.id = k.id;
 				if ( is_nt && !en.name.empty() )   // P45 (U2131)
 					for ( const auto& k : ntdll )
+						if ( en.name == k.name ) b.id = k.id;
+				if ( is_bc && !en.name.empty() )   // P47 (U2168)
+					for ( const auto& k : bcrypt )
 						if ( en.name == k.name ) b.id = k.id;
 				b.stub = module_va + stub_size * b_.size();
 				if ( image_base > UINT64_MAX - en.iat_rva )
@@ -372,11 +378,39 @@ namespace emu::hle
 				r.text = b.label() + " -> the kernel layer: status " + s + "H: " + rep.text;
 				return r;
 			}
+			case api::bcrypt_gen_random:
+			{
+				// P47 (U2168): NTSTATUS BCryptGenRandom( BCRYPT_ALG_HANDLE hAlgorithm, PUCHAR pbBuffer, ULONG cbBuffer, ULONG dwFlags ) - Windows SDK
+				// shared\bcrypt.h; Learn "BCryptGenRandom function": with BCRYPT_USE_SYSTEM_PREFERRED_RNG (2) hAlgorithm must be NULL, the buffer
+				// is filled with random bytes, STATUS_SUCCESS. Under --HLE bcrypt's code does not run: the API's documented result - cbBuffer
+				// bytes of the environment's seeded generator (the kernel layer's environment_random, the stream of the RNG device under --Sys;
+				// never host entropy), STATUS_SUCCESS (test PE T9: native 3900007FH). Another algorithm handle / flag, a length of 0 or above
+				// 10000H, an unwritable buffer: not modelled - stop.
+				const uint32_t cb = uint32_t( args[ 2 ] ), flags = uint32_t( args[ 3 ] );
+				if ( args[ 0 ] != 0 || flags != 2 || cb == 0 || cb > 0x10000 || !k.user_buffer( args[ 1 ], cb, UC_PROT_WRITE ) )
+				{
+					r.text = "BCryptGenRandom( " + hex( args[ 0 ] ) + ", " + hex( args[ 1 ] ) + ", " + hex( cb ) + ", " + hex( flags ) + " ): only NULL with "
+							 "BCRYPT_USE_SYSTEM_PREFERRED_RNG and a writable buffer of 1 .. 10000H bytes is modelled";
+					return r;
+				}
+				std::vector<uint8_t> buf( cb );
+				k.environment_random( buf.data(), buf.size() );
+				if ( uc_mem_write( uc, args[ 1 ], buf.data(), buf.size() ) != UC_ERR_OK )
+				{
+					r.text = "BCryptGenRandom: writing the buffer failed after the probe";
+					return r;
+				}
+				r.kind = result_kind::returned;
+				r.rax = 0;
+				r.text = "BCryptGenRandom( NULL, " + hex( args[ 1 ] ) + ", " + hex( cb ) + ", BCRYPT_USE_SYSTEM_PREFERRED_RNG ): " + hex( cb ) +
+						 " bytes of the environment's seeded generator (CTR_DRBG), STATUS_SUCCESS";
+				return r;
+			}
 			default:
 				r.text = b.label() + " is not implemented in milestone M5 (the --HLE APIs of M5: kernel32.dll GetCurrentProcessId, GetCurrentThreadId, ExitProcess, "
 									 "GetModuleHandleW / A( NULL ); P41: GetStdHandle, WriteFile, WriteConsoleA / W, GetLastError; P44: user32.dll CharUpperW; "
 									 "P45: ntdll.dll NtOpenFile, NtCreateFile, NtQueryAttributesFile, NtQueryFullAttributesFile, NtQueryDirectoryFile(Ex), NtClose; "
-									 "P46: ntdll.dll NtQueryInformationProcess)";
+									 "P46: ntdll.dll NtQueryInformationProcess; P47: bcrypt.dll BCryptGenRandom)";
 				return r;
 		}
 	}

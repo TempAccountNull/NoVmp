@@ -61,7 +61,8 @@ namespace emu::hle
 	enum class api { unknown, get_current_process_id, get_current_thread_id, exit_process, get_module_handle_w, get_module_handle_a,
 					 get_std_handle, write_file, write_console_a, write_console_w, get_last_error,   // P41 (U2083): the last five
 					 char_upper_w,   // P44 (U2123): user32.dll CharUpperW
-					 nt_file_service };   // P45 (U2131): ntdll.dll's file-system system-service exports (the kernel layer's service of that name)
+					 nt_file_service,   // P45 (U2131): ntdll.dll's file-system system-service exports (the kernel layer's service of that name)
+					 bcrypt_gen_random };   // P47 (U2168): bcrypt.dll BCryptGenRandom (test PE T9)
 
 	struct binding
 	{

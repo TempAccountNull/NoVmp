@@ -291,6 +291,9 @@ namespace emu::nt
 		else if ( c.name == "NtQueryInformationFile" || c.name == "NtSetInformationFile" ) a.args = "class " + std::to_string( uint32_t( c.args[ 4 ] ) ) + ", Length " + hx( uint32_t( c.args[ 3 ] ) ) + "H";
 		else if ( c.name == "NtQueryVolumeInformationFile" ) a.args = "class " + std::to_string( uint32_t( c.args[ 4 ] ) ) + ", Length " + hx( uint32_t( c.args[ 3 ] ) ) + "H";
 		else if ( c.name == "NtReadFile" ) a.args = "Length " + hx( uint32_t( c.args[ 6 ] ) ) + "H";
+		else if ( c.name == "NtDeviceIoControlFile" )   // P47 (U2166): the device request
+			a.args = "IoControlCode " + hx( uint32_t( c.args[ 5 ] ) ) + "H, InputBufferLength " + hx( uint32_t( c.args[ 7 ] ) ) + "H, OutputBufferLength " +
+					 hx( uint32_t( c.args[ 9 ] ) ) + "H";
 		char st[ 16 ];
 		std::snprintf( st, sizeof( st ), "%08X", r.status );
 		if ( r.kind == reply_kind::done ) a.answer = std::string( "status " ) + st + "H";
@@ -532,5 +535,279 @@ namespace emu::nt
 			if ( !put( info, z.data(), z.size(), r ) ) return stop_( "writing the output failed after the probe" );
 		}
 		return r;
+	}
+
+	// ------------------------------------------------------------------------------------------------ \Device\KsecDD (P47)
+	// USER DECISION 2026-10-28 (P47 STEP 2, "\Device\KsecDD: MODEL IT AS A DEVICE"): the kernel security device is a DEVICE of the
+	// environment - the only device the emulated file system holds. Sample run 11 system call 759: bcrypt.dll's DllMain (bcrypt.dll+3AA4 ..
+	// +6490) opens it. Names / codes: phnt ntseapi.h:1458-1488 (KSEC_DEVICE_NAME, IOCTL_KSEC_* = CTL_CODE( FILE_DEVICE_KSEC 39H, function,
+	// method, access ) - shared\devioctl.h CTL_CODE: DeviceType << 16 | Access << 14 | Function << 2 | Method); the services' prototypes phnt
+	// ntioapi.h NtOpenFile / NtDeviceIoControlFile. Every answer is MEASURED natively from inside our own test PE (tm_nt case ksec, decision
+	// 3.0.7): the open with bcrypt's exact arguments (U2165), each device request with the code / lengths bcrypt sends (U2166). A random output
+	// (the random-number request) comes from the environment's seeded generator (emu/ctr_drbg.hpp, plan 3.M6: CTR_DRBG of the seed of decision
+	// D8, personalization "NoVmp environment RNG device", environment_random - a model choice with the measured shape, never host entropy). A request that was
+	// not measured, other open arguments, another device: a loud stop (the process layer adds the state dump). Every access is in fs_access.txt.
+	// P47: the second device, \Device\CNG (the CNG driver), is opened by bcryptprimitives.dll after bcrypt's provider resolution (test PE T9,
+	// BCryptGenRandom): MEASURED tm_nt ksec.cng.open - NtOpenFile( 100001H, "\Device\CNG" attributes 40H, share 7, options 20H ) = STATUS_SUCCESS, a
+	// handle, IoStatus {Status 0 (the upper half not written), Information 0} - the same shape as the kernel security device. Modelled under the
+	// same USER DECISION (2026-10-28: the system RNG path's devices; noted in notes/eread/P47_ksecdd_run12.md).
+	bool kernel::ksec_open( const call& c, const object_attributes& oa, const std::string& what, reply& r )
+	{
+		const std::string ln = lower( oa.name );
+		if ( oa.root || ( ln != "\\device\\ksecdd" && ln != "\\device\\cng" ) ) return false;
+		const bool cng = ln == "\\device\\cng";
+		const uint32_t access = uint32_t( c.args[ 1 ] ), share = uint32_t( c.args[ 4 ] ), options = uint32_t( c.args[ 5 ] );
+		if ( !cng && ( oa.name != "\\Device\\KsecDD" || access != 0x100003 || oa.attributes != 0 || share != 7 || options != 0x20 ) )
+		{
+			r = stop_( what + " - the kernel security device with other arguments / another spelling: not measured (tm_nt ksec.open: \"\\Device\\KsecDD\", 100003H, "
+							  "attributes 0, share 7, options 20H - bcrypt's DllMain)" );
+			return true;
+		}
+		if ( cng && ( oa.name != "\\Device\\CNG" || access != 0x100001 || oa.attributes != 0x40 || share != 7 || options != 0x20 ) )
+		{
+			r = stop_( what + " - the CNG device with other arguments / another spelling: not measured (tm_nt ksec.cng.open: \"\\Device\\CNG\", 100001H, attributes 40H, "
+							  "share 7, options 20H - bcryptprimitives.dll)" );
+			return true;
+		}
+		const uint64_t ph = c.args[ 0 ], iosb = c.args[ 3 ];
+		if ( !user_buffer( ph, 8, UC_PROT_WRITE ) || !user_buffer( iosb, 16, UC_PROT_WRITE ) )
+		{
+			r = stop_( what + " - FileHandle / IoStatusBlock not writable: not measured for the device" );
+			return true;
+		}
+		object o;
+		o.kind = cng ? "device (CNG)" : "device (KsecDD)";
+		o.name = oa.name;
+		const uint64_t h = open_handle( o );
+		r = done_( status::success, what + ": the " + ( cng ? "CNG" : "kernel security" ) + " device, handle " + hex( h ) + ", IoStatus {Status 0 (the upper half not written), "
+										  "Information 0} (measured: tm_nt " + ( cng ? "ksec.cng.open" : "ksec.open" ) + ")" );
+		// the measured IoStatusBlock: Status (4 bytes) = 0, the upper half of the Status / Pointer union NOT written, Information (8 bytes) = 0
+		const uint32_t ios = 0;
+		const uint64_t ioi = 0;
+		if ( !put( ph, &h, 8, r ) || !put( iosb, &ios, 4, r ) || !put( iosb + 8, &ioi, 8, r ) ) r = stop_( "writing the result failed after the probe" );
+		return true;
+	}
+
+	// NtDeviceIoControlFile( FileHandle, Event, ApcRoutine, ApcContext, IoStatusBlock, IoControlCode, InputBuffer, InputBufferLength,
+	// OutputBuffer, OutputBufferLength ) - phnt ntioapi.h NtDeviceIoControlFile (the WDK's ZwDeviceIoControlFile documents the call)
+	reply kernel::svc_device_io_control_file( const call& c )
+	{
+		if ( !c.stack_args ) return stop_( "NtDeviceIoControlFile: the stack arguments are not readable" );
+		const auto it = handles_.find( c.args[ 0 ] );
+		const uint32_t code = uint32_t( c.args[ 5 ] ), inlen = uint32_t( c.args[ 7 ] ), outlen = uint32_t( c.args[ 9 ] );
+		const uint64_t iosb = c.args[ 4 ], in = c.args[ 6 ], out = c.args[ 8 ];
+		const std::string what = "NtDeviceIoControlFile( " + hex( c.args[ 0 ] ) + ( it != handles_.end() ? " (" + it->second.kind + " " + it->second.name + ")" : std::string() ) +
+								 ", Event " + hex( c.args[ 1 ] ) + ", ApcRoutine " + hex( c.args[ 2 ] ) + ", ApcContext " + hex( c.args[ 3 ] ) + ", IoStatusBlock " + hex( iosb ) +
+								 ", IoControlCode " + hx( code ) + "H (DeviceType " + hx( code >> 16 ) + "H, Access " + std::to_string( ( code >> 14 ) & 3 ) + ", Function " +
+								 std::to_string( ( code >> 2 ) & 0xFFF ) + ", Method " + std::to_string( code & 3 ) + "), InputBuffer " + hex( in ) + " / " + hx( inlen ) +
+								 "H, OutputBuffer " + hex( out ) + " / " + hx( outlen ) + "H )";
+		if ( it == handles_.end() || ( it->second.kind != "device (KsecDD)" && it->second.kind != "device (CNG)" ) )
+			return stop_( what + " - not a handle of a device of the environment (\\Device\\KsecDD, \\Device\\CNG): not modelled" );
+		if ( c.args[ 1 ] || c.args[ 2 ] || c.args[ 3 ] ) return stop_( what + " - an event / APC on the device: not measured" );
+		std::string inbytes;
+		if ( in && inlen && inlen <= 0x100 && user_buffer( in, inlen, UC_PROT_READ ) )
+		{
+			uint8_t b[ 0x100 ] = {};
+			std::string err;
+			if ( e_.read( in, b, inlen, err ) )
+			{
+				inbytes = ", input bytes";
+				for ( uint32_t i = 0; i < inlen; i++ )
+				{
+					char t[ 4 ];
+					std::snprintf( t, sizeof( t ), " %02X", b[ i ] );
+					inbytes += t;
+				}
+			}
+		}
+		reply r;
+		if ( ksec_request( c, what, r ) ) return r;
+		return stop_( what + inbytes + " - a request on the device that was not measured (tm_nt ksec): not answered" );
+	}
+
+	// the measured requests on the kernel security device (tm_nt ksec.*); false = not measured (the caller stops loudly)
+	bool kernel::ksec_request( const call& c, const std::string& what, reply& r )
+	{
+		const uint32_t code = uint32_t( c.args[ 5 ] ), inlen = uint32_t( c.args[ 7 ] ), outlen = uint32_t( c.args[ 9 ] );
+		const uint64_t iosb = c.args[ 4 ], in = c.args[ 6 ], out = c.args[ 8 ];
+		const auto dv = handles_.find( c.args[ 0 ] );
+		if ( dv == handles_.end() ) return false;
+		if ( dv->second.kind == "device (CNG)" ) return cng_request( c, what, r );
+		if ( code == 0x390400 && inlen == 0x68 )
+		{
+			// IoControlCode 390400H = CTL_CODE( 39H FILE_DEVICE_KSEC, function 100H, METHOD_BUFFERED, FILE_ANY_ACCESS ) - a function phnt
+			// ntseapi.h:1461-1488 does not list (IOCTL_KSEC_* end at function 27) and no public document names: the request as bcrypt.dll's
+			// DllMain sends it (test PE T9 exploration x4 system call 220; sample run 12): 68H input bytes {+0 ULONG 1A2B3C4DH, +4 ULONG
+			// 00010500H, +8 0, +10H -1, +18H 0, +20H / +28H / +30H -1, +38H 0, +40H / +48H -1, +50H 0, +58H -1, +60H the handle of a
+			// synchronization event of the process}, an 8-byte output. MEASURED from inside (tm_nt ksec.cfg, the same bytes with its own
+			// event, twice): STATUS_SUCCESS, IoStatus {Status 0 (the upper half not written), Information 0}, the output NOT written, the input
+			// unchanged, the event NOT signaled (at once, after 200 ms, after the device handle's close). The event is recorded on the device
+			// handle and never signaled here (no change of the emulated environment's configuration exists). Another input / length, an
+			// unwritable buffer, a handle that is not a synchronization event: not measured - stop.
+			if ( inlen != 0x68 || outlen != 8 || !in || !out ) return false;
+			if ( !user_buffer( in, 0x68, UC_PROT_READ ) || !user_buffer( out, 8, UC_PROT_WRITE ) || !user_buffer( iosb, 16, UC_PROT_WRITE ) )
+			{
+				r = stop_( what + " - an input / output / IoStatusBlock buffer is not accessible: not measured" );
+				return true;
+			}
+			uint8_t b[ 0x68 ] = {};
+			std::string err;
+			if ( !e_.read( in, b, 0x68, err ) )
+			{
+				r = stop_( what + " - the input is not readable: " + err );
+				return true;
+			}
+			static const uint8_t pat[ 12 ] = { 0, 1, 0, 1, 1, 1, 0, 1, 1, 0, 1, 2 };   // the 8-byte fields from +8: 0 zero, 1 -1, 2 the event handle
+			uint32_t magic = 0, ver = 0;
+			std::memcpy( &magic, b, 4 );
+			std::memcpy( &ver, b + 4, 4 );
+			uint64_t ev = 0;
+			bool shape = magic == 0x1A2B3C4D && ver == 0x00010500;
+			for ( int k = 0; k < 12 && shape; k++ )
+			{
+				uint64_t v = 0;
+				std::memcpy( &v, b + 8 + 8 * k, 8 );
+				if ( pat[ k ] == 2 ) ev = v;
+				else if ( v != ( pat[ k ] ? ~0ull : 0ull ) ) shape = false;
+			}
+			const auto evh = handles_.find( ev );
+			if ( !shape || evh == handles_.end() || evh->second.kind != "event (synchronization)" )
+				return false;
+			r = done_( status::success, what + ": the 68H-byte request naming the synchronization event " + hex( ev ) + " - STATUS_SUCCESS, IoStatus {0, Information 0}, the output "
+											  "not written, the event not signaled (measured: tm_nt ksec.cfg)" );
+			auto& dev = handles_[ c.args[ 0 ] ];
+			dev.value = ev;   // the event the device would signal (never: the emulated environment's configuration does not change)
+			const uint32_t ios = 0;
+			const uint64_t ioi = 0;
+			if ( !put( iosb, &ios, 4, r ) || !put( iosb + 8, &ioi, 8, r ) ) r = stop_( "writing the IoStatusBlock failed after the probe" );
+			return true;
+		}
+		// the same IoControlCode with the CNG configuration queries of bcrypt.dll's BCryptGenRandom( NULL, ..., BCRYPT_USE_SYSTEM_PREFERRED_RNG )
+		// (test PE T9 explorations x5 / x7): an input {+0 ULONG 1A2B3C4DH, +4 ULONG 00020000H, ...} and a 180H-byte output. MEASURED from inside
+		// (tm_nt ksec.<item>.1-3: three requests on one handle, measured twice): STATUS_SUCCESS, IoStatus {Status 0 (the upper half not
+		// written), Information = the answer's length}, exactly that many output bytes written, EQUAL in every request - CNG's resolution of the
+		// algorithm "RNG": self-relative offsets (no pointer), "Microsoft Primitive Provider", "bcryptprimitives.dll" (the system's
+		// configuration: not random, no identifier). Only an input equal to a measured one, byte for byte, with the measured output length is
+		// answered; another one, an inaccessible buffer: not measured - stop.
+		// BEGIN KSEC QUERY TABLE (P47, U2166; generated by the coordinator's tool from the recorded tm_nt ksec.<item> lines - the dump of each
+		// answer, its IoStatus and its "equal in all three requests" shape; checked by emu-selftest nt_measured_ksec)
+		// tm_nt ksec.res - T9 exploration x5 system call 228: the resolution of "RNG"
+		static const uint8_t ksec_in_res[ 0x30 ] = {
+			0x4D, 0x3C, 0x2B, 0x1A, 0x00, 0x00, 0x02, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+			0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+			0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+		};
+		static const uint8_t ksec_out_res[ 0xD8 ] = {
+			0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x18, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF,
+			0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x58, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+			0x98, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+			0x52, 0x00, 0x4E, 0x00, 0x47, 0x00, 0x00, 0x00, 0x4D, 0x00, 0x69, 0x00, 0x63, 0x00, 0x72, 0x00,
+			0x6F, 0x00, 0x73, 0x00, 0x6F, 0x00, 0x66, 0x00, 0x74, 0x00, 0x20, 0x00, 0x50, 0x00, 0x72, 0x00,
+			0x69, 0x00, 0x6D, 0x00, 0x69, 0x00, 0x74, 0x00, 0x69, 0x00, 0x76, 0x00, 0x65, 0x00, 0x20, 0x00,
+			0x50, 0x00, 0x72, 0x00, 0x6F, 0x00, 0x76, 0x00, 0x69, 0x00, 0x64, 0x00, 0x65, 0x00, 0x72, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xA8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x62, 0x00, 0x63, 0x00, 0x72, 0x00, 0x79, 0x00,
+			0x70, 0x00, 0x74, 0x00, 0x70, 0x00, 0x72, 0x00, 0x69, 0x00, 0x6D, 0x00, 0x69, 0x00, 0x74, 0x00,
+			0x69, 0x00, 0x76, 0x00, 0x65, 0x00, 0x73, 0x00, 0x2E, 0x00, 0x64, 0x00, 0x6C, 0x00, 0x6C, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+		};
+		// tm_nt ksec.q2 - T9 exploration x7 system call 229: {.., +18H 30H, +28H 1 / 2, +30H L"RNG"}
+		static const uint8_t ksec_in_q2[ 0x38 ] = {
+			0x4D, 0x3C, 0x2B, 0x1A, 0x00, 0x00, 0x02, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x30, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00,
+			0x52, 0x00, 0x4E, 0x00, 0x47, 0x00, 0x00, 0x00
+		};
+		static const uint8_t ksec_out_q2[ 0xD8 ] = {
+			0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x18, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x58, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x47, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+			0x98, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+			0x52, 0x00, 0x4E, 0x00, 0x47, 0x00, 0x00, 0x00, 0x4D, 0x00, 0x69, 0x00, 0x63, 0x00, 0x72, 0x00,
+			0x6F, 0x00, 0x73, 0x00, 0x6F, 0x00, 0x66, 0x00, 0x74, 0x00, 0x20, 0x00, 0x50, 0x00, 0x72, 0x00,
+			0x69, 0x00, 0x6D, 0x00, 0x69, 0x00, 0x74, 0x00, 0x69, 0x00, 0x76, 0x00, 0x65, 0x00, 0x20, 0x00,
+			0x50, 0x00, 0x72, 0x00, 0x6F, 0x00, 0x76, 0x00, 0x69, 0x00, 0x64, 0x00, 0x65, 0x00, 0x72, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xA8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x62, 0x00, 0x63, 0x00, 0x72, 0x00, 0x79, 0x00,
+			0x70, 0x00, 0x74, 0x00, 0x70, 0x00, 0x72, 0x00, 0x69, 0x00, 0x6D, 0x00, 0x69, 0x00, 0x74, 0x00,
+			0x69, 0x00, 0x76, 0x00, 0x65, 0x00, 0x73, 0x00, 0x2E, 0x00, 0x64, 0x00, 0x6C, 0x00, 0x6C, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+		};
+		struct ksec_query { const char* item; const uint8_t* in; uint32_t inlen, outlen; const uint8_t* answer; uint32_t answer_len; };
+		static const ksec_query ksec_queries[] = {
+			{ "tm_nt ksec.res", ksec_in_res, 0x30, 0x180, ksec_out_res, 0xD8 },
+			{ "tm_nt ksec.q2", ksec_in_q2, 0x38, 0x180, ksec_out_q2, 0xD8 }
+		};
+		// END KSEC QUERY TABLE
+		if ( code == 0x390400 && in && out && inlen <= 0x100 )
+		{
+			uint8_t got[ 0x100 ] = {};
+			std::string err;
+			if ( !user_buffer( in, inlen, UC_PROT_READ ) || !e_.read( in, got, inlen, err ) ) return false;
+			for ( const auto& q : ksec_queries )
+			{
+				if ( q.inlen != inlen || q.outlen != outlen || std::memcmp( got, q.in, inlen ) != 0 ) continue;
+				if ( !user_buffer( out, outlen, UC_PROT_WRITE ) || !user_buffer( iosb, 16, UC_PROT_WRITE ) )
+				{
+					r = stop_( what + " - the output / IoStatusBlock buffer is not accessible: not measured" );
+					return true;
+				}
+				r = done_( status::success, what + ": a CNG configuration query - the measured answer, " + hx( q.answer_len ) + "H bytes, IoStatus {0, Information " +
+												  hx( q.answer_len ) + "H} (resolution of \"RNG\": \"Microsoft Primitive Provider\", \"bcryptprimitives.dll\"; measured: " + q.item + ")" );
+				const uint32_t ios = 0;
+				const uint64_t ioi = q.answer_len;
+				if ( !put( out, q.answer, q.answer_len, r ) || !put( iosb, &ios, 4, r ) || !put( iosb + 8, &ioi, 8, r ) ) r = stop_( "writing the answer failed after the probe" );
+				return true;
+			}
+		}
+		return false;
+	}
+
+	// the environment's random bytes (USER DECISION 2026-10-28): the seeded CTR_DRBG of plan 3.M6 (emu/ctr_drbg.hpp: NIST SP 800-90A Rev. 1
+	// 10.2.1, AES-128, the seed of decision D8) with its own personalization string "NoVmp environment RNG device" (a stream of its own: the
+	// process cookie keeps the first value of the "NoVmp environment" stream) - one stream per process, consumed in the order of the requests;
+	// never host entropy. Also the --HLE BCryptGenRandom (hle.cpp).
+	void kernel::environment_random( uint8_t* p, size_t n )
+	{
+		if ( !dev_rng_ ) dev_rng_ = std::make_unique<ctr_drbg>( f_.rng_seed, std::string( environment_personalization ) + " RNG device" );
+		for ( size_t i = 0; i < n; i += 8 )
+		{
+			const uint64_t v = dev_rng_->next();
+			std::memcpy( p + i, &v, n - i < 8 ? n - i : 8 );
+		}
+	}
+
+	// the measured requests on the CNG device (tm_nt ksec.cng.*); false = not measured (the caller stops loudly)
+	bool kernel::cng_request( const call& c, const std::string& what, reply& r )
+	{
+		const uint32_t code = uint32_t( c.args[ 5 ] ), inlen = uint32_t( c.args[ 7 ] ), outlen = uint32_t( c.args[ 9 ] );
+		const uint64_t iosb = c.args[ 4 ], in = c.args[ 6 ], out = c.args[ 8 ];
+		if ( code == 0x390008 )
+		{
+			// IOCTL_KSEC_RNG_REKEY = CTL_CODE( FILE_DEVICE_KSEC 39H, 2, METHOD_BUFFERED, FILE_ANY_ACCESS ) (phnt ntseapi.h:1463) as
+			// bcryptprimitives.dll sends it on \Device\CNG (test PE T9 exploration x13 system call 257: no input, a 30H-byte output - the
+			// seed of its process PRNG). MEASURED from inside (tm_nt ksec.cng.rekey.1-3, three requests on one handle, twice): STATUS_SUCCESS,
+			// IoStatus {Status 0 (the upper half not written), Information 30H}, exactly 30H bytes written, all 30H bytes different in every
+			// request (random; never recorded). The model: 30H bytes of the environment's seeded generator (environment_random). Another
+			// length, an input, an inaccessible buffer: not measured - stop.
+			if ( in || inlen || outlen != 0x30 || !out ) return false;
+			if ( !user_buffer( out, 0x30, UC_PROT_WRITE ) || !user_buffer( iosb, 16, UC_PROT_WRITE ) )
+			{
+				r = stop_( what + " - the output / IoStatusBlock buffer is not accessible: not measured" );
+				return true;
+			}
+			uint8_t seed[ 0x30 ];
+			environment_random( seed, sizeof( seed ) );
+			r = done_( status::success, what + ": IOCTL_KSEC_RNG_REKEY - 30H random bytes from the environment's seeded generator (CTR_DRBG, never the host), IoStatus "
+											  "{0, Information 30H} (measured shape: tm_nt ksec.cng.rekey)" );
+			const uint32_t ios = 0;
+			const uint64_t ioi = 0x30;
+			if ( !put( out, seed, sizeof( seed ), r ) || !put( iosb, &ios, 4, r ) || !put( iosb + 8, &ioi, 8, r ) ) r = stop_( "writing the answer failed after the probe" );
+			return true;
+		}
+		return false;
 	}
 }

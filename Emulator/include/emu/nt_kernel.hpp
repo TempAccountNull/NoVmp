@@ -48,11 +48,13 @@
 #pragma once
 
 #include <emu/engine.hpp>
+#include <emu/ctr_drbg.hpp>   // P47 (U2166)
 
 #include <array>
 #include <initializer_list>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -230,6 +232,9 @@ namespace emu::nt
 		// P45 (U2128): every file-system access of the emulated program, in order (observation only)
 		const std::vector<fs_access>& fs_log() const { return fs_log_; }
 		static bool fs_service( const std::string& name );   // a service that names a file / a file handle (recorded in fs_log)
+		// P47 (U2166): N random bytes of the environment's seeded generator (CTR_DRBG, plan 3.M6; never host entropy) - the RNG device's
+		// answer and the --HLE BCryptGenRandom
+		void environment_random( uint8_t* p, size_t n );
 
 	private:
 		reply svc_terminate_process( const call& c );
@@ -322,6 +327,12 @@ namespace emu::nt
 		reply vfs_query_attributes( const call& c, const object_attributes& oa, bool full, const std::string& what );
 		reply svc_query_full_attributes_file( const call& c );
 		reply svc_query_directory_file( const call& c, bool ex );
+		// P47 (U2165-U2166): \Device\KsecDD, the one device of the environment (nt_kernel_vfs.cpp; tm_nt ksec)
+		bool ksec_open( const call& c, const object_attributes& oa, const std::string& what, reply& r );
+		reply svc_device_io_control_file( const call& c );
+		bool ksec_request( const call& c, const std::string& what, reply& r );
+		bool cng_request( const call& c, const std::string& what, reply& r );   // P47: \Device\CNG
+		std::unique_ptr<emu::ctr_drbg> dev_rng_;                                // P47 (U2166): the environment's random-byte stream (environment_random)
 		reply svc_read_virtual_memory( const call& c );                                // P45 (U2135): NtReadVirtualMemory of the own process (tm_nt rvm)
 		reply svc_add_atom( const call& c );                                           // P45 (U2137): NtAddAtomEx (tm_nt atom)
 		struct atom_entry

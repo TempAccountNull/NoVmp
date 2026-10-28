@@ -60,7 +60,8 @@ CASES = ['sat', 'qsi', 'hvp', 'qip', 'wcp', 'qsix', 'iocp', 'wkf', 'tmr2', 'awcp
          'rvm',   # P45 (U2134, sample exploration x1 system call 573): NtReadVirtualMemory of the process' own memory
          'atom',   # P45 (U2137, sample exploration x3 system call 599): the atom table (dxgi's GlobalAddAtomW)
          'pii',   # P45 (U2141, sample exploration x8 system call 633): ProcessImageInformation (d3d11's DllMain)
-         'reg']   # P46 (U2151, sample run 11 exploration x11 system call 660): the HKLM handle's tags (NtSetInformationKey 5, combase's start)
+         'reg',   # P46 (U2151, sample run 11 exploration x11 system call 660): the HKLM handle's tags (NtSetInformationKey 5, combase's start)
+         'ksec']   # P47 (U2165, sample run 11 system call 759): \Device\KsecDD as bcrypt's DllMain opens it, the device requests bcrypt sends
 # P41 (U2068): case term ends the process with exit code 2BH (its NtTerminateProcess( NULL, 2BH ) fixes the process' exit status)
 EXIT_CODE = {'term': 0x2B}
 # hex constants (9 .. 16 digits) that may appear: system constants and the pre-set fill pattern - never an address of the run

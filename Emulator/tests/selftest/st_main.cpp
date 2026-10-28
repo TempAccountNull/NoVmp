@@ -3922,6 +3922,127 @@ namespace
 		CHECK( w5_stop( w5_call( *p, "NtFindAtom", { S + 0x100, 2 * nm.size(), S + 0x20 } ) ), "NtFindAtom before user32's start: stop (not measured)" );
 	}
 
+	// P47 (U2169): nt_measured_ksec - the devices of the environment (USER DECISION 2026-10-28 "\Device\KsecDD: model it as a device"; tm_nt
+	// ksec.*): \Device\KsecDD opened with bcrypt's arguments (success, a handle, IoStatus {0 with the upper half not written, 0}), its 390400H
+	// requests (the 68H registration naming a synchronization event: success, nothing written, the event not signaled; the 30H / 38H CNG
+	// configuration queries: the measured D8H bytes, Information D8H), \Device\CNG with bcryptprimitives' arguments and IOCTL_KSEC_RNG_REKEY
+	// (30H bytes of the environment's seeded generator: written, different per request, the same per seed); every unmeasured form stops;
+	// the accesses are in the fs_log with the device path and the IoControlCode
+	void t_nt_measured_ksec()
+	{
+		std::string err;
+		auto p = w5_create( w5_build( { w5_trivial }, err ), emu::env_boundary::sys, err );
+		CHECK( p != nullptr, "process: " + err );
+		if ( !p ) return;
+		namespace N = emu::nt;
+		const uint64_t S = w5_scratch, O = S + 0x1000, H = S + 0x58, IO = S + 0x60, EV = S + 0x70, INB = S + 0x200, OUTB = S + 0x400, CC = 0xCCCCCCCCCCCCCCCCull;
+		auto rd = [ & ]( uint64_t va, int n ) { return w4_read( *p, va, n ); };
+		auto oa = [ & ]( const std::string& name, uint64_t attributes ) {
+			ms_ustr( *p, O + 0x30, O + 0x40, name );
+			w5_put( *p, O, 0x30 );
+			w5_put( *p, O + 8, 0 );
+			w5_put( *p, O + 0x10, O + 0x30 );
+			w5_put( *p, O + 0x18, attributes );
+			w5_put( *p, O + 0x20, 0 );
+			w5_put( *p, O + 0x28, 0 );
+		};
+		auto fill = [ & ]( uint64_t at, int n ) { for ( int k = 0; k < n; k += 8 ) w5_put( *p, at + k, CC ); };
+		auto open = [ & ]( const std::string& name, uint64_t access, uint64_t attributes, uint64_t share, uint64_t options ) {
+			oa( name, attributes );
+			fill( H, 8 );
+			fill( IO, 16 );
+			return w5_call( *p, "NtOpenFile", { H, access, O, IO, share, options } );
+		};
+		auto iosb_is = [ & ]( uint64_t info ) { return ( rd( IO, 8 ) & 0xFFFFFFFFull ) == 0 && ( rd( IO, 8 ) >> 32 ) == 0xCCCCCCCCull && rd( IO + 8, 8 ) == info; };
+		auto ioctl = [ & ]( uint64_t h, uint64_t code, uint64_t in, uint64_t inlen, uint64_t out, uint64_t outlen ) {
+			fill( IO, 16 );
+			return w5_call( *p, "NtDeviceIoControlFile", { h, 0, 0, 0, IO, code, in, inlen, out, outlen } );
+		};
+		const size_t log0 = p->kern().fs_log().size();
+		// 1. \Device\KsecDD: bcrypt's open (tm_nt ksec.open); another access / spelling stops
+		auto r = open( "\\Device\\KsecDD", 0x100003, 0, 7, 0x20 );
+		const uint64_t hk = rd( H, 8 );
+		CHECK( w5_ok( r ) && hk && hk % 4 == 0 && iosb_is( 0 ), "ksec.open: STATUS_SUCCESS, a handle, IoStatus {0 (upper half not written), 0}: " + r.text );
+		CHECK( w5_stop( open( "\\Device\\KsecDD", 0x100001, 0, 7, 0x20 ) ), "KsecDD with another access: stop" );
+		CHECK( w5_stop( open( "\\Device\\KSecDD", 0x100003, 0, 7, 0x20 ) ), "KsecDD in another spelling: stop" );
+		// 2. the 68H registration naming a synchronization event (tm_nt ksec.cfg)
+		fill( EV, 8 );
+		CHECK( w5_ok( w5_call( *p, "NtCreateEvent", { EV, 0x1F0003, 0, 1, 0 } ) ), "a synchronization event" );
+		const uint64_t ev = rd( EV, 8 );
+		static const uint8_t pat[ 12 ] = { 0, 1, 0, 1, 1, 1, 0, 1, 1, 0, 1, 2 };
+		auto reg_input = [ & ]( uint64_t e ) {
+			w5_put( *p, INB, 0x000105001A2B3C4Dull );
+			for ( int k = 0; k < 12; k++ ) w5_put( *p, INB + 8 + 8 * k, pat[ k ] == 1 ? ~0ull : pat[ k ] == 2 ? e : 0 );
+		};
+		reg_input( ev );
+		fill( OUTB, 8 );
+		r = ioctl( hk, 0x390400, INB, 0x68, OUTB, 8 );
+		CHECK( w5_ok( r ) && rd( OUTB, 8 ) == CC && iosb_is( 0 ), "ksec.cfg: STATUS_SUCCESS, the output not written, IoStatus {0, 0}: " + r.text );
+		fill( EV, 8 );
+		CHECK( w5_ok( w5_call( *p, "NtCreateEvent", { EV, 0x1F0003, 0, 0, 0 } ) ), "a notification event" );
+		reg_input( rd( EV, 8 ) );
+		CHECK( w5_stop( ioctl( hk, 0x390400, INB, 0x68, OUTB, 8 ) ), "the registration naming a NOTIFICATION event: stop (not measured)" );
+		reg_input( ev );
+		w5_put( *p, INB + 0x10, 0 );
+		CHECK( w5_stop( ioctl( hk, 0x390400, INB, 0x68, OUTB, 8 ) ), "the registration with another field: stop" );
+		// 3. the CNG configuration queries (tm_nt ksec.res / ksec.q2): the measured D8H bytes
+		static const uint64_t res_in[ 6 ] = { 0x000200001A2B3C4Dull, ~0ull, 6, ~0ull, ~0ull, 1 };
+		for ( int k = 0; k < 6; k++ ) w5_put( *p, INB + 8 * k, res_in[ k ] );
+		fill( OUTB, 0x180 );
+		r = ioctl( hk, 0x390400, INB, 0x30, OUTB, 0x180 );
+		CHECK( w5_ok( r ) && iosb_is( 0xD8 ) && rd( OUTB, 8 ) == 0x0002000000000001ull && rd( OUTB + 0x18, 8 ) == 0xFFFFFFFF00000006ull && rd( OUTB + 0x50, 8 ) == 0x00000047004E0052ull &&
+				   rd( OUTB + 0xD0, 8 ) == 0 && rd( OUTB + 0xD8, 8 ) == CC, "ksec.res: the provider resolution of \"RNG\", D8H bytes, Information D8H, nothing past D8H: " + r.text );
+		w5_put( *p, INB + 0x10, 0 );
+		w5_put( *p, INB + 0x18, 0x30 );
+		w5_put( *p, INB + 0x28, 0x0000000200000001ull );
+		w5_put( *p, INB + 0x30, 0x00000047004E0052ull );
+		fill( OUTB, 0x180 );
+		r = ioctl( hk, 0x390400, INB, 0x38, OUTB, 0x180 );
+		CHECK( w5_ok( r ) && iosb_is( 0xD8 ) && rd( OUTB + 0x18, 8 ) == 6 && rd( OUTB + 0x30, 8 ) == 0x0000004700000000ull && rd( OUTB + 0xD8, 8 ) == CC,
+			   "ksec.q2: the resolution by name, D8H bytes: " + r.text );
+		CHECK( w5_stop( ioctl( hk, 0x390400, INB, 0x38, OUTB, 0x100 ) ), "a query with another output length: stop" );
+		CHECK( w5_stop( ioctl( hk, 0x390004, 0, 0, OUTB, 0x40 ) ), "IOCTL_KSEC_RNG on KsecDD (not measured): stop" );
+		CHECK( w5_stop( w5_call( *p, "NtDeviceIoControlFile", { hk, ev, 0, 0, IO, 0x390400, INB, 0x38, OUTB, 0x180 } ) ), "an event argument: stop" );
+		CHECK( w5_stop( ioctl( ev, 0x390400, INB, 0x38, OUTB, 0x180 ) ), "a request on an event handle: stop" );
+		// 4. \Device\CNG and IOCTL_KSEC_RNG_REKEY (tm_nt ksec.cng.*): 30H bytes of the seeded generator
+		r = open( "\\Device\\CNG", 0x100001, 0x40, 7, 0x20 );
+		const uint64_t hc = rd( H, 8 );
+		CHECK( w5_ok( r ) && hc && hc % 4 == 0 && hc != hk && iosb_is( 0 ), "ksec.cng.open: STATUS_SUCCESS, a handle, IoStatus {0, 0}: " + r.text );
+		CHECK( w5_stop( open( "\\Device\\CNG", 0x100003, 0x40, 7, 0x20 ) ), "CNG with another access: stop" );
+		fill( OUTB, 0x40 );
+		r = ioctl( hc, 0x390008, 0, 0, OUTB, 0x30 );
+		const uint64_t a0 = rd( OUTB, 8 ), a5 = rd( OUTB + 0x28, 8 );
+		CHECK( w5_ok( r ) && iosb_is( 0x30 ) && a0 != CC && a5 != CC && rd( OUTB + 0x30, 8 ) == CC, "ksec.cng.rekey: 30H bytes written, Information 30H, nothing past 30H: " + r.text );
+		fill( OUTB, 0x40 );
+		r = ioctl( hc, 0x390008, 0, 0, OUTB, 0x30 );
+		CHECK( w5_ok( r ) && rd( OUTB, 8 ) != a0, "ksec.cng.rekey: a second request - other bytes" );
+		CHECK( w5_stop( ioctl( hc, 0x390008, 0, 0, OUTB, 0x20 ) ), "REKEY with another length: stop" );
+		CHECK( w5_stop( ioctl( hc, 0x390400, INB, 0x38, OUTB, 0x180 ) ), "a KsecDD request on the CNG device: stop" );
+		{
+			auto q = w5_create( w5_build( { w5_trivial }, err ), emu::env_boundary::sys, err );
+			CHECK( q != nullptr, "a second process: " + err );
+			if ( q )
+			{
+				uint8_t b1[ 0x30 ] = {}, b2[ 0x30 ] = {};
+				q->kern().environment_random( b2, sizeof( b2 ) );
+				std::memcpy( b1, &a0, 8 );
+				CHECK( std::memcmp( b1, b2, 8 ) == 0, "the same seed: the first 8 bytes of a fresh process' stream equal this process' first REKEY answer (deterministic, never the host)" );
+			}
+		}
+		// 5. the fs_log: the device path and the IoControlCode
+		const auto& fl = p->kern().fs_log();
+		bool saw_open = false, saw_ioctl = false, saw_cng = false;
+		for ( size_t i = log0; i < fl.size(); i++ )
+		{
+			if ( fl[ i ].service == "NtOpenFile" && fl[ i ].path == "\\Device\\KsecDD" && fl[ i ].answer == "status 00000000H" ) saw_open = true;
+			if ( fl[ i ].service == "NtDeviceIoControlFile" && fl[ i ].path.find( "device (KsecDD) \\Device\\KsecDD" ) != std::string::npos &&
+				 fl[ i ].args == "IoControlCode 390400H, InputBufferLength 30H, OutputBufferLength 180H" )
+				saw_ioctl = true;
+			if ( fl[ i ].service == "NtDeviceIoControlFile" && fl[ i ].path.find( "device (CNG)" ) != std::string::npos && fl[ i ].args.find( "390008H" ) != std::string::npos ) saw_cng = true;
+		}
+		CHECK( saw_open && saw_ioctl && saw_cng, "fs_log: the device opens and requests with the path and the IoControlCode" );
+	}
+
 	// P46 (U2145): nt_measured_pii - ProcessImageInformation (25H) of the process image (tm_nt pii.*, test PE T8): every field from the
 	// image's own header / file, ImageFlags 04H with DYNAMIC_BASE (tm_nt pii) and 00H without it at the preferred base (T8),
 	// ReturnLength 40H, the length rule (nothing written); the unmeasured image shapes stop (SizeOfCode 0, LoaderFlags, a COR header, a
@@ -4175,6 +4296,7 @@ namespace
 		{ "nt_measured_rvm", t_nt_measured_rvm },   // P45 (U2136)
 		{ "nt_measured_atom", t_nt_measured_atom },   // P45 (U2138)
 		{ "nt_measured_pii", t_nt_measured_pii },   // P46 (U2145)
+		{ "nt_measured_ksec", t_nt_measured_ksec },   // P47 (U2169)
 	};
 }
 

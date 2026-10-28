@@ -53,6 +53,11 @@
 # P45 (U2125, USER DECISION 2026-10-27 "virtual FS, measured misses"): case fs - the status Windows gives for each KIND of file-system miss (a missing file / folder / stream / device name, in the image's directory, System32 and <SystemRoot>), with the argument sets of the emulated traces; tm_nt names only its own temporary names (<a missing name> = tm_nt_fs_<its process id>_absent, never printed); fs.dq: a listing of its own directory with such a name; ahc.35 = test PE T7's image name. Case rvm (U2134, sample exploration x1 system call 573): NtReadVirtualMemory of the process' own memory (the PEB's Ldr; a reserved / PAGE_NOACCESS / half-readable source, a read-only destination, 0 bytes) - status, count, bytes copied; never an address or a value. Case atom (U2137, sample exploration x3 system call 599, dxgi's GlobalAddAtomW): the atom table with a name of its own (tm_nt_atom_<the process id>, never printed) - before user32 is loaded, then after LoadLibraryW of user32 (the sample's state); the atom value only as its range. Case etw: + etw.reg11 (U2139, sample exploration x4 system call 601: dxgi's provider). Case qsi: + class 1 SystemProcessorInformation (U2140, sample exploration x7 system call 632: d3d11's DllMain). Case etwt: + etwt11 (U2139, dxgi's traits, x5 system call 602). Case etw: + etw.reg12 (U2139, dxgi's second provider, x6 system call 603). Case pii (U2141, sample exploration x8 system call 633, d3d11's DllMain): ProcessImageInformation of this process, every field as its relation to the own PE header / file (this image relocated by ASLR).
 # P46 (U2144): ahc.36 = the LookupCdb name t8_pii.exe (test PE T8, linked WITHOUT DYNAMIC_BASE: ProcessImageInformation of an image at its preferred base - T8 measures it itself, its exit status 1C007FFFH natively, suite win_env_sys_loader).
 # P46 (U2151): case reg - the HKLM root handle's tags as kernelbase's predefined HKEY_LOCAL_MACHINE sets them in combase's start (sample run 11 exploration x11 system call 660): NtOpenKeyEx( "\REGISTRY\MACHINE\", 20119H ), NtSetInformationKey 5 (100H / Length 0 / 8 / 0), NtQueryKey 7 after each.
+# P47 (U2165 / U2167, USER DECISION 2026-10-28 "\Device\KsecDD: model it as a device"): ahc.37 = the LookupCdb name t9_rng.exe (test PE T9: BCryptGenRandom twice, its exit status 3900007FH natively, suite win_env_sys_loader). Case ksec - the kernel security device as bcrypt.dll's DllMain opens it (sample run 11 system call 759): NtOpenFile( 100003H, "\Device\KsecDD" attributes 0, share 7, options 20H ), then the device requests bcrypt sends (codes / lengths of the emulated trace); a random output only by its SHAPE (length, written, two outputs equal or not) - the random bytes are host entropy, never recorded.
+# P47 (U2165): etw.reg33 = bcrypt.dll's provider A74EFE00-14BE-4EF9-9DA9-1484D5473302 (as bytes 00FE4EA7...; = etw.reg30) registered as the 8TH provider of a process (LoggerId 8, RegType 2) - test PE T9 (a console program importing bcrypt) under --Sys, exploration x1 system call 210.
+# P47 (U2165): etw.reg34 / etw.reg35 = bcrypt.dll's providers AC89E0C7... / 4B1AA7F3... (as bytes; = etw.reg31 / etw.reg32) registered as the 9th / 10th provider of a process (LoggerId 9 / 10, RegType 3) - test PE T9 under --Sys.
+# P47 (U2165): etw.reg36 / reg37 = the providers 00FE4EA7... / 4B1AA7F3... (as etw.reg33 / 35) registered by bcryptprimitives.dll as the 11th / 12th provider of a process (LoggerId 11 / 12) - test PE T9 under --Sys.
+# P47 (U2171, sample run 12 explorations s1 / y1 - y60): etw.reg38 .. etw.reg57 = the ETW providers of the DllMain phase after bcrypt (sechost, advapi32, shell32, ws2_32 ...) with their LoggerIds 33 .. 52 (etw.reg40 / reg43 / reg50 / reg54 ENABLED by a trace session of the guest: their enable state is VOLATILE, compared by shape); etwt33 / 34 / 36 / 37 / 45 / 46 / 51 = their TraceLogging traits blobs (the capture DLLs' bytes; etwt45 a blob with an empty provider name, found by content in shell32.dll). Probe mode cf.probe: one NtCreateFile from inside (the run-12 stop \Device\DeviceApi\CMApi: measured only, not modelled).
 tm_nt sat.0: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 330H) -> status C0000225H, ReturnLength 0H, written 0H
 tm_nt sat.1: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 0H) -> status C0000225H, ReturnLength 0H, written 0H
 tm_nt sat.2: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 8H) -> status C0000225H, ReturnLength 0H, written 0H
@@ -311,6 +316,106 @@ tm_nt etw.reg32: NtTraceControl(0FH, the loader's A0H bytes (provider 32, Logger
 tm_nt etw.reg32.fields: RegType 3, LoggerId 32, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
 tm_nt etw.reg32.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
 tm_nt etw.reg32.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg33: NtTraceControl(0FH, the loader's A0H bytes (provider 33, LoggerId 8, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg33.fields: RegType 2, LoggerId 8, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg33.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg33.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg34: NtTraceControl(0FH, the loader's A0H bytes (provider 34, LoggerId 9, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg34.fields: RegType 3, LoggerId 9, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg34.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg34.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg35: NtTraceControl(0FH, the loader's A0H bytes (provider 35, LoggerId 10, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg35.fields: RegType 3, LoggerId 10, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg35.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg35.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg36: NtTraceControl(0FH, the loader's A0H bytes (provider 36, LoggerId 11, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg36.fields: RegType 2, LoggerId 11, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg36.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg36.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg37: NtTraceControl(0FH, the loader's A0H bytes (provider 37, LoggerId 12, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg37.fields: RegType 3, LoggerId 12, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg37.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg37.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg38: NtTraceControl(0FH, the loader's A0H bytes (provider 38, LoggerId 33, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg38.fields: RegType 3, LoggerId 33, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg38.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg38.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg39: NtTraceControl(0FH, the loader's A0H bytes (provider 39, LoggerId 34, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg39.fields: RegType 3, LoggerId 34, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg39.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg39.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg40: NtTraceControl(0FH, the loader's A0H bytes (provider 40, LoggerId 35, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C +70 +74 +78 +87; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg40.fields: RegType 3, LoggerId 35, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext bytes 01 00 00 00 FF 00 00 00, EnableFilterDesc 41H, EnableCallback bytes 00 00 00 00 00 00 00 20, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg40.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg40.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg41: NtTraceControl(0FH, the loader's A0H bytes (provider 41, LoggerId 36, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg41.fields: RegType 3, LoggerId 36, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg41.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg41.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg42: NtTraceControl(0FH, the loader's A0H bytes (provider 42, LoggerId 37, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg42.fields: RegType 3, LoggerId 37, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg42.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg42.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg43: NtTraceControl(0FH, the loader's A0H bytes (provider 43, LoggerId 38, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C +70 +74 +78 +87 +90 +98; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg43.fields: RegType 3, LoggerId 38, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext bytes 01 00 00 00 FF 00 00 00, EnableFilterDesc 41H, EnableCallback bytes 00 00 00 00 00 00 00 40, EnableCallbackReserved 0H, ProviderTraits 8H, TraitsFlags 1H, HasPayload 0H
+tm_nt etw.reg43.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg43.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg44: NtTraceControl(0FH, the loader's A0H bytes (provider 44, LoggerId 39, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg44.fields: RegType 2, LoggerId 39, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg44.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg44.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg45: NtTraceControl(0FH, the loader's A0H bytes (provider 45, LoggerId 40, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg45.fields: RegType 2, LoggerId 40, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg45.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg45.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg46: NtTraceControl(0FH, the loader's A0H bytes (provider 46, LoggerId 41, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg46.fields: RegType 2, LoggerId 41, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg46.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg46.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg47: NtTraceControl(0FH, the loader's A0H bytes (provider 47, LoggerId 42, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg47.fields: RegType 2, LoggerId 42, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg47.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg47.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg48: NtTraceControl(0FH, the loader's A0H bytes (provider 48, LoggerId 43, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg48.fields: RegType 2, LoggerId 43, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg48.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg48.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg49: NtTraceControl(0FH, the loader's A0H bytes (provider 49, LoggerId 44, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg49.fields: RegType 2, LoggerId 44, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg49.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg49.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg50: NtTraceControl(0FH, the loader's A0H bytes (provider 50, LoggerId 45, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C +70 +74 +78 +83 +87 +90 +92 +97 +98; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg50.fields: RegType 3, LoggerId 45, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext bytes 01 00 00 00 FF 00 00 00, EnableFilterDesc 43H, EnableCallback bytes 00 00 00 06 00 00 00 78, EnableCallbackReserved 0H, ProviderTraits bytes 11 00 04 00 00 00 00 06, TraitsFlags 1H, HasPayload 0H
+tm_nt etw.reg50.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg50.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg51: NtTraceControl(0FH, the loader's A0H bytes (provider 51, LoggerId 46, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg51.fields: RegType 3, LoggerId 46, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg51.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg51.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg52: NtTraceControl(0FH, the loader's A0H bytes (provider 52, LoggerId 47, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg52.fields: RegType 3, LoggerId 47, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg52.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg52.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg53: NtTraceControl(0FH, the loader's A0H bytes (provider 53, LoggerId 48, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg53.fields: RegType 3, LoggerId 48, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg53.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg53.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg54: NtTraceControl(0FH, the loader's A0H bytes (provider 54, LoggerId 49, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C +70 +74 +78 +83 +87 +90 +92 +97 +98; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg54.fields: RegType 3, LoggerId 49, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext bytes 01 00 00 00 FF 00 00 00, EnableFilterDesc 43H, EnableCallback bytes 00 00 00 06 00 00 00 78, EnableCallbackReserved 0H, ProviderTraits bytes 11 00 04 00 00 00 00 06, TraitsFlags 1H, HasPayload 0H
+tm_nt etw.reg54.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg54.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg55: NtTraceControl(0FH, the loader's A0H bytes (provider 55, LoggerId 50, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg55.fields: RegType 2, LoggerId 50, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg55.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg55.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg56: NtTraceControl(0FH, the loader's A0H bytes (provider 56, LoggerId 51, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg56.fields: RegType 3, LoggerId 51, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg56.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg56.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg57: NtTraceControl(0FH, the loader's A0H bytes (provider 57, LoggerId 52, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg57.fields: RegType 3, LoggerId 52, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg57.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg57.close: NtClose(ReplyHandle) -> 00000000H
 tm_nt kd.open: NtOpenDirectoryObject(&h, 3, "\KnownDlls" OBJ_CASE_INSENSITIVE) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
 tm_nt kd.list: kernel32.dll:Section ucrtbase.dll:Section WS2_32.dll:Section MSCTF.dll:Section SHLWAPI.dll:Section kernelbase.dll:Section wow64.dll:Section msvcp_win.dll:Section gdiplus.dll:Section KnownDllPath:SymbolicLink user32.dll:Section bcrypt.dll:Section COMCTL32.dll:Section cfgmgr32.dll:Section combase.dll:Section IMM32.dll:Section rpcrt4.dll:Section bcryptPrimitives.dll:Section ntdll.dll:Section coml2.dll:Section win32u.dll:Section wow64cpu.dll:Section COMDLG32.dll:Section gdi32full.dll:Section IMAGEHLP.dll:Section SHELL32.dll:Section sechost.dll:Section WINTRUST.dll:Section NORMALIZ.dll:Section difxapi.dll:Section Setupapi.dll:Section CRYPT32.dll:Section gdi32.dll:Section MSVCRT.dll:Section advapi32.dll:Section wow64win.dll:Section PSAPI.DLL:Section NSI.dll:Section WLDAP32.dll:Section OLEAUT32.dll:Section SHCORE.dll:Section ole32.dll:Section clbcatq.dll:Section; 43 entries, end status 8000001AH
 tm_nt kd.section.0: NtOpenSection(&s, 0DH, root \KnownDlls, "KERNEL32.DLL" OBJ_CASE_INSENSITIVE) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
@@ -370,6 +475,8 @@ tm_nt ahc.33: NtApphelpCacheControl(6 LookupCdb, Name "t6_user32.exe", ParamsOut
 tm_nt ahc.34: NtApphelpCacheControl(6 LookupCdb, Name "IMM32.DLL", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
 tm_nt ahc.35: NtApphelpCacheControl(6 LookupCdb, Name "t7_vfs.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
 tm_nt ahc.36: NtApphelpCacheControl(6 LookupCdb, Name "t8_pii.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.37: NtApphelpCacheControl(6 LookupCdb, Name "t9_rng.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.38: NtApphelpCacheControl(6 LookupCdb, Name "bcryptprimitives.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
 tm_nt vmi.fresh: NtSetInformationVirtualMemory(-1, 4, 1, {a fresh image view's base, 1000H}, &1, 4) -> status C00000BBH
 tm_nt vmi.again: the same call again -> status C00000BBH
 tm_nt vmi.loaded: the same call on this process' kernelbase.dll base -> status C00000BBH
@@ -450,6 +557,34 @@ tm_nt etwt14.reg: NtTraceControl(0FH, provider 14 as etw.reg14) -> status 000000
 tm_nt etwt14.blob: the traits (as bytes), 36H bytes: first USHORT (the traits size) 36H, non-zero bytes 51
 tm_nt etwt14.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 36H, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
 tm_nt etwt14.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt51.reg: NtTraceControl(0FH, provider 51 as etw.reg51) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt51.blob: the traits (as bytes), 30H bytes: first USHORT (the traits size) 30H, non-zero bytes 45
+tm_nt etwt51.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 30H, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt51.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt46.reg: NtTraceControl(0FH, provider 46 as etw.reg46) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt46.blob: the traits (as bytes), 44H bytes: first USHORT (the traits size) 44H, non-zero bytes 65
+tm_nt etwt46.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 44H, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt46.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt45.reg: NtTraceControl(0FH, provider 45 as etw.reg45) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt45.blob: the traits (as bytes), 16H bytes: first USHORT (the traits size) 16H, non-zero bytes 19
+tm_nt etwt45.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 16H, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt45.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt37.reg: NtTraceControl(0FH, provider 37 as etw.reg37) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt37.blob: the traits (as bytes), 39H bytes: first USHORT (the traits size) 39H, non-zero bytes 54
+tm_nt etwt37.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 39H, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt37.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt36.reg: NtTraceControl(0FH, provider 36 as etw.reg36) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt36.blob: the traits (as bytes), 24H bytes: first USHORT (the traits size) 24H, non-zero bytes 33
+tm_nt etwt36.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 24H, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt36.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt34.reg: NtTraceControl(0FH, provider 34 as etw.reg34) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt34.blob: the traits (as bytes), 3DH bytes: first USHORT (the traits size) 3DH, non-zero bytes 58
+tm_nt etwt34.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 3DH, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt34.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt33.reg: NtTraceControl(0FH, provider 33 as etw.reg33) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt33.blob: the traits (as bytes), 41H bytes: first USHORT (the traits size) 41H, non-zero bytes 62
+tm_nt etwt33.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 41H, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt33.close: NtClose(ReplyHandle) -> 00000000H
 tm_nt etwt32.reg: NtTraceControl(0FH, provider 32 as etw.reg32) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
 tm_nt etwt32.blob: the traits (as bytes), 37H bytes: first USHORT (the traits size) 37H, non-zero bytes 52
 tm_nt etwt32.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 37H, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
@@ -883,3 +1018,51 @@ tm_nt reg.notify.tree.open: NtOpenKeyEx(&k, 20019H, "\REGISTRY\USER\<the user SI
 tm_nt reg.notify.tree: NtNotifyChangeKey(k, e, NULL, NULL, &iosb, 10000001H, TRUE, NULL, 0, TRUE) -> status 00000103H; IoStatusBlock not written; the event not signaled
 tm_nt reg.notify.tree.close: NtClose(the key) -> 00000000H
 tm_nt reg.notify.tree.closed: after the key's close - IoStatusBlock not written, the event signaled
+tm_nt ksec.open: NtOpenFile(&h, 100003H, "\Device\KsecDD" attributes 0, &iosb, share 7H, options 20H) -> status 00000000H, handle <handle> (non-zero, multiple of 4), IoStatus written (Status 00000000H, upper half not written, Information 0H)
+tm_nt ksec.ev: NtCreateEvent(&e, 1F0003H, NULL, SynchronizationEvent, FALSE) -> status 00000000H
+tm_nt ksec.cfg: NtDeviceIoControlFile(h, NULL, NULL, NULL, &iosb, 390400H, <the 68H-byte input, own event at +60H>, 68H, out, 8H) -> status 00000000H, IoStatus written (Status 00000000H, upper half not written, Information 0H), written 0H, output not written; the event not signaled; input bytes changed no
+tm_nt ksec.cfg.later: after 200 ms the event not signaled
+tm_nt ksec.res.1: NtDeviceIoControlFile(h, NULL, NULL, NULL, &iosb, 390400H, <the 30H-byte input>, 30H, out, 180H) -> status 00000000H, IoStatus written (Status 00000000H, upper half not written, Information D8H), written D8H, the input unchanged
+tm_nt ksec.res.2: NtDeviceIoControlFile(h, NULL, NULL, NULL, &iosb, 390400H, <the 30H-byte input>, 30H, out, 180H) -> status 00000000H, IoStatus written (Status 00000000H, upper half not written, Information D8H), written D8H, the input unchanged
+tm_nt ksec.res.3: NtDeviceIoControlFile(h, NULL, NULL, NULL, &iosb, 390400H, <the 30H-byte input>, 30H, out, 180H) -> status 00000000H, IoStatus written (Status 00000000H, upper half not written, Information D8H), written D8H, the input unchanged
+tm_nt ksec.res.shape: bytes equal in all three outputs: [+0H, +180H) 01 00 00 00 00 00 02 00 10 00 00 00 00 00 00 00 ...; 384 bytes equal (runs of 2 or more), 0 bytes differ (random - not printed)
+tm_nt ksec.res.+000: 01 00 00 00 00 00 02 00 10 00 00 00 00 00 00 00  |................|
+tm_nt ksec.res.+010: 18 00 00 00 00 00 00 00 06 00 00 00 FF FF FF FF  |................|
+tm_nt ksec.res.+020: 50 00 00 00 00 00 00 00 58 00 00 00 00 00 00 00  |P.......X.......|
+tm_nt ksec.res.+030: 00 00 00 00 00 00 00 00 FF FF FF FF FF FF FF FF  |................|
+tm_nt ksec.res.+040: 98 00 00 00 00 00 00 00 FF FF FF FF FF FF FF FF  |................|
+tm_nt ksec.res.+050: 52 00 4E 00 47 00 00 00 4D 00 69 00 63 00 72 00  |R.N.G...M.i.c.r.|
+tm_nt ksec.res.+060: 6F 00 73 00 6F 00 66 00 74 00 20 00 50 00 72 00  |o.s.o.f.t. .P.r.|
+tm_nt ksec.res.+070: 69 00 6D 00 69 00 74 00 69 00 76 00 65 00 20 00  |i.m.i.t.i.v.e. .|
+tm_nt ksec.res.+080: 50 00 72 00 6F 00 76 00 69 00 64 00 65 00 72 00  |P.r.o.v.i.d.e.r.|
+tm_nt ksec.res.+090: 00 00 00 00 00 00 00 00 A8 00 00 00 00 00 00 00  |................|
+tm_nt ksec.res.+0A0: 01 00 00 00 00 00 00 00 62 00 63 00 72 00 79 00  |........b.c.r.y.|
+tm_nt ksec.res.+0B0: 70 00 74 00 70 00 72 00 69 00 6D 00 69 00 74 00  |p.t.p.r.i.m.i.t.|
+tm_nt ksec.res.+0C0: 69 00 76 00 65 00 73 00 2E 00 64 00 6C 00 6C 00  |i.v.e.s...d.l.l.|
+tm_nt ksec.res.+0D0: 00 00 00 00 00 00 00 00  |........|
+tm_nt ksec.q2.1: NtDeviceIoControlFile(h, NULL, NULL, NULL, &iosb, 390400H, <the 38H-byte input>, 38H, out, 180H) -> status 00000000H, IoStatus written (Status 00000000H, upper half not written, Information D8H), written D8H, the input unchanged
+tm_nt ksec.q2.2: NtDeviceIoControlFile(h, NULL, NULL, NULL, &iosb, 390400H, <the 38H-byte input>, 38H, out, 180H) -> status 00000000H, IoStatus written (Status 00000000H, upper half not written, Information D8H), written D8H, the input unchanged
+tm_nt ksec.q2.3: NtDeviceIoControlFile(h, NULL, NULL, NULL, &iosb, 390400H, <the 38H-byte input>, 38H, out, 180H) -> status 00000000H, IoStatus written (Status 00000000H, upper half not written, Information D8H), written D8H, the input unchanged
+tm_nt ksec.q2.shape: bytes equal in all three outputs: [+0H, +180H) 01 00 00 00 00 00 02 00 10 00 00 00 00 00 00 00 ...; 384 bytes equal (runs of 2 or more), 0 bytes differ (random - not printed)
+tm_nt ksec.q2.+000: 01 00 00 00 00 00 02 00 10 00 00 00 00 00 00 00  |................|
+tm_nt ksec.q2.+010: 18 00 00 00 00 00 00 00 06 00 00 00 00 00 00 00  |................|
+tm_nt ksec.q2.+020: 50 00 00 00 00 00 00 00 58 00 00 00 00 00 00 00  |P.......X.......|
+tm_nt ksec.q2.+030: 00 00 00 00 47 00 00 00 FF FF FF FF FF FF FF FF  |....G...........|
+tm_nt ksec.q2.+040: 98 00 00 00 00 00 00 00 FF FF FF FF FF FF FF FF  |................|
+tm_nt ksec.q2.+050: 52 00 4E 00 47 00 00 00 4D 00 69 00 63 00 72 00  |R.N.G...M.i.c.r.|
+tm_nt ksec.q2.+060: 6F 00 73 00 6F 00 66 00 74 00 20 00 50 00 72 00  |o.s.o.f.t. .P.r.|
+tm_nt ksec.q2.+070: 69 00 6D 00 69 00 74 00 69 00 76 00 65 00 20 00  |i.m.i.t.i.v.e. .|
+tm_nt ksec.q2.+080: 50 00 72 00 6F 00 76 00 69 00 64 00 65 00 72 00  |P.r.o.v.i.d.e.r.|
+tm_nt ksec.q2.+090: 00 00 00 00 00 00 00 00 A8 00 00 00 00 00 00 00  |................|
+tm_nt ksec.q2.+0A0: 01 00 00 00 00 00 00 00 62 00 63 00 72 00 79 00  |........b.c.r.y.|
+tm_nt ksec.q2.+0B0: 70 00 74 00 70 00 72 00 69 00 6D 00 69 00 74 00  |p.t.p.r.i.m.i.t.|
+tm_nt ksec.q2.+0C0: 69 00 76 00 65 00 73 00 2E 00 64 00 6C 00 6C 00  |i.v.e.s...d.l.l.|
+tm_nt ksec.q2.+0D0: 00 00 00 00 00 00 00 00  |........|
+tm_nt ksec.close: NtClose -> 00000000H
+tm_nt ksec.cng.open: NtOpenFile(&h, 100001H, "\Device\CNG" attributes 40H, &iosb, share 7H, options 20H) -> status 00000000H, handle <handle> (non-zero, multiple of 4), IoStatus written (Status 00000000H, upper half not written, Information 0H)
+tm_nt ksec.cng.rekey.1: NtDeviceIoControlFile(h, NULL, NULL, NULL, &iosb, 390008H, NULL, 0H, out, 30H) -> status 00000000H, IoStatus written (Status 00000000H, upper half not written, Information 30H), written 30H, the input unchanged
+tm_nt ksec.cng.rekey.2: NtDeviceIoControlFile(h, NULL, NULL, NULL, &iosb, 390008H, NULL, 0H, out, 30H) -> status 00000000H, IoStatus written (Status 00000000H, upper half not written, Information 30H), written 30H, the input unchanged
+tm_nt ksec.cng.rekey.3: NtDeviceIoControlFile(h, NULL, NULL, NULL, &iosb, 390008H, NULL, 0H, out, 30H) -> status 00000000H, IoStatus written (Status 00000000H, upper half not written, Information 30H), written 30H, the input unchanged
+tm_nt ksec.cng.rekey.shape: bytes equal in all three outputs:; 0 bytes equal (runs of 2 or more), 48 bytes differ (random - not printed)
+tm_nt ksec.cng.close: NtClose -> 00000000H
+tm_nt ksec.closed: after the device handle's close the event not signaled; NtClose(the event) -> 00000000H
