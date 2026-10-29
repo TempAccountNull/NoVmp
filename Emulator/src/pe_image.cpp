@@ -367,8 +367,9 @@ namespace emu::pe
 		return true;
 	}
 
-	bool map( engine& e, const std::vector<uint8_t>& f, const image& img, uint64_t base, const std::string& name, mapping& out, std::string& error )
+	bool map( engine& e, const std::vector<uint8_t>& f, const image& img, uint64_t base, const std::string& name, mapping& out, std::string& error, uint64_t reloc_for )
 	{
+		const uint64_t target = reloc_for ? reloc_for : base;   // p3cm (U2290): the address the relocations are applied for
 		out = mapping{};
 		auto fail = [ & ]( const std::string& why ) {
 			error = "PE map " + name + ": " + why;
@@ -381,7 +382,7 @@ namespace emu::pe
 		if ( base > UINT64_MAX - size ) return fail( "base + SizeOfImage above 2^64" );
 		out.base = base;
 		out.size = size;
-		out.relocated = base != img.image_base;
+		out.relocated = target != img.image_base;
 		out.entry = img.entry_rva ? base + img.entry_rva : 0;
 
 		// the mapped parts in host buffers (data only; only the parts that are mapped, never a whole SizeOfImage buffer):
@@ -427,7 +428,7 @@ namespace emu::pe
 				return fail( "the image is not at its preferred base " + hex( img.image_base ) + " and has no base relocations (RELOCS_STRIPPED or no directory 5)" );
 			const uint8_t* dir = locate( d.rva, d.size );
 			if ( !dir ) return fail( "base relocation directory [" + hex( d.rva ) + ", +" + hex( d.size ) + ") is not inside one mapped part of the image" );
-			const uint64_t delta = base - img.image_base;   // modulo 2^64, as the fixups add it
+			const uint64_t delta = target - img.image_base;   // modulo 2^64, as the fixups add it
 			uint64_t off = 0, dir64 = 0, highlow = 0;
 			while ( off < d.size )
 			{

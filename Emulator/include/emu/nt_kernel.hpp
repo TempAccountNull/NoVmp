@@ -333,6 +333,10 @@ namespace emu::nt
 		reply svc_device_io_control_file( const call& c );
 		bool ksec_request( const call& c, const std::string& what, reply& r );
 		bool cng_request( const call& c, const std::string& what, reply& r );   // P47: \Device\CNG
+		// p3cm (U2281): \Device\DeviceApi\CMApi - only the requests of cfgmgr32.dll's start-up (nt_kernel_vfs.cpp; tm_nt cm)
+		bool cm_open( const call& c, const object_attributes& oa, const std::string& what, reply& r );
+		bool cm_request( const call& c, const std::string& what, reply& r );
+		reply svc_query_license_value( const call& c );   // p3cm (U2283): NtQueryLicenseValue - only measured value names (tm_nt lic)
 		std::unique_ptr<emu::ctr_drbg> dev_rng_;                                // P47 (U2166): the environment's random-byte stream (environment_random)
 		reply svc_read_virtual_memory( const call& c );                                // P45 (U2135): NtReadVirtualMemory of the own process (tm_nt rvm)
 		reply svc_add_atom( const call& c );                                           // P45 (U2137): NtAddAtomEx (tm_nt atom)
@@ -394,6 +398,7 @@ namespace emu::nt
 		reply svc_create_mutant( const call& c );               // NtCreateMutant (P41)
 		std::map<std::string, uint64_t> named_objects_;         // P41: named objects created in this environment (full name -> handle count)
 		std::map<std::string, int64_t> mutant_state_;           // P41: a mutant's signal state (1 = free; <= 0 = owned by the one thread)
+		uint64_t unnamed_mutants_ = 0;                          // p3cm (U2288): the unnamed mutants created (their internal names)
 		reply svc_mutant_wait_release( const call& c );         // NtWaitForSingleObject on a mutant, NtReleaseMutant (tm_nt mut.*)
 		reply svc_named_decode( const call& c );                // P41: decode stop of a named-object service (OA = argument 2)
 		reply svc_wil_semaphore( const call& c );               // P41: the WIL staging semaphores (tm_nt wil.*)

@@ -4056,6 +4056,154 @@ namespace
 		CHECK( saw_open && saw_ioctl && saw_cng, "fs_log: the device opens and requests with the path and the IoControlCode" );
 	}
 
+	// p3cm (U2285): nt_measured_cmapi - \Device\DeviceApi\CMApi as a MINIMAL DEVICE (USER DECISION 2026-10-28, p3cm STEP 2): cfgmgr32's open
+	// NtCreateFile( 80000000H, "\Device\DeviceApi\CMApi" attributes 0, NULL, 0, share 0, FILE_OPEN, 0, NULL, 0 ) = STATUS_SUCCESS, a handle,
+	// IoStatus {0 (upper half not written), Information 0} (tm_nt cm.open.1 / .2), a second open the same; another argument set / spelling: stop;
+	// EVERY request on the device stops (cfgmgr32's start-up sends none - test PE T10 exploration e3 / e5); NtQueryLicenseValue of the measured
+	// name (tm_nt lic.tsas.4) and its stops; the fs_log rows
+	void t_nt_measured_cmapi()
+	{
+		std::string err;
+		auto p = w5_create( w5_build( { w5_trivial }, err ), emu::env_boundary::sys, err );
+		CHECK( p != nullptr, "process: " + err );
+		if ( !p ) return;
+		const uint64_t S = w5_scratch, O = S + 0x1000, H = S + 0x58, IO = S + 0x60, INB = S + 0x200, OUTB = S + 0x400, LN = S + 0x800, CC = 0xCCCCCCCCCCCCCCCCull;
+		auto rd = [ & ]( uint64_t va, int n ) { return w4_read( *p, va, n ); };
+		auto fill = [ & ]( uint64_t at, int n ) { for ( int k = 0; k < n; k += 8 ) w5_put( *p, at + k, CC ); };
+		auto create = [ & ]( const std::string& name, uint64_t access, uint64_t attributes, uint64_t share, uint64_t disposition, uint64_t options ) {
+			ms_ustr( *p, O + 0x30, O + 0x40, name );
+			w5_put( *p, O, 0x30 );
+			w5_put( *p, O + 8, 0 );
+			w5_put( *p, O + 0x10, O + 0x30 );
+			w5_put( *p, O + 0x18, attributes );
+			w5_put( *p, O + 0x20, 0 );
+			w5_put( *p, O + 0x28, 0 );
+			fill( H, 8 );
+			fill( IO, 16 );
+			return w5_call( *p, "NtCreateFile", { H, access, O, IO, 0, 0, share, disposition, options, 0, 0 } );
+		};
+		auto iosb_is0 = [ & ]() { return ( rd( IO, 8 ) & 0xFFFFFFFFull ) == 0 && ( rd( IO, 8 ) >> 32 ) == 0xCCCCCCCCull && rd( IO + 8, 8 ) == 0; };
+		const size_t log0 = p->kern().fs_log().size();
+		// 1. the open (tm_nt cm.open.1 / .2)
+		auto r = create( "\\Device\\DeviceApi\\CMApi", 0x80000000, 0, 0, 1, 0 );
+		const uint64_t h1 = rd( H, 8 );
+		CHECK( w5_ok( r ) && h1 && h1 % 4 == 0 && iosb_is0(), "cm.open.1: STATUS_SUCCESS, a handle, IoStatus {0 (upper half not written), 0}: " + r.text );
+		r = create( "\\Device\\DeviceApi\\CMApi", 0x80000000, 0, 0, 1, 0 );
+		const uint64_t h2 = rd( H, 8 );
+		CHECK( w5_ok( r ) && h2 && h2 % 4 == 0 && h2 != h1 && iosb_is0(), "cm.open.2: a second open while the first is held - another handle, the same answer: " + r.text );
+		CHECK( w5_stop( create( "\\Device\\DeviceApi\\CMApi", 0x80100000, 0, 0, 1, 0 ) ), "another access: stop (not measured)" );
+		CHECK( w5_stop( create( "\\Device\\DeviceApi\\CMApi", 0x80000000, 0, 3, 1, 0 ) ), "another share: stop (not measured)" );
+		CHECK( w5_stop( create( "\\Device\\DeviceApi\\CMApi", 0x80000000, 0x40, 0, 1, 0 ) ), "OBJ_CASE_INSENSITIVE: stop (not measured)" );
+		CHECK( w5_stop( create( "\\Device\\DeviceApi\\CMAPI", 0x80000000, 0, 0, 1, 0 ) ), "another spelling: stop (not measured)" );
+		CHECK( w5_stop( create( "\\Device\\DeviceApi\\CMNotify", 0x80000000, 0, 0, 1, 0 ) ), "another name below \\Device\\DeviceApi: stop (not decided)" );
+		// 2. every request on the device stops (outside cfgmgr32's start-up set; sogen io_device.cpp:48 names 470803H the device-ID list)
+		auto ioctl = [ & ]( uint64_t h, uint64_t code, uint64_t inlen, uint64_t outlen ) {
+			fill( IO, 16 );
+			fill( OUTB, 0x40 );
+			return w5_call( *p, "NtDeviceIoControlFile", { h, 0, 0, 0, IO, code, inlen ? INB : 0, inlen, outlen ? OUTB : 0, outlen } );
+		};
+		r = ioctl( h1, 0x470803, 0x20, 0x14 );
+		CHECK( w5_stop( r ) && rd( IO, 8 ) == CC && rd( OUTB, 8 ) == CC && r.text.find( "OUTSIDE the measured start-up set" ) != std::string::npos,
+			   "a device request (470803H): a loud stop, nothing written: " + r.text );
+		CHECK( w5_stop( ioctl( h1, 0x470000, 0, 0 ) ), "a request without buffers: stop" );
+		CHECK( w5_ok( w5_call( *p, "NtClose", { h2 } ) ), "NtClose of the second handle" );
+		// 3. NtQueryLicenseValue (tm_nt lic.tsas.4)
+		auto lic = [ & ]( const std::string& name, uint64_t size, bool type, bool data ) {
+			ms_ustr( *p, LN, LN + 0x10, name );
+			fill( OUTB, 0x18 );
+			return w5_call( *p, "NtQueryLicenseValue", { LN, type ? OUTB : 0, data ? OUTB + 8 : 0, size, OUTB + 0x10 } );
+		};
+		r = lic( "TerminalServices-RemoteConnectionManager-AllowAppServerMode", 4, true, true );
+		CHECK( w5_ok( r ) && ( rd( OUTB, 8 ) & 0xFFFFFFFFull ) == 4 && ( rd( OUTB + 8, 8 ) & 0xFFFFFFFFull ) == 0 && ( rd( OUTB + 8, 8 ) >> 32 ) == 0xCCCCCCCCull &&
+				   ( rd( OUTB + 0x10, 8 ) & 0xFFFFFFFFull ) == 4,
+			   "lic.tsas.4: STATUS_SUCCESS, Type 4 (REG_DWORD), the 4-byte value 0, ResultDataSize 4: " + r.text );
+		CHECK( w5_stop( lic( "TerminalServices-RemoteConnectionManager-AllowAppServerMode", 8, true, true ) ), "another DataSize: stop (not measured)" );
+		CHECK( w5_stop( lic( "TerminalServices-RemoteConnectionManager-AllowAppServerMode", 4, false, true ) ), "Type NULL: stop (not measured)" );
+		CHECK( w5_stop( lic( "Kernel-OneCore-DeviceFamilyID", 4, true, true ) ), "another value name: stop (not measured)" );
+		// 4. the fs_log: the opens (and the stopped ones) and the request with the path and the IoControlCode
+		const auto& fl = p->kern().fs_log();
+		bool saw_open = false, saw_req = false;
+		for ( size_t i = log0; i < fl.size(); i++ )
+		{
+			if ( fl[ i ].service == "NtCreateFile" && fl[ i ].path == "\\Device\\DeviceApi\\CMApi" && fl[ i ].answer == "status 00000000H" ) saw_open = true;
+			if ( fl[ i ].service == "NtDeviceIoControlFile" && fl[ i ].args.find( "IoControlCode 470803H" ) != std::string::npos && fl[ i ].answer.compare( 0, 4, "STOP" ) == 0 ) saw_req = true;
+		}
+		CHECK( saw_open && saw_req, "fs_log: the CMApi open (status 0) and the stopped request (IoControlCode 470803H, STOP)" );
+	}
+
+	// p3cm (U2291): nt_measured_run14 - the services sample run 14 reached past cfgmgr32 / setupapi: an UNNAMED mutant (tm_nt mut.anon*), the
+	// sample's own open of ntdll's KnownDlls section by its absolute name (tm_nt kd.abs.1 / .2) and the argument checks of its second ntdll
+	// view (tm_nt kd.abs.map: the test process' facts hold no capture file - the map itself stops; the real view: sample run 14 s10)
+	void t_nt_measured_run14()
+	{
+		std::string err;
+		auto p = w5_create( w5_build( { w5_trivial }, err ), emu::env_boundary::sys, err );
+		CHECK( p != nullptr, "process: " + err );
+		if ( !p ) return;
+		const uint64_t S = w5_scratch, O = S + 0x1000, cp = 0xFFFFFFFFFFFFFFFFull, CC = 0xCCCCCCCCCCCCCCCCull;
+		auto rd = [ & ]( uint64_t va, int n ) { return w4_read( *p, va, n ); };
+		auto handle_ok = []( uint64_t h ) { return h && h % 4 == 0 && h != 0xCCCCCCCCCCCCCCCCull; };
+		// 1. the unnamed mutant (mut.anon0 / anon1, mut.anon.wait / anon.rel*)
+		w5_put( *p, S, CC );
+		w5_put( *p, S + 8, CC );
+		auto r = w5_call( *p, "NtCreateMutant", { S, 0x1F0001, 0, 0 } );
+		const uint64_t m0 = rd( S, 8 );
+		CHECK( w5_ok( r ) && handle_ok( m0 ), "mut.anon0: STATUS_SUCCESS, a handle: " + r.text );
+		r = w5_call( *p, "NtCreateMutant", { S + 8, 0x1F0001, 0, 0 } );
+		const uint64_t m1 = rd( S + 8, 8 );
+		CHECK( w5_ok( r ) && handle_ok( m1 ) && m1 != m0, "mut.anon1: another handle (another object): " + r.text );
+		CHECK( w5_ok( w5_call( *p, "NtWaitForSingleObject", { m0, 0, 0 } ) ), "mut.anon.wait: acquired" );
+		w5_put( *p, S + 0x10, CC );
+		r = w5_call( *p, "NtReleaseMutant", { m0, S + 0x10 } );
+		CHECK( w5_ok( r ) && rd( S + 0x10, 4 ) == 0, "mut.anon.rel0: STATUS_SUCCESS, PreviousCount 0: " + r.text );
+		w5_put( *p, S + 0x10, CC );
+		r = w5_call( *p, "NtReleaseMutant", { m0, S + 0x10 } );
+		CHECK( w5_status( r, 0xC0000046u ) && rd( S + 0x10, 4 ) == 0xCCCCCCCCull, "mut.anon.rel1: STATUS_MUTANT_NOT_OWNED, PreviousCount not written: " + r.text );
+		w5_put( *p, S + 0x10, CC );
+		CHECK( w5_status( w5_call( *p, "NtReleaseMutant", { m1, S + 0x10 } ), 0xC0000046u ), "the second unnamed mutant has a state of its own (free: not owned)" );
+		CHECK( w5_stop( w5_call( *p, "NtCreateMutant", { S, 0x100000, 0, 0 } ) ), "an unnamed mutant with another access: stop (not measured)" );
+		CHECK( w5_stop( w5_call( *p, "NtCreateMutant", { S, 0x1F0001, 0, 1 } ) ), "an unnamed mutant with InitialOwner TRUE: stop (not measured)" );
+		// 2. \KnownDlls\ntdll.dll by its absolute name (kd.abs.1 / .2)
+		auto oa = [ & ]( const std::string& name, uint64_t attributes ) {
+			ms_ustr( *p, O + 0x30, O + 0x40, name );
+			w5_put( *p, O, 0x30 );
+			w5_put( *p, O + 8, 0 );
+			w5_put( *p, O + 0x10, O + 0x30 );
+			w5_put( *p, O + 0x18, attributes );
+			w5_put( *p, O + 0x20, 0 );
+			w5_put( *p, O + 0x28, 0 );
+		};
+		oa( "\\KnownDlls\\ntdll.dll", 0 );
+		w5_put( *p, S + 0x20, CC );
+		r = w5_call( *p, "NtOpenSection", { S + 0x20, 5, O } );
+		const uint64_t s1 = rd( S + 0x20, 8 );
+		CHECK( w5_ok( r ) && handle_ok( s1 ), "kd.abs.1: STATUS_SUCCESS, a section handle: " + r.text );
+		r = w5_call( *p, "NtOpenSection", { S + 0x28, 5, O } );
+		CHECK( w5_ok( r ) && handle_ok( rd( S + 0x28, 8 ) ) && rd( S + 0x28, 8 ) != s1, "kd.abs.2: another handle: " + r.text );
+		CHECK( w5_stop( w5_call( *p, "NtOpenSection", { S + 0x28, 0xD, O } ) ), "kd.abs with another access: stop" );
+		oa( "\\KnownDlls\\NTDLL.DLL", 0 );
+		CHECK( w5_stop( w5_call( *p, "NtOpenSection", { S + 0x28, 5, O } ) ), "kd.abs in another spelling: stop" );
+		oa( "\\KnownDlls\\kernel32.dll", 0 );
+		CHECK( w5_stop( w5_call( *p, "NtOpenSection", { S + 0x28, 5, O } ) ), "another KnownDll by its absolute name: stop" );
+		oa( "\\KnownDlls\\ntdll.dll", 0x40 );
+		CHECK( w5_stop( w5_call( *p, "NtOpenSection", { S + 0x28, 5, O } ) ), "kd.abs OBJ_CASE_INSENSITIVE: stop" );
+		// 3. the second view's argument checks (kd.abs.map)
+		auto map = [ & ]( uint64_t off_ptr, uint64_t off, uint64_t disp, uint64_t type, uint64_t prot ) {
+			w5_put( *p, S + 0x30, 0 );
+			w5_put( *p, S + 0x38, off );
+			w5_put( *p, S + 0x40, 0 );
+			return w5_call( *p, "NtMapViewOfSection", { s1, cp, S + 0x30, 0, 0, off_ptr, S + 0x40, disp, type, prot } );
+		};
+		r = map( S + 0x38, 0, 1, 0, 2 );
+		CHECK( w5_stop( r ) && r.text.find( "kd.abs.map" ) == std::string::npos && rd( S + 0x30, 8 ) == 0,
+			   "kd.abs.map with the measured arguments: no capture / no ntdll view in the test process - a loud stop, nothing written: " + r.text );
+		CHECK( w5_stop( map( 0, 0, 1, 0, 2 ) ), "kd.abs.map without SectionOffset: stop (not measured)" );
+		r = map( S + 0x38, 0x1000, 1, 0, 2 );
+		CHECK( w5_stop( r ) && r.text.find( "not 0" ) != std::string::npos, "kd.abs.map with *SectionOffset 1000H: stop: " + r.text );
+		CHECK( w5_stop( map( S + 0x38, 0, 2, 0, 2 ) ), "kd.abs.map ViewUnmap: stop" );
+		CHECK( w5_stop( map( S + 0x38, 0, 1, 0x800000, 2 ) ), "kd.abs.map another AllocationType: stop" );
+	}
+
 	// P46 (U2145): nt_measured_pii - ProcessImageInformation (25H) of the process image (tm_nt pii.*, test PE T8): every field from the
 	// image's own header / file, ImageFlags 04H with DYNAMIC_BASE (tm_nt pii) and 00H without it at the preferred base (T8),
 	// ReturnLength 40H, the length rule (nothing written); the unmeasured image shapes stop (SizeOfCode 0, LoaderFlags, a COR header, a
@@ -4310,6 +4458,8 @@ namespace
 		{ "nt_measured_atom", t_nt_measured_atom },   // P45 (U2138)
 		{ "nt_measured_pii", t_nt_measured_pii },   // P46 (U2145)
 		{ "nt_measured_ksec", t_nt_measured_ksec },   // P47 (U2169)
+		{ "nt_measured_cmapi", t_nt_measured_cmapi },   // p3cm (U2285)
+		{ "nt_measured_run14", t_nt_measured_run14 },   // p3cm (U2291)
 	};
 }
 

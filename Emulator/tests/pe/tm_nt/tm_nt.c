@@ -19,7 +19,8 @@
  *        tm_nt.exe run.detached IMAGE   (P41: our own test PE IMAGE started detached; prints its exit code)
  *        tm_nt.exe run.normal IMAGE     (P44: our own test PE IMAGE started normally, no creation flags; prints its exit code)
  *        tm_nt.exe ksec.probe CODE INLEN OUTLEN RANDOM   (P47: one request on \Device\KsecDD, twice, zero input; RANDOM 1 = the output's shape only)
- *        tm_nt.exe cf.probe ACCESS SHARE DISPOSITION OPTIONS ATTRIBUTES FILEATTR PATH   (P47: one NtCreateFile; status, handle shape, IoStatus) */
+ *        tm_nt.exe cf.probe ACCESS SHARE DISPOSITION OPTIONS ATTRIBUTES FILEATTR PATH   (P47: one NtCreateFile; status, handle shape, IoStatus)
+ *        tm_nt.exe lic.probe NAME DATASIZE   (p3cm: one NtQueryLicenseValue; status, Type, ResultDataSize, a REG_DWORD flag's value) */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <stdio.h>
@@ -592,7 +593,7 @@ static void case_etw( void )
 		 * (as bytes; RegType 3, LoggerId 4, ReplyCallback = a kernelbase function) - tag etw.reg4 */
 		/* P41 exploration x4 (system calls 137 / 139 / 143): three more providers of the start in a process without a console -
 		 * 0A27EFF1-..., FE5EF905-... (kernelbase) and 58446CE3-... (kernel32), RegType 3, LoggerId 5 / 6 / 7, ReplyCallback set */
-		static const unsigned char guids[ 57 ][ 16 ] = {
+		static const unsigned char guids[ 61 ][ 16 ] = {
 			{ 0x5C, 0xAB, 0x95, 0x35, 0x2A, 0x04, 0x8E, 0x4C, 0xB9, 0x42, 0x2D, 0x05, 0x9B, 0xFE, 0xB1, 0xB1 },
 			{ 0x7B, 0xC8, 0x5F, 0x30, 0x2A, 0x00, 0x26, 0x5E, 0xD2, 0x97, 0x60, 0x22, 0x30, 0x12, 0xCA, 0x9C },
 			{ 0xFA, 0x2A, 0x1D, 0x90, 0xF6, 0x4F, 0xD7, 0x46, 0x8D, 0x0E, 0x53, 0x64, 0x5E, 0x1A, 0x47, 0xF5 },
@@ -702,12 +703,20 @@ static void case_etw( void )
 			/* P47 (U2165; sample run 12 exploration y57): provider (as bytes) - RegType 3, LoggerId 51, ReplyCallback set */
 			{ 0xC6, 0xA5, 0xF1, 0xD0, 0x43, 0xFC, 0xAE, 0x48, 0x99, 0xBF, 0xEF, 0xB1, 0xC3, 0x8B, 0xE9, 0xD1 },
 			/* P47 (U2165; sample run 12 exploration y59): provider (as bytes) - RegType 3, LoggerId 52, ReplyCallback set */
-			{ 0x71, 0x4E, 0x40, 0x55, 0xB9, 0x4D, 0xEB, 0x4D, 0xA5, 0xF5, 0x8F, 0x86, 0xE4, 0x6D, 0xDE, 0x56 } };
-		static const USHORT logger[ 57 ] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 8, 9, 10, 11, 12, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52 };
-		static const int with_cb[ 57 ] = { 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 };
-		static const ULONG regtype[ 57 ] = { 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 3, 2, 3, 3, 2, 3, 3, 2, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 2, 3, 3 };   /* P46: per provider */
+			{ 0x71, 0x4E, 0x40, 0x55, 0xB9, 0x4D, 0xEB, 0x4D, 0xA5, 0xF5, 0x8F, 0x86, 0xE4, 0x6D, 0xDE, 0x56 },
+			/* p3cm (U2287; sample run 14 exploration s1 system call 801): provider (as bytes) - RegType 2, LoggerId 53, ReplyCallback set */
+			{ 0x45, 0xB5, 0x76, 0xA6, 0xFB, 0x4C, 0x06, 0x43, 0xA0, 0x67, 0x50, 0x2D, 0x9A, 0x0F, 0x22, 0x20 },
+			/* p3cm (U2287; sample run 14 exploration s2): provider (as bytes) - RegType 3, LoggerId 54, ReplyCallback set */
+			{ 0x50, 0xA0, 0xF4, 0x96, 0x31, 0x7E, 0x3C, 0x45, 0x88, 0xBE, 0x96, 0x34, 0xF4, 0xE0, 0x21, 0x39 },
+			/* p3cm (U2287; sample run 14 exploration s3): provider (as bytes) - RegType 3, LoggerId 55, ReplyCallback set */
+			{ 0x2B, 0xE1, 0x0F, 0x0E, 0x26, 0xE9, 0xD2, 0x44, 0x8C, 0xF1, 0x8A, 0x62, 0xA6, 0xD4, 0x40, 0x36 },
+			/* p3cm (U2287; sample run 14 exploration s5): provider (as bytes) - RegType 3, LoggerId 56, ReplyCallback set */
+			{ 0xBB, 0x99, 0x92, 0x13, 0x94, 0x93, 0x58, 0x50, 0xDD, 0x33, 0x94, 0x22, 0xE5, 0x90, 0x3F, 0xC3 } };
+		static const USHORT logger[ 61 ] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 8, 9, 10, 11, 12, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56 };
+		static const int with_cb[ 61 ] = { 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 };
+		static const ULONG regtype[ 61 ] = { 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 3, 2, 3, 3, 2, 3, 3, 2, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 2, 3, 3, 2, 3, 3, 3 };   /* P46: per provider */
 		int g;
-		for ( g = 0; g < 57; g++ )
+		for ( g = 0; g < 61; g++ )
 		{
 			unsigned char io[ 0xA0 ], in0[ 0xA0 ];
 			size_t k;
@@ -809,6 +818,24 @@ static void case_etwt( void )
                                              0x00, 0x13, 0x00, 0x01, 0x1A, 0x73, 0x50, 0x4F, 0xCF, 0x89, 0x82, 0x47, 0xB3, 0xE0, 0xDC, 0xE8, 0xC9,
                                              0x04, 0x76, 0xBA };
 		tm_etwt_bytes( "etwt14", g14, 14, t14, 0x36 );
+	}
+	{
+		/* p3cm (U2287; sample run 14 exploration s6): the traits of provider 61 (etw.reg61): 30H bytes - "Microsoft.Windows.SetupApi" + the bytes after it, from the capture's setupapi.dll
+		 * (file offset E97CEH), passed from a buffer of this program */
+		static const unsigned char g61[ 16 ] = { 0xBB, 0x99, 0x92, 0x13, 0x94, 0x93, 0x58, 0x50, 0xDD, 0x33, 0x94, 0x22, 0xE5, 0x90, 0x3F, 0xC3 };
+		static const unsigned char t61[ 0x30 ] = { 0x30, 0x00, 0x4D, 0x69, 0x63, 0x72, 0x6F, 0x73, 0x6F, 0x66, 0x74, 0x2E, 0x57, 0x69, 0x6E, 0x64, 0x6F,
+                                             0x77, 0x73, 0x2E, 0x53, 0x65, 0x74, 0x75, 0x70, 0x41, 0x70, 0x69, 0x00, 0x13, 0x00, 0x01, 0x1A, 0x73,
+                                             0x50, 0x4F, 0xCF, 0x89, 0x82, 0x47, 0xB3, 0xE0, 0xDC, 0xE8, 0xC9, 0x04, 0x76, 0xBA };
+		tm_etwt_bytes( "etwt61", g61, 61, t61, 0x30 );
+	}
+	{
+		/* p3cm (U2287; sample run 14 exploration s4 system call 804): the traits of provider 60 (etw.reg60): 33H bytes - "Microsoft.Windows.DriverStore" + the bytes after it, from the capture's setupapi.dll
+		 * (file offset E980FH), passed from a buffer of this program */
+		static const unsigned char g60[ 16 ] = { 0x2B, 0xE1, 0x0F, 0x0E, 0x26, 0xE9, 0xD2, 0x44, 0x8C, 0xF1, 0x8A, 0x62, 0xA6, 0xD4, 0x40, 0x36 };
+		static const unsigned char t60[ 0x33 ] = { 0x33, 0x00, 0x4D, 0x69, 0x63, 0x72, 0x6F, 0x73, 0x6F, 0x66, 0x74, 0x2E, 0x57, 0x69, 0x6E, 0x64, 0x6F,
+                                             0x77, 0x73, 0x2E, 0x44, 0x72, 0x69, 0x76, 0x65, 0x72, 0x53, 0x74, 0x6F, 0x72, 0x65, 0x00, 0x13, 0x00,
+                                             0x01, 0x1A, 0x73, 0x50, 0x4F, 0xCF, 0x89, 0x82, 0x47, 0xB3, 0xE0, 0xDC, 0xE8, 0xC9, 0x04, 0x76, 0xBA };
+		tm_etwt_bytes( "etwt60", g60, 60, t60, 0x33 );
 	}
 	{
 		/* P46 (U2147; sample run 12 exploration y58): the traits of provider 51 (etw.reg51): 30H bytes - "Microsoft-Windows-Winsock2" + the bytes after it, from the capture's ws2_32.dll
@@ -1146,6 +1173,95 @@ static void case_kd( void )
 			NtClose( s );
 		}
 	}
+	{
+		/* p3cm (U2289): the sample's OWN code (sample run 14 exploration s8 system call 820, from its section .xditszm +124E99H): NtOpenSection(
+		 * &s, 5 (SECTION_QUERY | SECTION_MAP_READ), {RootDirectory NULL, "\KnownDlls\ntdll.dll", Attributes 0}) - the absolute name, case
+		 * sensitive; twice (two handles); printed: status, the handle's shape */
+		HANDLE s1 = (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull, s2 = (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull;
+		TM_USTR an;
+		TM_OA aoa;
+		tm_ustr( &an, L"\\KnownDlls\\ntdll.dll" );
+		tm_oa( &aoa, NULL, &an );
+		aoa.Attributes = 0;
+		st = NtOpenSection( &s1, 0x5, &aoa );
+		printf( "tm_nt kd.abs.1: NtOpenSection(&s, 5H, NULL root, \"\\KnownDlls\\ntdll.dll\" 0H) -> status %08lXH, handle %s\n", (unsigned long)st, tm_hshape( s1 ) );
+		st = NtOpenSection( &s2, 0x5, &aoa );
+		printf( "tm_nt kd.abs.2: NtOpenSection(&s, 5H, NULL root, \"\\KnownDlls\\ntdll.dll\" 0H) -> status %08lXH, handle %s%s\n", (unsigned long)st, tm_hshape( s2 ),
+				s2 == s1 ? " (the same as abs.1)" : " (another than abs.1)" );
+		/* p3cm (U2290): its next call (run 14 exploration s9 system call 821): NtMapViewOfSection( that section, NtCurrentProcess(), &base (0),
+		 * ZeroBits 0, CommitSize 0, &SectionOffset (0), &ViewSize (0), ViewShare 1, AllocationType 0, PAGE_READONLY 2 ) - a SECOND view of the
+		 * process' own ntdll image. Printed: the status; the base (64 KiB-aligned, another than the process' ntdll); *SectionOffset after;
+		 * ViewSize vs SizeOfImage; the view's header ImageBase (= the view / = the loaded ntdll / other); MEMORY_BASIC_INFORMATION at the base
+		 * and at the first section; how many bytes of the view differ from the loaded ntdll (headers page / the rest, readable pages only - a
+		 * relocation by the kernel would show there); the unmap status. Addresses and bytes are never printed. */
+		if ( s1 != (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull && s1 )
+		{
+			PVOID base = NULL;
+			LARGE_INTEGER off;
+			SIZE_T vs = 0, rl2 = 0;
+			MEMORY_BASIC_INFORMATION mbi;
+			const unsigned char* nt = (const unsigned char*)GetModuleHandleW( L"ntdll.dll" );
+			off.QuadPart = 0;
+			st = NtMapViewOfSection( s1, (HANDLE)(LONG_PTR)-1, &base, 0, 0, &off, &vs, 1, 0, 0x2 );
+			printf( "tm_nt kd.abs.map: NtMapViewOfSection(\"\\KnownDlls\\ntdll.dll\", -1, &base (0), 0, 0, &offset (0), &size (0), ViewShare, 0, 2H) -> status %08lXH", (unsigned long)st );
+			if ( st >= 0 && base )
+			{
+				const unsigned char* b = (const unsigned char*)base;
+				const LONG lfanew = *(const LONG*)( b + 0x3C );
+				const ULONGLONG hib = *(const ULONGLONG*)( b + lfanew + 0x18 + 0x18 );
+				const ULONG soi = *(const ULONG*)( b + lfanew + 0x18 + 0x38 );
+				const USHORT nsec = *(const USHORT*)( b + lfanew + 6 ), opt = *(const USHORT*)( b + lfanew + 0x14 );
+				const ULONG sec1 = *(const ULONG*)( b + lfanew + 0x18 + opt + 0x0C );   /* the first section's VirtualAddress (um\winnt.h IMAGE_SECTION_HEADER) */
+				size_t k, dh = 0, dr = 0, dw = 0, cmp = 0;
+				printf( ", base <va> (64K-aligned %s, %s the process' ntdll), SectionOffset %llXH, ViewSize %s SizeOfImage (%zXH vs %lXH), header ImageBase %s", ( (ULONG_PTR)base & 0xFFFF ) ? "no" : "yes",
+						b == nt ? "=" : "!=", (unsigned long long)off.QuadPart, vs == soi ? "=" : "!=", vs, (unsigned long)soi,
+						hib == (ULONGLONG)(ULONG_PTR)base ? "= the view's base" : hib == (ULONGLONG)(ULONG_PTR)nt ? "= the loaded ntdll's base" : "other" );
+				memset( &mbi, 0, sizeof( mbi ) );
+				NtQueryVirtualMemory( (HANDLE)(LONG_PTR)-1, base, 0, &mbi, sizeof( mbi ), &rl2 );
+				printf( "; MBI at the base: AllocationProtect %lXH, State %lXH, Protect %lXH, Type %lXH, RegionSize %zXH", (unsigned long)mbi.AllocationProtect, (unsigned long)mbi.State,
+						(unsigned long)mbi.Protect, (unsigned long)mbi.Type, mbi.RegionSize );
+				memset( &mbi, 0, sizeof( mbi ) );
+				NtQueryVirtualMemory( (HANDLE)(LONG_PTR)-1, b + sec1, 0, &mbi, sizeof( mbi ), &rl2 );
+				printf( "; at the first section (+%lXH, %u sections): Protect %lXH, Type %lXH", (unsigned long)sec1, (unsigned)nsec, (unsigned long)mbi.Protect, (unsigned long)mbi.Type );
+				for ( k = 0; k < vs && k < soi; k += 0x1000 )
+				{
+					MEMORY_BASIC_INFORMATION m2, m3;
+					size_t j;
+					if ( NtQueryVirtualMemory( (HANDLE)(LONG_PTR)-1, b + k, 0, &m2, sizeof( m2 ), &rl2 ) < 0 || NtQueryVirtualMemory( (HANDLE)(LONG_PTR)-1, nt + k, 0, &m3, sizeof( m3 ), &rl2 ) < 0 ) continue;
+					if ( m2.State != 0x1000 || m3.State != 0x1000 || ( m2.Protect & 0x701 ) || ( m3.Protect & 0x701 ) || !m2.Protect || !m3.Protect ) continue;   /* committed, readable, not guard / noaccess */
+					for ( j = 0; j < 0x1000; j++ )
+						if ( b[ k + j ] != nt[ k + j ] ) { if ( !k ) dh++; else if ( m3.Protect & 0xCC ) dw++; else dr++; }   /* the loaded copy's page writable (4 / 8 / 40H / 80H) or not */
+					cmp++;
+				}
+				printf( "; bytes differing from the loaded ntdll (%zu readable pages): headers page %zu, pages not writable in the loaded ntdll %s, its writable (runtime data) pages %s", cmp, dh, dr ? "non-zero" : "0",
+						dw ? "non-zero" : "0" );
+				if ( dr )   /* where: per section of the image (its name, its Characteristics) - the differing bytes in pages not writable in the loaded copy */
+				{
+					const unsigned char* sh = b + lfanew + 0x18 + opt;
+					USHORT q;
+					printf( " (by section:" );
+					for ( q = 0; q < nsec; q++, sh += 0x28 )
+					{
+						const ULONG va = *(const ULONG*)( sh + 0x0C ), vsz = *(const ULONG*)( sh + 0x08 ), ch = *(const ULONG*)( sh + 0x24 );
+						size_t n = 0, j, pg;
+						for ( pg = va & ~(size_t)0xFFF; pg < (size_t)va + vsz; pg += 0x1000 )
+						{
+							MEMORY_BASIC_INFORMATION m3;
+							if ( NtQueryVirtualMemory( (HANDLE)(LONG_PTR)-1, nt + pg, 0, &m3, sizeof( m3 ), &rl2 ) < 0 || m3.State != 0x1000 || ( m3.Protect & 0x7CD ) || !m3.Protect ) continue;
+							for ( j = pg < va ? va : pg; j < pg + 0x1000 && j < (size_t)va + vsz; j++ )
+								if ( b[ j ] != nt[ j ] ) n++;
+						}
+						if ( n ) printf( " %.8s %lXH: non-zero", (const char*)sh, (unsigned long)ch );   /* the count varies from process to process (280 / 281 seen): its shape only */
+					}
+					printf( ")" );
+				}
+				printf( "; NtUnmapViewOfSection -> %08lXH", (unsigned long)NtUnmapViewOfSection( (HANDLE)(LONG_PTR)-1, base ) );
+			}
+			printf( "\n" );
+		}
+		if ( s1 != (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull && s1 ) NtClose( s1 );
+		if ( s2 != (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull && s2 ) NtClose( s2 );
+	}
 	tm_ustr( &ln, L"KnownDllPath" );
 	tm_oa( &oa, d, &ln );
 	st = NtOpenSymbolicLinkObject( &l, 1, &oa );
@@ -1367,7 +1483,8 @@ static void case_ahc( void )
 											L"t9_rng.exe",   /* P47 (U2167): ahc.37 - test PE T9's image name (its loader's LookupCdb) */
 											L"bcryptprimitives.dll",   /* P47 (U2167): ahc.38 - bcrypt loads bcryptprimitives.dll (T9 exploration x8 system call 238) */
 											/* P49 (U2245): ahc.39 .. ahc.44 - the exception test PEs TX1 - TX6's image names (their loader's LookupCdb) */
-											L"tx1_seh.exe", L"tx2_veh.exe", L"tx3_step.exe", L"tx4_xstate.exe", L"tx5_peb.exe", L"tx6_align.exe" };
+											L"tx1_seh.exe", L"tx2_veh.exe", L"tx3_step.exe", L"tx4_xstate.exe", L"tx5_peb.exe", L"tx6_align.exe",
+											L"t10_cm.exe" };   /* p3cm (U2282; first measured by P48 W2 4dafd820; X1' 2026-10-29: ahc.45 - M7 owns ahc.39 .. 44): test PE T10's image name (its loader's LookupCdb) */
 	size_t q, k;
 	for ( q = 0; q < sizeof( names ) / sizeof( names[ 0 ] ); q++ )
 	{
@@ -2394,6 +2511,31 @@ static void case_mut( void )
 		NtClose( h );
 	}
 	NtClose( d );
+	{
+		/* p3cm (U2288): an UNNAMED mutant - sample run 14 exploration s7 system call 808 (the DllMain phase after setupapi.dll's ETW providers):
+		 * NtCreateMutant( &h, 1F0001H MUTANT_ALL_ACCESS, ObjectAttributes NULL, InitialOwner FALSE ); twice (two objects), then the wait /
+		 * release sequence of mut.wait* / mut.rel* on the first */
+		HANDLE a[ 2 ];
+		LONG prev;
+		TM_NTSTATUS st;
+		int k;
+		for ( k = 0; k < 2; k++ )
+		{
+			a[ k ] = (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull;
+			st = NtCreateMutant( &a[ k ], 0x1F0001, NULL, FALSE );
+			printf( "tm_nt mut.anon%d: NtCreateMutant(&h, 1F0001H, NULL, FALSE) -> status %08lXH, handle %s%s\n", k, (unsigned long)st, tm_hshape( a[ k ] ),
+					k && a[ 1 ] == a[ 0 ] ? " (the same as anon0)" : k ? " (another than anon0)" : "" );
+		}
+		printf( "tm_nt mut.anon.wait: NtWaitForSingleObject(anon0, FALSE, NULL) -> status %08lXH\n", (unsigned long)NtWaitForSingleObject( a[ 0 ], FALSE, NULL ) );
+		for ( k = 0; k < 2; k++ )
+		{
+			prev = (LONG)0xCCCCCCCC;
+			st = NtReleaseMutant( a[ 0 ], &prev );
+			printf( "tm_nt mut.anon.rel%d: NtReleaseMutant(anon0, &PreviousCount) -> status %08lXH, PreviousCount %s%lXH\n", k, (unsigned long)st, prev == (LONG)0xCCCCCCCC ? "not written " : "",
+					(unsigned long)prev );
+		}
+		printf( "tm_nt mut.anon.close: NtClose -> %08lXH, %08lXH\n", (unsigned long)NtClose( a[ 0 ] ), (unsigned long)NtClose( a[ 1 ] ) );
+	}
 }
 
 /* ------------------------------------------------------------------------------------------------ the WIL staging objects (P41, U2077)
@@ -4199,7 +4341,67 @@ static void case_ksec( void )
 		printf( "tm_nt ksec.closed: after the device handle's close the event %s; NtClose(the event) -> %08lXH\n", w == WAIT_OBJECT_0 ? "signaled" : w == WAIT_TIMEOUT ? "not signaled" : "wait failed",
 				(unsigned long)NtClose( e ) );
 	}
-}static const struct tm_case g_cases[] = { { "sat", case_sat }, { "qsi", case_qsi }, { "hvp", case_hvp }, { "qip", case_qip }, { "wcp", case_wcp }, { "qsix", case_qsix }, { "iocp", case_iocp }, { "wkf", case_wkf }, { "tmr2", case_tmr2 }, { "awcp", case_awcp }, { "swf", case_swf }, { "etw", case_etw }, { "kd", case_kd }, { "of", case_of }, { "tls", case_tls }, { "ahc", case_ahc }, { "vmi", case_vmi }, { "csr", case_csr }, { "sec", case_sec }, { "csrc", case_csrc }, { "nls", case_nls }, { "con", case_con }, { "etwt", case_etwt }, { "tok", case_tok }, { "acc", case_acc }, { "bno", case_bno }, { "mut", case_mut }, { "wil", case_wil }, { "wnf", case_wnf }, { "wnfe", case_wnfe }, { "wnfs", case_wnfs }, { "t2s", case_t2s }, { "hku", case_hku }, { "alert", case_alert }, { "term", case_term }, { "time", case_time }, { "sp", case_sp }, { "mit", case_mit }, { "u32", case_u32 }, { "u32k", case_u32k }, { "fs", case_fs }, { "rvm", case_rvm }, { "atom", case_atom }, { "pii", case_pii }, { "reg", case_reg }, { "ksec", case_ksec } };
+}
+
+/* ------------------------------------------------------------------------------------------------ \Device\DeviceApi\CMApi (p3cm, U2280)
+ * USER DECISION 2026-10-28 (p3cm STEP 2, "CMApi MINIMAL DEVICE MODEL"): cfgmgr32.dll's DllMain opens the configuration-manager device
+ * (sample run 12 / 13 system call 798; cfgmgr32.dll+1280F -> +12FA4 -> +4C30 -> +4D2B): NtCreateFile( &h, 80000000H GENERIC_READ,
+ * "\Device\DeviceApi\CMApi" attributes 0, &iosb, AllocationSize NULL, FileAttributes 0, ShareAccess 0, FILE_OPEN 1, CreateOptions 0,
+ * EaBuffer NULL, 0 ) - phnt ntioapi.h NtCreateFile. Measured here with exactly that argument set, twice: the status, the handle's shape and
+ * the IoStatusBlock (each half) - a pure open, nothing of the device tree is asked or printed. */
+static void tm_cm_open1( const char* tag, HANDLE* out )
+{
+	TM_USTR u;
+	TM_OA oa;
+	HANDLE h = (HANDLE)(ULONG_PTR)0xCCCCCCCCCCCCCCCCull;
+	ULONG_PTR iosb[ 2 ] = { (ULONG_PTR)0xCCCCCCCCCCCCCCCCull, (ULONG_PTR)0xCCCCCCCCCCCCCCCCull };
+	TM_NTSTATUS st;
+	tm_ustr( &u, L"\\Device\\DeviceApi\\CMApi" );
+	tm_oa( &oa, NULL, &u );
+	oa.Attributes = 0;
+	st = NtCreateFile( &h, 0x80000000, &oa, iosb, NULL, 0, 0, 1, 0, NULL, 0 );
+	printf( "tm_nt %s: NtCreateFile(&h, 80000000H, \"\\Device\\DeviceApi\\CMApi\" 0H, &iosb, NULL, 0H, 0, FILE_OPEN 1, 0H, NULL, 0) -> status %08lXH, handle %s, %s\n", tag,
+			(unsigned long)st, tm_hshape( h ), tm_iosb( iosb ) );
+	*out = st >= 0 ? h : NULL;
+}
+static void case_cm( void )
+{
+	HANDLE h1 = NULL, h2 = NULL;
+	tm_cm_open1( "cm.open.1", &h1 );
+	tm_cm_open1( "cm.open.2", &h2 );   /* a second open while the first is held (a later CM_ call re-opens: the same answer) */
+	if ( h2 ) printf( "tm_nt cm.close.2: NtClose -> %08lXH\n", (unsigned long)NtClose( h2 ) );
+	if ( h1 ) printf( "tm_nt cm.close.1: NtClose -> %08lXH\n", (unsigned long)NtClose( h1 ) );
+}
+
+/* ------------------------------------------------------------------------------------------------ NtQueryLicenseValue (p3cm, U2283)
+ * phnt ntexapi.h:10322-10344: NtQueryLicenseValue( PCUNICODE_STRING ValueName, PULONG Type (optional), PVOID Data, ULONG DataSize, PULONG
+ * ResultDataSize ). cfgmgr32.dll's DllMain asks a value of the product-policy store right after the configuration-manager device's open
+ * (test PE T10 exploration e1 system call 228: DataSize 4, Type / Data / ResultDataSize given). Printed: the status, Type, ResultDataSize,
+ * the bytes written into Data (pre-filled CCH) and - for a REG_DWORD (4) of at most 4 bytes, a policy flag of the edition, no identifier -
+ * its value; any other type: the shape only. */
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtQueryLicenseValue( TM_USTR* ValueName, PULONG Type, PVOID Data, ULONG DataSize, PULONG ResultDataSize );
+static void tm_lic( const char* tag, const wchar_t* name, ULONG size )
+{
+	TM_USTR u;
+	ULONG type = 0xCCCCCCCC, ret = 0xCCCCCCCC, val = 0;
+	TM_NTSTATUS st;
+	size_t w;
+	tm_ustr( &u, name );
+	memset( g_buf, 0xCC, sizeof( g_buf ) );
+	st = NtQueryLicenseValue( &u, &type, size ? g_buf : NULL, size, &ret );
+	w = tm_written( sizeof( g_buf ) );
+	memcpy( &val, g_buf, 4 );
+	printf( "tm_nt %s: NtQueryLicenseValue(\"%S\", &type, data, %lXH, &ret) -> status %08lXH, Type %s%lXH, ResultDataSize %s%lXH, data written %zXH", tag, name, (unsigned long)size,
+			(unsigned long)st, type == 0xCCCCCCCC ? "not written " : "", (unsigned long)type, ret == 0xCCCCCCCC ? "not written " : "", (unsigned long)ret, w );
+	if ( w && w <= 4 && type == 4 ) printf( ", value %lXH\n", (unsigned long)val );
+	else printf( "%s\n", w ? ", value not printed (not a REG_DWORD of at most 4 bytes)" : "" );
+}
+static void case_lic( void )
+{
+	/* cfgmgr32's DllMain (T10 exploration e1 system call 228): DataSize 4; then the size rule: 0 and 2 */
+	tm_lic( "lic.tsas.4", L"TerminalServices-RemoteConnectionManager-AllowAppServerMode", 4 );
+	tm_lic( "lic.tsas.4b", L"TerminalServices-RemoteConnectionManager-AllowAppServerMode", 4 );
+}static const struct tm_case g_cases[] = { { "sat", case_sat }, { "qsi", case_qsi }, { "hvp", case_hvp }, { "qip", case_qip }, { "wcp", case_wcp }, { "qsix", case_qsix }, { "iocp", case_iocp }, { "wkf", case_wkf }, { "tmr2", case_tmr2 }, { "awcp", case_awcp }, { "swf", case_swf }, { "etw", case_etw }, { "kd", case_kd }, { "of", case_of }, { "tls", case_tls }, { "ahc", case_ahc }, { "vmi", case_vmi }, { "csr", case_csr }, { "sec", case_sec }, { "csrc", case_csrc }, { "nls", case_nls }, { "con", case_con }, { "etwt", case_etwt }, { "tok", case_tok }, { "acc", case_acc }, { "bno", case_bno }, { "mut", case_mut }, { "wil", case_wil }, { "wnf", case_wnf }, { "wnfe", case_wnfe }, { "wnfs", case_wnfs }, { "t2s", case_t2s }, { "hku", case_hku }, { "alert", case_alert }, { "term", case_term }, { "time", case_time }, { "sp", case_sp }, { "mit", case_mit }, { "u32", case_u32 }, { "u32k", case_u32k }, { "fs", case_fs }, { "rvm", case_rvm }, { "atom", case_atom }, { "pii", case_pii }, { "reg", case_reg }, { "ksec", case_ksec }, { "cm", case_cm }, { "lic", case_lic } };
 
 int main( int argc, char** argv )
 {
@@ -4274,7 +4476,14 @@ int main( int argc, char** argv )
 		printf( "tm_nt ksec.probe.cmp: the two outputs %s\n", outlen ? ( memcmp( o1, o2, outlen ) ? "differ" : "are equal" ) : "(none)" );
 		printf( "tm_nt ksec.probe.close: NtClose -> %08lXH\n", (unsigned long)NtClose( h ) );
 		return 0;
-	}	if ( argc == 4 && !strcmp( argv[ 1 ], "hku.probe" ) )   /* P46 (U2156): one key of the user's hive (ACCESS hex, the rest of the path) */
+	}	if ( argc == 4 && !strcmp( argv[ 1 ], "lic.probe" ) )   /* p3cm (U2283): one NtQueryLicenseValue (NAME, DATASIZE hex) */
+	{
+		wchar_t name[ 200 ];
+		if ( MultiByteToWideChar( CP_ACP, 0, argv[ 2 ], -1, name, 200 ) <= 0 ) return 2;
+		tm_lic( "lic.probe", name, strtoul( argv[ 3 ], NULL, 16 ) );
+		return 0;
+	}
+	if ( argc == 4 && !strcmp( argv[ 1 ], "hku.probe" ) )   /* P46 (U2156): one key of the user's hive (ACCESS hex, the rest of the path) */
 	{
 		wchar_t rest[ 400 ];
 		if ( MultiByteToWideChar( CP_ACP, 0, argv[ 3 ], -1, rest, 400 ) <= 0 ) return 2;

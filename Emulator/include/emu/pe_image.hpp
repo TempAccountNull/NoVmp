@@ -119,8 +119,10 @@ namespace emu::pe
 	// build the mapped image and map it into the engine at BASE (4 KiB aligned): headers R, sections per characteristics;
 	// relocations applied when BASE != ImageBase. Every region is named "<name> <section>". False with the reason (the
 	// engine may then hold some of the regions: the caller discards the engine).
+	// p3cm (U2290): RELOC_FOR != 0 = the relocations are applied for that address instead of BASE (a second view of an image whose
+	// contents are those of its section - relocated for the base of the first view; tm_nt kd.abs.map)
 	bool map( engine& e, const std::vector<uint8_t>& file, const image& img, uint64_t base, const std::string& name, mapping& out,
-			  std::string& error );
+			  std::string& error, uint64_t reloc_for = 0 );
 
 	// U2008 (plan 3.M5): the TLS directory (IMAGE_DIRECTORY_ENTRY_TLS) read from the MAPPED image (its VAs are relocated there):
 	// winnt.h IMAGE_TLS_DIRECTORY64 {StartAddressOfRawData, EndAddressOfRawData, AddressOfIndex, AddressOfCallBacks,

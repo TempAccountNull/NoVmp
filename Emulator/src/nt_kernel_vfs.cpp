@@ -469,6 +469,10 @@ namespace emu::nt
 		const std::string what = "NtCreateFile( access " + hx( uint32_t( c.args[ 1 ] ) ) + "H, \"" + oa.name + "\" " + hx( oa.attributes ) + "H, AllocationSize " + hex( c.args[ 4 ] ) +
 								 ", attributes " + hx( uint32_t( c.args[ 5 ] ) ) + "H, share " + hx( uint32_t( c.args[ 6 ] ) ) + "H, disposition " + hx( uint32_t( c.args[ 7 ] ) ) +
 								 "H, options " + hx( uint32_t( c.args[ 8 ] ) ) + "H, EaBuffer " + hex( c.args[ 9 ] ) + " / " + hx( uint32_t( c.args[ 10 ] ) ) + "H )";
+		{
+			reply cr;
+			if ( cm_open( c, oa, what, cr ) ) return cr;   // p3cm (U2281): \Device\DeviceApi\CMApi, the configuration-manager device of the environment
+		}
 		return vfs_answer( oa, op, c.args[ 0 ], c.args[ 3 ], 0, 0, what );
 	}
 
@@ -601,8 +605,8 @@ namespace emu::nt
 								 ", IoControlCode " + hx( code ) + "H (DeviceType " + hx( code >> 16 ) + "H, Access " + std::to_string( ( code >> 14 ) & 3 ) + ", Function " +
 								 std::to_string( ( code >> 2 ) & 0xFFF ) + ", Method " + std::to_string( code & 3 ) + "), InputBuffer " + hex( in ) + " / " + hx( inlen ) +
 								 "H, OutputBuffer " + hex( out ) + " / " + hx( outlen ) + "H )";
-		if ( it == handles_.end() || ( it->second.kind != "device (KsecDD)" && it->second.kind != "device (CNG)" ) )
-			return stop_( what + " - not a handle of a device of the environment (\\Device\\KsecDD, \\Device\\CNG): not modelled" );
+		if ( it == handles_.end() || ( it->second.kind != "device (KsecDD)" && it->second.kind != "device (CNG)" && it->second.kind != "device (CMApi)" ) )   // p3cm (U2281): + CMApi
+			return stop_( what + " - not a handle of a device of the environment (\\Device\\KsecDD, \\Device\\CNG, \\Device\\DeviceApi\\CMApi): not modelled" );
 		if ( c.args[ 1 ] || c.args[ 2 ] || c.args[ 3 ] ) return stop_( what + " - an event / APC on the device: not measured" );
 		std::string inbytes;
 		if ( in && inlen && inlen <= 0x100 && user_buffer( in, inlen, UC_PROT_READ ) )
@@ -621,6 +625,12 @@ namespace emu::nt
 			}
 		}
 		reply r;
+		if ( it->second.kind == "device (CMApi)" )   // p3cm (U2281): the configuration-manager device - only cfgmgr32's measured start-up requests
+		{
+			if ( cm_request( c, what, r ) ) return r;
+			return stop_( what + inbytes + " - a request on the configuration-manager device OUTSIDE the measured start-up set of cfgmgr32.dll (tm_nt cm): not answered - a "
+								  "later request (device-tree content, machine identity) needs the user's decision" );
+		}
 		if ( ksec_request( c, what, r ) ) return r;
 		return stop_( what + inbytes + " - a request on the device that was not measured (tm_nt ksec): not answered" );
 	}
@@ -808,6 +818,51 @@ namespace emu::nt
 			if ( !put( out, seed, sizeof( seed ), r ) || !put( iosb, &ios, 4, r ) || !put( iosb + 8, &ioi, 8, r ) ) r = stop_( "writing the answer failed after the probe" );
 			return true;
 		}
+		return false;
+	}
+
+	// ------------------------------------------------------------------------------------------------ \Device\DeviceApi\CMApi (p3cm)
+	// USER DECISION 2026-10-28 (p3cm STEP 2, "CMApi MINIMAL DEVICE MODEL"): the configuration-manager device that cfgmgr32.dll's DllMain opens
+	// (sample run 12 / 13 system call 798: cfgmgr32.dll+1280F -> +12FA4 -> +4C30 -> +4D2B) is a DEVICE of the environment that answers ONLY the
+	// requests of cfgmgr32's start-up (its DLL_PROCESS_ATTACH), each MEASURED natively from inside our own test PE (tm_nt case cm, decision
+	// 3.0.7) - its SHAPE only (status, IoStatusBlock, output size / layout), never device-tree content. Every later request (CM_* API calls:
+	// device lists, properties, the device tree - machine identity) is a LOUD STOP with the decoded request (the user's decision point).
+	// Reference for the request formats (read only, no code copied): sogen src/windows-emulator/io_device.cpp:40-88 / :147 (the device name,
+	// IoControlCode 470803H = the device-ID-list request and its reply header); the service prototype phnt ntioapi.h NtCreateFile /
+	// NtDeviceIoControlFile. Every access is in fs_access.txt (fs_record).
+	bool kernel::cm_open( const call& c, const object_attributes& oa, const std::string& what, reply& r )
+	{
+		if ( oa.root || lower( oa.name ) != "\\device\\deviceapi\\cmapi" ) return false;
+		// the argument set of cfgmgr32's DllMain (run 12 system call 798): NtCreateFile( &h, 80000000H GENERIC_READ, attributes 0, &iosb,
+		// AllocationSize NULL, FileAttributes 0, ShareAccess 0, FILE_OPEN 1, CreateOptions 0, EaBuffer NULL, 0 )
+		if ( oa.name != "\\Device\\DeviceApi\\CMApi" || uint32_t( c.args[ 1 ] ) != 0x80000000u || oa.attributes != 0 || c.args[ 4 ] || uint32_t( c.args[ 5 ] ) ||
+			 uint32_t( c.args[ 6 ] ) || uint32_t( c.args[ 7 ] ) != 1 || uint32_t( c.args[ 8 ] ) || c.args[ 9 ] || uint32_t( c.args[ 10 ] ) )
+		{
+			r = stop_( what + " - the configuration-manager device with other arguments / another spelling: not measured (tm_nt cm.open: \"\\Device\\DeviceApi\\CMApi\", "
+							  "80000000H, attributes 0, no AllocationSize, file attributes 0, share 0, FILE_OPEN, options 0, no EA - cfgmgr32's DllMain)" );
+			return true;
+		}
+		const uint64_t ph = c.args[ 0 ], iosb = c.args[ 3 ];
+		if ( !user_buffer( ph, 8, UC_PROT_WRITE ) || !user_buffer( iosb, 16, UC_PROT_WRITE ) )
+		{
+			r = stop_( what + " - FileHandle / IoStatusBlock not writable: not measured for the device" );
+			return true;
+		}
+		object o;
+		o.kind = "device (CMApi)";
+		o.name = oa.name;
+		const uint64_t h = open_handle( o );
+		r = done_( status::success, what + ": the configuration-manager device, handle " + hex( h ) + ", IoStatus {Status 0, Information 0} (measured: tm_nt cm.open)" );
+		const uint32_t ios = 0;
+		const uint64_t ioi = 0;
+		if ( !put( ph, &h, 8, r ) || !put( iosb, &ios, 4, r ) || !put( iosb + 8, &ioi, 8, r ) ) r = stop_( "writing the result failed after the probe" );
+		return true;
+	}
+
+	// the measured start-up requests of cfgmgr32.dll on the configuration-manager device (tm_nt cm.*); false = outside that set (the caller
+	// stops loudly with the decoded request)
+	bool kernel::cm_request( const call&, const std::string&, reply& )
+	{
 		return false;
 	}
 }

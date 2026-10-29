@@ -61,6 +61,8 @@ namespace emu::hle
 								{ "NtQuerySystemInformation", api::nt_file_service }, { "NtGetContextThread", api::nt_file_service } };
 		// P47 (U2168): bcrypt.dll's BCryptGenRandom (test PE T9)
 		const known bcrypt[] = { { "BCryptGenRandom", api::bcrypt_gen_random } };
+		// p3cm (U2284): cfgmgr32.dll's CM_Locate_DevNodeW (test PE T10)
+		const known cfgmgr32[] = { { "CM_Locate_DevNodeW", api::cm_locate_devnode_w } };
 	}
 
 	std::string binding::label() const
@@ -86,6 +88,7 @@ namespace emu::hle
 		{
 			const bool is_k32 = lower( m.dll ) == "kernel32.dll", is_u32 = lower( m.dll ) == "user32.dll", is_nt = lower( m.dll ) == "ntdll.dll";
 			const bool is_bc = lower( m.dll ) == "bcrypt.dll";   // P47 (U2168)
+			const bool is_cm = lower( m.dll ) == "cfgmgr32.dll";   // p3cm (U2284)
 			for ( const auto& en : m.entries )
 			{
 				if ( b_.size() >= max_stubs )
@@ -108,6 +111,9 @@ namespace emu::hle
 						if ( en.name == k.name ) b.id = k.id;
 				if ( is_bc && !en.name.empty() )   // P47 (U2168)
 					for ( const auto& k : bcrypt )
+						if ( en.name == k.name ) b.id = k.id;
+				if ( is_cm && !en.name.empty() )   // p3cm (U2284)
+					for ( const auto& k : cfgmgr32 )
 						if ( en.name == k.name ) b.id = k.id;
 				b.stub = module_va + stub_size * b_.size();
 				if ( image_base > UINT64_MAX - en.iat_rva )
@@ -615,11 +621,38 @@ namespace emu::hle
 				r.text = "the TEB's LastErrorValue := " + hex( v );
 				return r;
 			}
+			case api::cm_locate_devnode_w:
+			{
+				// p3cm (U2284): CONFIGRET CM_Locate_DevNodeW( PDEVINST pdnDevInst, DEVINSTID_W pDeviceID, ULONG ulFlags ) - Windows SDK
+				// um\cfgmgr32.h:3204-3208 (CR_SUCCESS 0, CM_LOCATE_DEVNODE_NORMAL 0); Learn "CM_Locate_DevNodeW function": pDeviceID NULL = the
+				// root of the device tree. Under --HLE cfgmgr32's code does not run: the result of its own code under --Sys (test PE T10
+				// exploration e5, the emulated trace): CR_SUCCESS and DEVINST 1 - cfgmgr32 resolves the root locally ("HTREE\ROOT\0", the first
+				// entry of its own string table; cfgmgr32.dll+C26E writes it) without any request to \Device\DeviceApi\CMApi - no device-tree
+				// content and no identifier. Any other device ID / flag, an unwritable pointer: not modelled - stop (a device-tree query needs the
+				// user's decision).
+				const uint32_t flags = uint32_t( args[ 2 ] );
+				if ( args[ 1 ] != 0 || flags != 0 || !k.user_buffer( args[ 0 ], 4, UC_PROT_WRITE ) )
+				{
+					r.text = "CM_Locate_DevNodeW( " + hex( args[ 0 ] ) + ", " + hex( args[ 1 ] ) + ", " + hex( flags ) + " ): only the root (pDeviceID NULL, "
+							 "CM_LOCATE_DEVNODE_NORMAL, a writable DEVINST) is modelled - another device ID is a device-tree query (the user's decision)";
+					return r;
+				}
+				const uint32_t dn = 1;
+				if ( uc_mem_write( uc, args[ 0 ], &dn, 4 ) != UC_ERR_OK )
+				{
+					r.text = "CM_Locate_DevNodeW: writing the DEVINST failed after the probe";
+					return r;
+				}
+				r.kind = result_kind::returned;
+				r.rax = 0;
+				r.text = "CM_Locate_DevNodeW( " + hex( args[ 0 ] ) + ", NULL, CM_LOCATE_DEVNODE_NORMAL ): the root - DEVINST 1, CR_SUCCESS (cfgmgr32's own result under --Sys)";
+				return r;
+			}
 			default:
 				r.text = b.label() + " is not implemented in milestone M5 (the --HLE APIs of M5: kernel32.dll GetCurrentProcessId, GetCurrentThreadId, ExitProcess, "
 									 "GetModuleHandleW / A( NULL ); P41: GetStdHandle, WriteFile, WriteConsoleA / W, GetLastError; P44: user32.dll CharUpperW; "
 									 "P45: ntdll.dll NtOpenFile, NtCreateFile, NtQueryAttributesFile, NtQueryFullAttributesFile, NtQueryDirectoryFile(Ex), NtClose; "
-									 "P46: ntdll.dll NtQueryInformationProcess; P47: bcrypt.dll BCryptGenRandom)";
+									 "P46: ntdll.dll NtQueryInformationProcess; P47: bcrypt.dll BCryptGenRandom; p3cm: cfgmgr32.dll CM_Locate_DevNodeW( root ))";
 				return r;
 		}
 	}

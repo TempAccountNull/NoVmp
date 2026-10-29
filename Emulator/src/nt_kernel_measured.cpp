@@ -233,6 +233,11 @@ namespace emu::nt
 			if ( !svc_create_file_measured( c, r ) ) r = vfs_create_file( c );   // P45 (U2129): the emulated file system (nt_kernel_vfs.cpp)
 			return true;
 		}
+		if ( c.name == "NtQueryLicenseValue" )
+		{
+			r = svc_query_license_value( c );   // p3cm (U2283): cfgmgr32's DllMain after the CMApi open (test PE T10 exploration e1 system call 228)
+			return true;
+		}
 		if ( c.name == "NtAddAtomEx" || c.name == "NtFindAtom" || c.name == "NtDeleteAtom" || c.name == "NtQueryInformationAtom" )
 		{
 			r = svc_add_atom( c );   // P45 (U2137): the atom table
@@ -478,6 +483,7 @@ namespace emu::nt
 			static const uint64_t en43[ 5 ] = { 0xFF00000001ULL, 0x41ULL, 0x4000000000000000ULL, 0x8ULL, 0x1ULL };   // tm_nt etw.reg43.fields (enabled in the guest)
 			static const uint64_t en50[ 5 ] = { 0xFF00000001ULL, 0x43ULL, 0x7800000006000000ULL, 0x600000000040011ULL, 0x1ULL };   // tm_nt etw.reg50.fields (enabled in the guest)
 			static const uint64_t en54[ 5 ] = { 0xFF00000001ULL, 0x43ULL, 0x7800000006000000ULL, 0x600000000040011ULL, 0x1ULL };   // tm_nt etw.reg54.fields (enabled in the guest)
+			static const uint64_t en59[ 5 ] = { 0xFF00000001ULL, 0x3C1ULL, 0xC00000000000001ULL, 0x100040007ULL, 0x1ULL };   // tm_nt etw.reg59.fields (enabled in the guest)
 			static const uint64_t en40[ 5 ] = { ( uint64_t( 0xFF ) << 32 ) | 1, 0x41, uint64_t( 0x20 ) << 56, 0, 0 };   // tm_nt etw.reg40 (sechost, LoggerId 35)
 			static const prov provs[] = {
 				{ { 0x5C, 0xAB, 0x95, 0x35, 0x2A, 0x04, 0x8E, 0x4C, 0xB9, 0x42, 0x2D, 0x05, 0x9B, 0xFE, 0xB1, 0xB1 }, 1, false, "tm_nt etw.reg" },
@@ -640,7 +646,19 @@ namespace emu::nt
 				{ { 0xC6, 0xA5, 0xF1, 0xD0, 0x43, 0xFC, 0xAE, 0x48, 0x99, 0xBF, 0xEF, 0xB1, 0xC3, 0x8B, 0xE9, 0xD1 }, 51, true, "tm_nt etw.reg56" },
 				// P47 (U2166): provider 714E4055B94DEB4DA5F58F86E46DDE56 (sample run 12 exploration y59: RegType 3, LoggerId 52, ReplyCallback set) - MEASURED tm_nt etw.reg57:
 				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
-				{ { 0x71, 0x4E, 0x40, 0x55, 0xB9, 0x4D, 0xEB, 0x4D, 0xA5, 0xF5, 0x8F, 0x86, 0xE4, 0x6D, 0xDE, 0x56 }, 52, true, "tm_nt etw.reg57" } };
+				{ { 0x71, 0x4E, 0x40, 0x55, 0xB9, 0x4D, 0xEB, 0x4D, 0xA5, 0xF5, 0x8F, 0x86, 0xE4, 0x6D, 0xDE, 0x56 }, 52, true, "tm_nt etw.reg57" },
+				// p3cm (U2287): provider 45B576A6FB4C0643A067502D9A0F2220 (sample run 14 exploration s1 system call 801: RegType 2, LoggerId 53, ReplyCallback set) - MEASURED tm_nt etw.reg58:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0x45, 0xB5, 0x76, 0xA6, 0xFB, 0x4C, 0x06, 0x43, 0xA0, 0x67, 0x50, 0x2D, 0x9A, 0x0F, 0x22, 0x20 }, 53, true, "tm_nt etw.reg58", 2 },
+				// p3cm (U2287): provider 50A0F496317E3C4588BE9634F4E02139 (sample run 14 exploration s2: RegType 3, LoggerId 54, ReplyCallback set) - MEASURED tm_nt etw.reg59:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, ENABLED (an ETW session of the guest enables it - the measured enable state en59)
+				{ { 0x50, 0xA0, 0xF4, 0x96, 0x31, 0x7E, 0x3C, 0x45, 0x88, 0xBE, 0x96, 0x34, 0xF4, 0xE0, 0x21, 0x39 }, 54, true, "tm_nt etw.reg59", 3, en59 },
+				// p3cm (U2287): provider 2BE10F0E26E9D2448CF18A62A6D44036 (sample run 14 exploration s3: RegType 3, LoggerId 55, ReplyCallback set) - MEASURED tm_nt etw.reg60:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0x2B, 0xE1, 0x0F, 0x0E, 0x26, 0xE9, 0xD2, 0x44, 0x8C, 0xF1, 0x8A, 0x62, 0xA6, 0xD4, 0x40, 0x36 }, 55, true, "tm_nt etw.reg60" },
+				// p3cm (U2287): provider BB99921394935850DD339422E5903FC3 (sample run 14 exploration s5: RegType 3, LoggerId 56, ReplyCallback set) - MEASURED tm_nt etw.reg61:
+				// STATUS_SUCCESS, ReplyHandle + Reserved1 written, not enabled
+				{ { 0xBB, 0x99, 0x92, 0x13, 0x94, 0x93, 0x58, 0x50, 0xDD, 0x33, 0x94, 0x22, 0xE5, 0x90, 0x3F, 0xC3 }, 56, true, "tm_nt etw.reg61" } };
 			uint8_t d[ 0xA0 ] = {};
 			std::string err, guid;
 			if ( ilen != 0xA0 || olen != 0xA0 || c.args[ 1 ] != c.args[ 3 ] || !user_buffer( c.args[ 1 ], 0xA0, UC_PROT_READ | UC_PROT_WRITE ) )
@@ -768,6 +786,14 @@ namespace emu::nt
 			static const uint8_t traits51[ 0x30 ] = { 0x30, 0x00, 0x4D, 0x69, 0x63, 0x72, 0x6F, 0x73, 0x6F, 0x66, 0x74, 0x2D, 0x57, 0x69, 0x6E, 0x64, 0x6F,
                                              0x77, 0x73, 0x2D, 0x57, 0x69, 0x6E, 0x73, 0x6F, 0x63, 0x6B, 0x32, 0x00, 0x13, 0x00, 0x01, 0x1A, 0x73,
                                              0x50, 0x4F, 0xCF, 0x89, 0x82, 0x47, 0xB3, 0xE0, 0xDC, 0xE8, 0xC9, 0x04, 0x76, 0xBA };
+			// p3cm (U2287): provider 60's traits as measured (tm_nt etwt60: the capture's setupapi.dll at file offset E980FH, "Microsoft.Windows.DriverStore")
+			static const uint8_t traits60[ 0x33 ] = { 0x33, 0x00, 0x4D, 0x69, 0x63, 0x72, 0x6F, 0x73, 0x6F, 0x66, 0x74, 0x2E, 0x57, 0x69, 0x6E, 0x64, 0x6F,
+                                             0x77, 0x73, 0x2E, 0x44, 0x72, 0x69, 0x76, 0x65, 0x72, 0x53, 0x74, 0x6F, 0x72, 0x65, 0x00, 0x13, 0x00,
+                                             0x01, 0x1A, 0x73, 0x50, 0x4F, 0xCF, 0x89, 0x82, 0x47, 0xB3, 0xE0, 0xDC, 0xE8, 0xC9, 0x04, 0x76, 0xBA };
+			// p3cm (U2287): provider 61's traits as measured (tm_nt etwt61: the capture's setupapi.dll at file offset E97CEH, "Microsoft.Windows.SetupApi")
+			static const uint8_t traits61[ 0x30 ] = { 0x30, 0x00, 0x4D, 0x69, 0x63, 0x72, 0x6F, 0x73, 0x6F, 0x66, 0x74, 0x2E, 0x57, 0x69, 0x6E, 0x64, 0x6F,
+                                             0x77, 0x73, 0x2E, 0x53, 0x65, 0x74, 0x75, 0x70, 0x41, 0x70, 0x69, 0x00, 0x13, 0x00, 0x01, 0x1A, 0x73,
+                                             0x50, 0x4F, 0xCF, 0x89, 0x82, 0x47, 0xB3, 0xE0, 0xDC, 0xE8, 0xC9, 0x04, 0x76, 0xBA };
 			auto traits_are = [ & ]( const uint8_t* want ) {
 				uint8_t got[ 0x100 ] = {};
 				std::string e2;
@@ -807,7 +833,11 @@ namespace emu::nt
 							   // P46 (U2148): provider 46's traits (tm_nt etwt46: STATUS_SUCCESS, ReturnLength 0, no output) - only with the measured bytes
 							   ( pn == "260F9832F5C867576B26635B3FA83C61" && sz == 0x44 && traits_are( traits46 ) ) ||
 							   // P46 (U2148): provider 51's traits (tm_nt etwt51: STATUS_SUCCESS, ReturnLength 0, no output) - only with the measured bytes
-							   ( pn == "C6A5F1D043FCAE4899BFEFB1C38BE9D1" && sz == 0x30 && traits_are( traits51 ) );
+							   ( pn == "C6A5F1D043FCAE4899BFEFB1C38BE9D1" && sz == 0x30 && traits_are( traits51 ) ) ||
+							   // p3cm (U2287): provider 60's traits (tm_nt etwt60: STATUS_SUCCESS, ReturnLength 0, no output) - only with the measured bytes
+							   ( pn == "2BE10F0E26E9D2448CF18A62A6D44036" && sz == 0x33 && traits_are( traits60 ) ) ||
+							   // p3cm (U2287): provider 61's traits (tm_nt etwt61: STATUS_SUCCESS, ReturnLength 0, no output) - only with the measured bytes
+							   ( pn == "BB99921394935850DD339422E5903FC3" && sz == 0x30 && traits_are( traits61 ) );
 			if ( hr == handles_.end() || hr->second.kind != "etw registration" || !known || !user_buffer( blob, sz, UC_PROT_READ ) )
 			{
 				// P47 (U2166): the blob's address (its image view) and bytes in the stop text - the measurement replays them (observation only)
@@ -985,8 +1015,25 @@ namespace emu::nt
 				return rr;
 			}
 		}
+		// p3cm (U2289): the sample's own code (run 14 exploration s8 system call 820, its section .xditszm +124E99H) opens ntdll's KnownDlls
+		// section by its ABSOLUTE name: no root, "\KnownDlls\ntdll.dll" (this spelling - Attributes 0, case sensitive), access 5
+		// (SECTION_QUERY | SECTION_MAP_READ). MEASURED (tm_nt kd.abs.1 / .2, twice): STATUS_SUCCESS, a new handle each time. The section's image
+		// is the capture's ntdll.dll; any other name / access / attributes by absolute name: stop.
+		if ( !oa.root && oa.name == "\\KnownDlls\\ntdll.dll" && access == 0x5 && oa.attributes == 0 )
+		{
+			if ( !user_buffer( c.args[ 0 ], 8, UC_PROT_WRITE ) ) return done_( status::access_violation, what + ": SectionHandle not writable" );
+			object o;
+			o.kind = "section (image)";
+			o.name = "\\KnownDlls\\ntdll.dll";
+			o.target = "ntdll.dll";   // the capture file name (lower case)
+			const uint64_t h = open_handle( o );
+			reply rr = done_( status::success, what + ": the KnownDlls section ntdll.dll by its absolute name, handle " + hex( h ) +
+												( f_.files && f_.files->count( "ntdll.dll" ) ? " (its image is in the capture)" : " (its image is NOT in the capture - a map stops)" ) + " (measured: tm_nt kd.abs)" );
+			if ( !put( c.args[ 0 ], &h, 8, rr ) ) return stop_( "writing the handle failed after the probe" );
+			return rr;
+		}
 		if ( it == handles_.end() || it->second.kind != "directory" || it->second.name != "\\KnownDlls" || access != 0xD || !( oa.attributes & 0x40 ) )
-			return stop_( what + " - not measured (tm_nt kd.section: root \\KnownDlls, 0DH, OBJ_CASE_INSENSITIVE)" );
+			return stop_( what + " - not measured (tm_nt kd.section: root \\KnownDlls, 0DH, OBJ_CASE_INSENSITIVE; kd.abs: \"\\KnownDlls\\ntdll.dll\", 5H, 0)" );
 		const std::string want = lower( oa.name );
 		const char* hit = nullptr;
 		for ( const char* n : known_dll_sections )
@@ -1057,6 +1104,49 @@ namespace emu::nt
 			return rv;
 		}
 		if ( it == handles_.end() || it->second.kind != "section (image)" ) return stop_( what + " - not a KnownDlls image section of this process: not measured" );
+		// p3cm (U2290): a SECOND view of the process' own ntdll - the sample's own code (run 14 exploration s9 system call 821) maps
+		// \KnownDlls\ntdll.dll with NtCurrentProcess(), *BaseAddress 0, ZeroBits 0, CommitSize 0, *SectionOffset 0, *ViewSize 0, ViewShare,
+		// AllocationType 0, PAGE_READONLY. MEASURED (tm_nt kd.abs.map, twice): STATUS_IMAGE_NOT_AT_BASE (40000003H), the base 64 KiB-aligned
+		// and another than the process' ntdll, *SectionOffset 0, *ViewSize = SizeOfImage, the view's header ImageBase = the LOADED ntdll's base
+		// (the section's image as relocated for the first view; the view itself is not relocated again), MEMORY_BASIC_INFORMATION at the base
+		// {AllocationProtect 80H, MEM_COMMIT, PAGE_READONLY, MEM_IMAGE, RegionSize 1000H}, the first section PAGE_EXECUTE_READ MEM_IMAGE, the
+		// headers page equal to the loaded ntdll's (only the loaded copy's runtime-written data pages differ). The emulated view: the capture's
+		// ntdll.dll mapped (pe::map) at the highest free 64 KiB-aligned range (kernel::find_free top-down - the model's choice; Windows: its own
+		// choice) with the relocations for the loaded ntdll's base, the header ImageBase = that base. Other arguments: stop.
+		if ( it->second.name == "\\KnownDlls\\ntdll.dll" && it->second.target == "ntdll.dll" && uint32_t( c.args[ 9 ] ) == page::readonly )
+		{
+			const uint64_t pb = c.args[ 2 ], poff = c.args[ 5 ], ps = c.args[ 6 ];
+			if ( c.args[ 1 ] != current_process || c.args[ 3 ] || c.args[ 4 ] || !poff || uint32_t( c.args[ 7 ] ) != 1 || uint32_t( c.args[ 8 ] ) )
+				return stop_( what + " - other arguments: not measured (tm_nt kd.abs.map)" );
+			if ( !user_buffer( pb, 8, UC_PROT_READ | UC_PROT_WRITE ) || !user_buffer( ps, 8, UC_PROT_READ | UC_PROT_WRITE ) || !user_buffer( poff, 8, UC_PROT_READ | UC_PROT_WRITE ) )
+				return done_( status::access_violation, what + ": BaseAddress / SectionOffset / ViewSize not writable" );
+			uint64_t wb = 0, wo = 0, ws = 0;
+			get64( pb, wb );
+			get64( poff, wo );
+			get64( ps, ws );
+			if ( wb || wo || ws ) return stop_( what + " - *BaseAddress / *SectionOffset / *ViewSize not 0: not measured (tm_nt kd.abs.map)" );
+			uint64_t loaded = 0;
+			for ( const auto& [ vb, v ] : views_ )
+				if ( v.name == "ntdll.dll" && !loaded ) loaded = v.base;
+			if ( !loaded ) return stop_( what + " - the process' own ntdll view was not found" );
+			if ( !f_.files || !f_.files->count( "ntdll.dll" ) ) return stop_( what + " - ntdll.dll is not in the capture" );
+			const std::vector<uint8_t>& bytes = f_.files->at( "ntdll.dll" );
+			pe::image img;
+			pe::mapping mp;
+			std::string err;
+			if ( !pe::parse( bytes, img, err ) ) return stop_( what + " - parsing the capture's ntdll.dll failed: " + err );
+			uint64_t at = 0;
+			if ( !img.size_of_image || !find_free( img.size_of_image, true, at, 0, 0, 0x10000 ) ) return stop_( what + " - no free 64 KiB-aligned range for the second ntdll view" );
+			if ( !pe::map( e_, bytes, img, at, "ntdll.dll (second view)", mp, err, loaded ) ) return stop_( what + " - mapping the second ntdll view failed: " + err );
+			if ( !e_.write( at + img.e_lfanew + 0x18 + 0x18, &loaded, 8, err ) ) return stop_( what + " - writing the header ImageBase failed: " + err );
+			if ( !add_image_view( at, mp.size, "ntdll.dll (second view)", err ) ) return stop_( what + " - " + err );
+			const uint64_t vs = img.size_of_image;
+			reply rr = done_( 0x40000003u, what + ": a second view of ntdll (the capture's file, relocated for the loaded ntdll at " + hex( loaded ) + ") at " + hex( at ) + ", ViewSize " + hex( vs ) +
+												 " - STATUS_IMAGE_NOT_AT_BASE (measured: tm_nt kd.abs.map)" );
+			const uint64_t zero = 0;
+			if ( !put( pb, &at, 8, rr ) || !put( poff, &zero, 8, rr ) || !put( ps, &vs, 8, rr ) ) return stop_( "writing the result failed after the probe" );
+			return rr;
+		}
 		const uint64_t pbase = c.args[ 2 ], psize = c.args[ 6 ];
 		if ( c.args[ 1 ] != current_process || c.args[ 3 ] || c.args[ 4 ] || c.args[ 5 ] || uint32_t( c.args[ 7 ] ) != 1 || uint32_t( c.args[ 8 ] ) != 0x800000 ||
 			 uint32_t( c.args[ 9 ] ) != page::execute_writecopy )
@@ -1302,12 +1392,13 @@ namespace emu::nt
 												  "t9_rng.exe",   // P47 (U2167): ahc.37 test PE T9's image name
 												  "bcryptprimitives.dll",   // P47 (U2167): ahc.38 bcrypt loads bcryptprimitives.dll (T9 exploration x8 system call 238)
 												  // P49 (U2245): ahc.39 .. ahc.44 the exception test PEs TX1 - TX6's image names
-												  "tx1_seh.exe", "tx2_veh.exe", "tx3_step.exe", "tx4_xstate.exe", "tx5_peb.exe", "tx6_align.exe" };
+												  "tx1_seh.exe", "tx2_veh.exe", "tx3_step.exe", "tx4_xstate.exe", "tx5_peb.exe", "tx6_align.exe",
+												  "t10_cm.exe" };   // p3cm (U2282; first measured by P48 W2 4dafd820; X1' 2026-10-29: ahc.45 - M7 owns ahc.39 .. 44): test PE T10's image name
 		static const char* const measured80[] = { "msvcrt.dll", "oleaut32.dll", "dwmapi.dll", "setupapi.dll" };
 		uint32_t outv = 0xFFFFFFFF;
 		for ( const char* m : measured0 ) if ( ln == m ) outv = 0;
 		for ( const char* m : measured80 ) if ( ln == m ) outv = 0x80;
-		if ( outv == 0xFFFFFFFF ) return stop_( what + " - this module name is not measured (tm_nt ahc.0 .. ahc.44)" );
+		if ( outv == 0xFFFFFFFF ) return stop_( what + " - this module name is not measured (tm_nt ahc.0 .. ahc.45)" );
 		if ( !user_buffer( pout, 4, UC_PROT_WRITE ) ) return stop_( what + " - ParamsOut not writable: not measured" );
 		reply rr = done_( status::success, what + ": ParamsOut = " + hex( outv ) + ( outv ? " (as the guest's lookup answers this name)" : " (no compatibility-database entry)" ) + " (measured: tm_nt ahc)" );
 		if ( !put( pout, &outv, 4, rr ) ) return stop_( "writing ParamsOut failed after the probe" );
@@ -2240,6 +2331,22 @@ namespace emu::nt
 		e_.read( f_.peb + 0x2C0, &sid, 4, err );   // PEB SessionId (2C0H, ntdll.pdb _PEB)
 		const std::string bno = "\\Sessions\\" + std::to_string( sid ) + "\\BaseNamedObjects";
 		const std::string want = "Local\\SM0:" + std::to_string( f_.process_id ) + ":304:WilStaging_02";
+		// p3cm (U2288): an UNNAMED mutant (sample run 14 exploration s7 system call 808, the DllMain phase after setupapi.dll's ETW providers): ObjectAttributes NULL,
+		// 1F0001H, InitialOwner FALSE - MEASURED (tm_nt mut.anon0 / anon1, twice): STATUS_SUCCESS, a new handle each time (another object),
+		// free; its wait / release as mut.anon.wait / anon.rel* (= the named mutant's mut.wait* / rel*). Kept under an internal name of its own
+		// (never in named_objects_: no other open can reach it).
+		if ( !c.args[ 2 ] && uint32_t( c.args[ 1 ] ) == 0x1F0001 && uint8_t( c.args[ 3 ] ) == 0 )
+		{
+			if ( !user_buffer( c.args[ 0 ], 8, UC_PROT_WRITE ) ) return done_( status::access_violation, what + ": MutantHandle not writable" );
+			object o;
+			o.kind = "mutant";
+			o.name = "<unnamed mutant " + std::to_string( ++unnamed_mutants_ ) + ">";
+			const uint64_t hnd = open_handle( o );
+			mutant_state_[ o.name ] = 1;   // InitialOwner FALSE: free (signal state 1)
+			reply r = done_( status::success, what + ": an unnamed mutant, handle " + hex( hnd ) + " - created, free (measured: tm_nt mut.anon0 / anon1)" );
+			if ( !put( c.args[ 0 ], &hnd, 8, r ) ) return stop_( "writing the handle failed after the probe" );
+			return r;
+		}
 		if ( !c.args[ 2 ] || it == handles_.end() || it->second.kind != "directory" || it->second.name != bno || oa.name != want || oa.attributes != 0x80 ||
 			 uint32_t( c.args[ 1 ] ) != 0x1F0001 || uint8_t( c.args[ 3 ] ) != 0 )
 			return stop_( what + " - not measured (tm_nt mut.*: the session's BaseNamedObjects, \"Local\\SM0:<the process id>:304:WilStaging_02\", OBJ_OPENIF, 1F0001H, FALSE)" );
@@ -2829,5 +2936,35 @@ namespace emu::nt
 		const uint32_t rl = 0x40;
 		if ( !put( out, d, 0x40, r ) || ( pret && !put( pret, &rl, 4, r ) ) ) r = stop_( "writing the result failed after the probe" );
 		return true;
+	}
+
+	// NtQueryLicenseValue( ValueName (PCUNICODE_STRING), Type (PULONG, optional), Data, DataSize, ResultDataSize (PULONG) ) - prototype phnt
+	// ntexapi.h:10322-10344 (a value of the system's licensing / product-policy store). p3cm (U2283): cfgmgr32.dll's DllMain asks it right
+	// after the configuration-manager device's open (test PE T10 exploration e1 system call 228). Only a MEASURED value name with the measured
+	// argument shape is answered (tm_nt lic: the status, Type, ResultDataSize and the data's size); anything else stops loudly with the name.
+	reply kernel::svc_query_license_value( const call& c )
+	{
+		if ( !c.stack_args ) return stop_( "NtQueryLicenseValue: the stack argument ResultDataSize is not readable" );
+		std::string name, why;
+		if ( !guest_ustring( c.args[ 0 ], name, why ) ) return stop_( "NtQueryLicenseValue: ValueName " + why + " - not measured" );
+		const uint64_t ptype = c.args[ 1 ], data = c.args[ 2 ], pret = c.args[ 4 ];
+		const uint32_t size = uint32_t( c.args[ 3 ] );
+		const std::string what = "NtQueryLicenseValue( \"" + name + "\", Type " + hex( ptype ) + ", Data " + hex( data ) + ", DataSize " + hex( size ) + ", ResultDataSize " + hex( pret ) + " )";
+		// MEASURED (tm_nt lic.<item>, twice each, equal): the value name exactly, the DataSize given, Type / Data / ResultDataSize all given ->
+		// the status, *Type, *ResultDataSize and the REG_DWORD written into Data (a policy flag of the guest's edition - no identifier)
+		struct lic_row { const char* item; const char* name; uint32_t size, status, type, retsize, value; };
+		static const lic_row lic_rows[] = {
+			{ "lic.tsas.4", "TerminalServices-RemoteConnectionManager-AllowAppServerMode", 4, 0x00000000u, 4, 4, 0 },   // cfgmgr32's DllMain (T10 e1 system call 228)
+		};
+		const lic_row* row = nullptr;
+		for ( const auto& l : lic_rows )
+			if ( name == l.name && size == l.size ) row = &l;
+		if ( !row || !ptype || !data || !pret ) return stop_( what + " - this value name / argument shape was not measured (tm_nt lic)" );
+		if ( !user_buffer( ptype, 4, UC_PROT_WRITE ) || !user_buffer( data, size, UC_PROT_WRITE ) || !user_buffer( pret, 4, UC_PROT_WRITE ) )
+			return stop_( what + " - an output pointer is not writable: not measured" );
+		reply r = done_( row->status, what + ": a product-policy value - status 0, Type " + hex( row->type ) + " (REG_DWORD), ResultDataSize " + hex( row->retsize ) + ", value " +
+										  hex( row->value ) + " (measured: tm_nt " + row->item + ")" );
+		if ( !put( ptype, &row->type, 4, r ) || !put( data, &row->value, 4, r ) || !put( pret, &row->retsize, 4, r ) ) return stop_( "writing the result failed after the probe" );
+		return r;
 	}
 }

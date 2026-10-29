@@ -80,7 +80,8 @@ namespace emu::hle
 					 // P49 (plan 3.M7, U2257): the exception / debug-surface APIs of the test PEs TX2 - TX6 (kernel32.dll)
 					 add_vectored_exception_handler, remove_vectored_exception_handler, add_vectored_continue_handler, remove_vectored_continue_handler,
 					 is_debugger_present, check_remote_debugger_present, get_current_process, get_current_thread, get_thread_context, get_process_heap,
-					 tls_alloc, tls_set_value, tls_free, set_last_error };
+					 tls_alloc, tls_set_value, tls_free, set_last_error,
+					 cm_locate_devnode_w };   // p3cm (U2284): cfgmgr32.dll CM_Locate_DevNodeW (test PE T10)
 
 	// P49 (U2256 / U2257): the --HLE exception dispatcher's return point (in this page, INT3-filled: the code hook runs the dispatcher before
 	// it executes) and one vectored / continue handler of the lists AddVectoredExceptionHandler / AddVectoredContinueHandler keep

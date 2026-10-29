@@ -59,6 +59,10 @@
 # P47 (U2165): etw.reg36 / reg37 = the providers 00FE4EA7... / 4B1AA7F3... (as etw.reg33 / 35) registered by bcryptprimitives.dll as the 11th / 12th provider of a process (LoggerId 11 / 12) - test PE T9 under --Sys.
 # P47 (U2171, sample run 12 explorations s1 / y1 - y60): etw.reg38 .. etw.reg57 = the ETW providers of the DllMain phase after bcrypt (sechost, advapi32, shell32, ws2_32 ...) with their LoggerIds 33 .. 52 (etw.reg40 / reg43 / reg50 / reg54 ENABLED by a trace session of the guest: their enable state is VOLATILE, compared by shape); etwt33 / 34 / 36 / 37 / 45 / 46 / 51 = their TraceLogging traits blobs (the capture DLLs' bytes; etwt45 a blob with an empty provider name, found by content in shell32.dll). Probe mode cf.probe: one NtCreateFile from inside (the run-12 stop \Device\DeviceApi\CMApi: measured only, not modelled).
 # P49 (U2245, plan 3.M7): ahc.39 .. ahc.44 = the LookupCdb names tx1_seh.exe .. tx6_align.exe (the exception test PEs TX1 - TX6, suite win_env_exceptions).
+# p3cm (U2280, USER DECISION 2026-10-28 "CMApi MINIMAL DEVICE MODEL"): cm.open.1 / .2 = cfgmgr32.dll's DllMain open of \Device\DeviceApi\CMApi (NtCreateFile 80000000H, attributes 0, share 0, FILE_OPEN, options 0 - sample run 12 / 13 system call 798) on the real device - a pure open, nothing of the device tree asked; cfgmgr32's start-up sends NO request on the device (test PE T10 explorations e3 / e5).
+# p3cm (U2282 / U2283): ahc.45 = the LookupCdb name t10_cm.exe (test PE T10; first measured by P48 W2 4dafd820 as ahc.39; X1' 2026-10-29: renumbered ahc.45 - M7 owns ahc.39 .. 44 - and re-measured natively); lic.tsas.4 / .4b = NtQueryLicenseValue of the product-policy value cfgmgr32's DllMain asks after the open (T10 exploration e1 system call 228; a REG_DWORD policy flag of the edition, no identifier).
+# p3cm (U2287, sample run 14 explorations s1 - s6): etw.reg58 .. etw.reg61 = the ETW providers of setupapi.dll's start after cfgmgr32 (LoggerIds 53 .. 56; etw.reg59 ENABLED by a trace session of the guest - VOLATILE, by shape); etwt60 / etwt61 = their TraceLogging traits ("Microsoft.Windows.DriverStore", "Microsoft.Windows.SetupApi" - the capture's setupapi.dll bytes).
+# p3cm (U2288 - U2290, sample run 14 explorations s7 - s9): mut.anon* = the unnamed mutant of the DllMain phase after setupapi.dll's providers (NtCreateMutant 1F0001H, NULL, FALSE); kd.abs.1 / .2 / kd.abs.map = the SAMPLE'S OWN code (its section .xditszm) opening \KnownDlls\ntdll.dll by its absolute name (access 5) and mapping a second, read-only view of it (STATUS_IMAGE_NOT_AT_BASE; only .mrdata differs from the loaded copy in its read-only pages).
 tm_nt sat.0: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 330H) -> status C0000225H, ReturnLength 0H, written 0H
 tm_nt sat.1: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 0H) -> status C0000225H, ReturnLength 0H, written 0H
 tm_nt sat.2: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 8H) -> status C0000225H, ReturnLength 0H, written 0H
@@ -417,6 +421,22 @@ tm_nt etw.reg57: NtTraceControl(0FH, the loader's A0H bytes (provider 57, Logger
 tm_nt etw.reg57.fields: RegType 3, LoggerId 52, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
 tm_nt etw.reg57.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
 tm_nt etw.reg57.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg58: NtTraceControl(0FH, the loader's A0H bytes (provider 58, LoggerId 53, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg58.fields: RegType 2, LoggerId 53, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg58.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg58.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg59: NtTraceControl(0FH, the loader's A0H bytes (provider 59, LoggerId 54, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C +70 +74 +78 +79 +80 +87 +90 +92 +94 +98; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg59.fields: RegType 3, LoggerId 54, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext bytes 01 00 00 00 FF 00 00 00, EnableFilterDesc 3C1H, EnableCallback bytes 01 00 00 00 00 00 00 0C, EnableCallbackReserved 0H, ProviderTraits bytes 07 00 04 00 01 00 00 00, TraitsFlags 1H, HasPayload 0H
+tm_nt etw.reg59.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg59.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg60: NtTraceControl(0FH, the loader's A0H bytes (provider 60, LoggerId 55, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg60.fields: RegType 3, LoggerId 55, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg60.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg60.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg61: NtTraceControl(0FH, the loader's A0H bytes (provider 61, LoggerId 56, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg61.fields: RegType 3, LoggerId 56, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg61.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg61.close: NtClose(ReplyHandle) -> 00000000H
 tm_nt kd.open: NtOpenDirectoryObject(&h, 3, "\KnownDlls" OBJ_CASE_INSENSITIVE) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
 tm_nt kd.list: kernel32.dll:Section ucrtbase.dll:Section WS2_32.dll:Section MSCTF.dll:Section SHLWAPI.dll:Section kernelbase.dll:Section wow64.dll:Section msvcp_win.dll:Section gdiplus.dll:Section KnownDllPath:SymbolicLink user32.dll:Section bcrypt.dll:Section COMCTL32.dll:Section cfgmgr32.dll:Section combase.dll:Section IMM32.dll:Section rpcrt4.dll:Section bcryptPrimitives.dll:Section ntdll.dll:Section coml2.dll:Section win32u.dll:Section wow64cpu.dll:Section COMDLG32.dll:Section gdi32full.dll:Section IMAGEHLP.dll:Section SHELL32.dll:Section sechost.dll:Section WINTRUST.dll:Section NORMALIZ.dll:Section difxapi.dll:Section Setupapi.dll:Section CRYPT32.dll:Section gdi32.dll:Section MSVCRT.dll:Section advapi32.dll:Section wow64win.dll:Section PSAPI.DLL:Section NSI.dll:Section WLDAP32.dll:Section OLEAUT32.dll:Section SHCORE.dll:Section ole32.dll:Section clbcatq.dll:Section; 43 entries, end status 8000001AH
 tm_nt kd.section.0: NtOpenSection(&s, 0DH, root \KnownDlls, "KERNEL32.DLL" OBJ_CASE_INSENSITIVE) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
@@ -425,6 +445,9 @@ tm_nt kd.section.2: NtOpenSection(&s, 0DH, root \KnownDlls, "TM_NT_NO_SUCH.DLL" 
 tm_nt kd.map.0: NtMapViewOfSection("advapi32.dll", -1, &base (0), 0, 0, NULL, &size (0), ViewShare, 800000H, 80H) -> status 00000000H, base <va> (64K-aligned yes), ViewSize = SizeOfImage (B3000H vs B3000H), header ImageBase = the base; MBI at the base: AllocationProtect 80H, State 1000H, Protect 2H, Type 1000000H, RegionSize 1000H; NtUnmapViewOfSection -> 00000000H
 tm_nt kd.map.1: NtMapViewOfSection("WLDAP32.dll", -1, &base (0), 0, 0, NULL, &size (0), ViewShare, 800000H, 80H) -> status 00000000H, base <va> (64K-aligned yes), ViewSize = SizeOfImage (5F000H vs 5F000H), header ImageBase = the base; MBI at the base: AllocationProtect 80H, State 1000H, Protect 2H, Type 1000000H, RegionSize 1000H; NtUnmapViewOfSection -> 00000000H
 tm_nt kd.map.2: NtMapViewOfSection("KERNEL32.DLL", -1, &base (0), 0, 0, NULL, &size (0), ViewShare, 800000H, 80H) -> status 40000036H, base <va> (64K-aligned yes), ViewSize = SizeOfImage (C2000H vs C2000H), header ImageBase = the base; MBI at the base: AllocationProtect 80H, State 1000H, Protect 2H, Type 1000000H, RegionSize 1000H; NtUnmapViewOfSection -> 00000000H
+tm_nt kd.abs.1: NtOpenSection(&s, 5H, NULL root, "\KnownDlls\ntdll.dll" 0H) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt kd.abs.2: NtOpenSection(&s, 5H, NULL root, "\KnownDlls\ntdll.dll" 0H) -> status 00000000H, handle <handle> (non-zero, multiple of 4) (another than abs.1)
+tm_nt kd.abs.map: NtMapViewOfSection("\KnownDlls\ntdll.dll", -1, &base (0), 0, 0, &offset (0), &size (0), ViewShare, 0, 2H) -> status 40000003H, base <va> (64K-aligned yes, != the process' ntdll), SectionOffset 0H, ViewSize = SizeOfImage (1F9000H vs 1F9000H), header ImageBase = the loaded ntdll's base; MBI at the base: AllocationProtect 80H, State 1000H, Protect 2H, Type 1000000H, RegionSize 1000H; at the first section (+1000H, 10 sections): Protect 20H, Type 1000000H; bytes differing from the loaded ntdll (505 readable pages): headers page 0, pages not writable in the loaded ntdll non-zero, its writable (runtime data) pages non-zero (by section: .mrdata C0000040H: non-zero); NtUnmapViewOfSection -> 00000000H
 tm_nt kd.link: NtOpenSymbolicLinkObject(&h, 1, root \KnownDlls, "KnownDllPath") -> status 00000000H, handle <handle> (non-zero, multiple of 4)
 tm_nt kd.target: NtQuerySymbolicLinkObject(link, MaximumLength 400H) -> status 00000000H, Length 26H, MaximumLength 400H, ReturnedLength 28H, target <SystemRoot>\System32 (= GetSystemDirectoryW)
 tm_nt of.curdir: NtOpenFile(&h, 100020H, "\??\<current directory>\" OBJ_CASE_INSENSITIVE, &iosb, 3, 21H) -> status 00000000H, handle <handle> (non-zero, multiple of 4), IoStatus.Status 00000000H, Information 1H
@@ -484,6 +507,7 @@ tm_nt ahc.41: NtApphelpCacheControl(6 LookupCdb, Name "tx3_step.exe", ParamsOut 
 tm_nt ahc.42: NtApphelpCacheControl(6 LookupCdb, Name "tx4_xstate.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
 tm_nt ahc.43: NtApphelpCacheControl(6 LookupCdb, Name "tx5_peb.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
 tm_nt ahc.44: NtApphelpCacheControl(6 LookupCdb, Name "tx6_align.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.45: NtApphelpCacheControl(6 LookupCdb, Name "t10_cm.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
 tm_nt vmi.fresh: NtSetInformationVirtualMemory(-1, 4, 1, {a fresh image view's base, 1000H}, &1, 4) -> status C00000BBH
 tm_nt vmi.again: the same call again -> status C00000BBH
 tm_nt vmi.loaded: the same call on this process' kernelbase.dll base -> status C00000BBH
@@ -564,6 +588,14 @@ tm_nt etwt14.reg: NtTraceControl(0FH, provider 14 as etw.reg14) -> status 000000
 tm_nt etwt14.blob: the traits (as bytes), 36H bytes: first USHORT (the traits size) 36H, non-zero bytes 51
 tm_nt etwt14.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 36H, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
 tm_nt etwt14.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt61.reg: NtTraceControl(0FH, provider 61 as etw.reg61) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt61.blob: the traits (as bytes), 30H bytes: first USHORT (the traits size) 30H, non-zero bytes 45
+tm_nt etwt61.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 30H, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt61.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt60.reg: NtTraceControl(0FH, provider 60 as etw.reg60) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt60.blob: the traits (as bytes), 33H bytes: first USHORT (the traits size) 33H, non-zero bytes 48
+tm_nt etwt60.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 33H, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt60.close: NtClose(ReplyHandle) -> 00000000H
 tm_nt etwt51.reg: NtTraceControl(0FH, provider 51 as etw.reg51) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
 tm_nt etwt51.blob: the traits (as bytes), 30H bytes: first USHORT (the traits size) 30H, non-zero bytes 45
 tm_nt etwt51.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 30H, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
@@ -672,6 +704,12 @@ tm_nt mut.wait1: NtWaitForSingleObject(the mutant, FALSE, NULL) -> status 000000
 tm_nt mut.rel0: NtReleaseMutant(the mutant, &PreviousCount) -> status 00000000H, PreviousCount FFFFFFFFH
 tm_nt mut.rel1: NtReleaseMutant(the mutant, &PreviousCount) -> status 00000000H, PreviousCount 0H
 tm_nt mut.rel2: NtReleaseMutant(the mutant, &PreviousCount) -> status C0000046H, PreviousCount not written CCCCCCCCH
+tm_nt mut.anon0: NtCreateMutant(&h, 1F0001H, NULL, FALSE) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt mut.anon1: NtCreateMutant(&h, 1F0001H, NULL, FALSE) -> status 00000000H, handle <handle> (non-zero, multiple of 4) (another than anon0)
+tm_nt mut.anon.wait: NtWaitForSingleObject(anon0, FALSE, NULL) -> status 00000000H
+tm_nt mut.anon.rel0: NtReleaseMutant(anon0, &PreviousCount) -> status 00000000H, PreviousCount 0H
+tm_nt mut.anon.rel1: NtReleaseMutant(anon0, &PreviousCount) -> status C0000046H, PreviousCount not written CCCCCCCCH
+tm_nt mut.anon.close: NtClose -> 00000000H, 00000000H
 tm_nt wil.anon: NtCreateSemaphore(&h, 100003H, NULL, 0, 7FFFFFFFH) -> status 00000000H, handle <handle> (non-zero, multiple of 4); a 0 ms wait: time-out (count 0); NtClose -> 00000000H
 tm_nt wil.open.loader: NtOpenSemaphore(&h, 1F0003H, {the BaseNamedObjects handle, "Local\SM0:<the process id>:304:WilStaging_02_p0", attributes 0H}) -> status 00000000H, handle <handle> (non-zero, multiple of 4); NtClose -> 00000000H
 tm_nt wil.open.fresh: NtOpenSemaphore(&h, 1F0003H, {the BaseNamedObjects handle, "Local\SM0:<the process id>:304:WilStaging_tm_p0", attributes 0H}) -> status C0000034H, handle not written
@@ -1073,3 +1111,9 @@ tm_nt ksec.cng.rekey.3: NtDeviceIoControlFile(h, NULL, NULL, NULL, &iosb, 390008
 tm_nt ksec.cng.rekey.shape: bytes equal in all three outputs:; 0 bytes equal (runs of 2 or more), 48 bytes differ (random - not printed)
 tm_nt ksec.cng.close: NtClose -> 00000000H
 tm_nt ksec.closed: after the device handle's close the event not signaled; NtClose(the event) -> 00000000H
+tm_nt cm.open.1: NtCreateFile(&h, 80000000H, "\Device\DeviceApi\CMApi" 0H, &iosb, NULL, 0H, 0, FILE_OPEN 1, 0H, NULL, 0) -> status 00000000H, handle <handle> (non-zero, multiple of 4), IoStatus 00000000H / 0H (upper half not written)
+tm_nt cm.open.2: NtCreateFile(&h, 80000000H, "\Device\DeviceApi\CMApi" 0H, &iosb, NULL, 0H, 0, FILE_OPEN 1, 0H, NULL, 0) -> status 00000000H, handle <handle> (non-zero, multiple of 4), IoStatus 00000000H / 0H (upper half not written)
+tm_nt cm.close.2: NtClose -> 00000000H
+tm_nt cm.close.1: NtClose -> 00000000H
+tm_nt lic.tsas.4: NtQueryLicenseValue("TerminalServices-RemoteConnectionManager-AllowAppServerMode", &type, data, 4H, &ret) -> status 00000000H, Type 4H, ResultDataSize 4H, data written 4H, value 0H
+tm_nt lic.tsas.4b: NtQueryLicenseValue("TerminalServices-RemoteConnectionManager-AllowAppServerMode", &type, data, 4H, &ret) -> status 00000000H, Type 4H, ResultDataSize 4H, data written 4H, value 0H
