@@ -438,6 +438,9 @@ Add-Hw 'cases_fix3' 'hw'
 Add-Hw 'cases_fix4' 'hw'
 # U932: BSF/BSR with a zero source leave the whole destination unchanged (32-bit too) vs the i5-13600K.
 Add-Hw 'cases_bsf_zero_hw' 'hw'
+# U2351 (P54, plan 3.M7.a (3)): BSWAP with a 16-bit operand (SDM: result undefined) - the low 16 bits zeroed, bits 63:16 and
+# RFLAGS kept - vs the i5-13600K in the VMware guest (P- and E-core runs agree, 13,000 runs; cases_bswap16_hw.txt).
+Add-Hw 'cases_bswap16_hw' 'hw'
 # U1121: BSF/BSR flags with a non-zero source (SDM 092: PF from the source's bit count, CF/OF/SF/AF
 # cleared) vs the i5-13600K (P- and E-core runs agree; PF from the result: known deviation).
 Add-Hw 'cases_bsf_flags_hw' 'hw'

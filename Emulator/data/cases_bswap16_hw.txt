@@ -1,0 +1,32 @@
+# U2351 (P54 task 4, USER DECISION 2026-10-29 plan 3.M7.a (3)), hand-written: BSWAP with a 16-bit operand vs the i5-13600K in the
+# VMware guest. Hardware lines only (no "=>"): each runs natively (CPL3, Windows x64) and in Unicorn, the whole state (RFLAGS
+# included) is compared. Our own snippets only (.byte encodings - keystone refuses "bswap cx"); never sample bytes.
+#   emu-alltest --cases Emulator\data\cases_bswap16_hw.txt --cpuid Emulator\data\cpuid_i5-13600k.txt
+# SDM 253666-093 Vol2A BSWAP-Byte Swap, p. 3-111 (PDF page 229; intel_docs_text\sdm_vol2a_093.md, page text checked against the
+# PDF with PyMuPDF get_text): "When the BSWAP instruction references a 16-bit register, the result is undefined." and
+# "Flags Affected: None."; 334569-093 Vol2D XCHG p. 6-32: "The XCHG instruction can also be used instead of the BSWAP
+# instruction for 16-bit operands." docs/quirks.md "SDM undefined, our choice": the emulator copies the CPU, which writes 0 to
+# the low 16 bits and leaves bits 63:16 and RFLAGS unchanged. Seen in sample run 16t (oep_progress.md: 65 x bswap cx in the
+# protector's junk around its decoder, the only disagreements of the SDM spot-check besides the checker's own gap).
+# Measured 2026-10-29 in the VMware guest with emu-alltest --hw-repeat 500 (U1050), once with --hw-load 8 --hw-cpu all and once
+# idle: 13 cases, 13,000 runs, ONE state per case on every run; core classes of the runs (timing probe) P 10,547, E 2,002,
+# ? 322, ~ 125 (E-classified runs for all 13 cases) -> P-core and E-core runs agree: hardware-validated (VMware guest). Not measured on the bare host.
+#
+# --- 66 0F C8+r: AX, CX, DX, BX, BP and (66 + REX.B) R8W, R9W, R15W - the low 16 bits zeroed, bits 63:16 kept
+.byte 0x66, 0x0f, 0xc8 | rax=0x1122334455667788
+.byte 0x66, 0x0f, 0xc8 | rax=0x00000000a5030000
+.byte 0x66, 0x0f, 0xc9 | rcx=0x1122334455667788
+.byte 0x66, 0x0f, 0xca | rdx=0xffffffffffffffff
+.byte 0x66, 0x0f, 0xcb | rbx=0x8a1bc2d3e4f5a6b1
+.byte 0x66, 0x0f, 0xcd | rbp=0x0f1e2d3c4b5a6978
+.byte 0x66, 0x41, 0x0f, 0xc8 | r8=0x1122334455667788
+.byte 0x66, 0x41, 0x0f, 0xc9 | r9=0xffffffffffff00ff
+.byte 0x66, 0x41, 0x0f, 0xcf | r15=0x7fffffffffff8000
+#
+# --- the flags ("Flags Affected: None"): two RFLAGS inputs, unchanged
+.byte 0x66, 0x0f, 0xc9 | rcx=0x1122334455667788 rflags=0x202
+.byte 0x66, 0x0f, 0xc9 | rcx=0x1122334455667788 rflags=0xad7
+#
+# --- contrast (defined): 66 + REX.W = the 64-bit BSWAP (REX.W wins over 66); BSWAP r32 (zero-extended to 64 bits)
+.byte 0x66, 0x48, 0x0f, 0xc9 | rcx=0x1122334455667788
+.byte 0x0f, 0xc9 | rcx=0x1122334455667788

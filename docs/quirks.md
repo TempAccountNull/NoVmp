@@ -458,6 +458,7 @@ Where the SDM leaves the result open the emulator copies the i5-13600K. These ar
 | x87 transcendental values | Vol1 8.3.10: error bounds only (< 1 ulp, RN) | microcode-exact values | U53/U56 |
 | PE on transcendentals | Vol1 8.5.6: transcendentals "by nature produce inexact results" | PE always | U53 |
 | F2XM1 with \|x\| > 1, FYL2XP1 with x = −1 or x = +∞ | "undefined" / outside the documented range | as measured | U53 |
+| BSWAP with a 16-bit operand (66 0F C8+r, also with REX.B) | SDM 253666-093 Vol2A BSWAP p. 3-111: "When the BSWAP instruction references a 16-bit register, the result is undefined."; "Flags Affected: None." | the low 16 bits are written 0, bits 63:16 and RFLAGS unchanged (with REX.W the defined 64-bit BSWAP). Measured 2026-10-29 in the VMware guest: 13 cases x 1,000 runs, one state per case, P-core and E-core runs agree (`cases_bswap16_hw.txt`); the bare host is not measured. Seen in the sample's protector (run 16t, 65 x `bswap cx`) | U2351 |
 | RCPPS/RCPSS/RSQRTPS/RSQRTSS values (legacy + VEX) | relative error bound only (Vol2B: \|rel err\| <= 1.5 * 2^-12) | as measured (bit-exact to the i5-13600K, docs/reciprocal.md) | U81 |
 | VRCP14\*/VRSQRT14\* values (AMB-2, U1245) | relative error bound and special-case tables only (SDM 092 Vol2C Tables 5-24, 5-25, 5-32..5-35); the SDM names Intel's reference implementation as the "numerically exact implementation"; the host has no AVX-512 | Intel's reference implementation (recip14.c, article 671685; `intel_recip14.c.inc`), bit-identical to it (all 2^32 FP32 inputs and a stratified FP64 sample x DAZ / FTZ) and to Intel SDE, with one change where the SDM wins: RCP14D (VRCP14PD/SD) of -2^1023 with MXCSR.FTZ = 1 gives -0 ("underflow results ... flushed to zero ... with the sign of the operand"); the reference returns +0 (it masks the 64-bit result with FP32_SIGN_BIT). Status documented compliance, evidence label reference-matched; not hardware-validated, docs/reciprocal.md section 9 | U236/U940, U1245/U1246 |
 | VRCPPH/SH, VRSQRTPH/SH, VRCPBF16, VRSQRTBF16 values (AMB-2) | relative error bound and special-case tables only (SDM 092 Vol2C Tables 5-26, 5-36; AVX10.2 spec 361050-007 Tables 7.2 / 7.3); no Intel reference implementation; the host has no AVX-512 | the analytic stand-in of decision A9 (correctly rounded, documented compliance, not bit-exact); Intel SDE 10.13.1 as a labelled reference meets every documented requirement and differs inside the bound by 0 or 1 ulp (VRCPBF16 identical on every encoding: evidence label SDE-matched, U1244), docs/reciprocal.md section 8 | U337/U373, U1240-U1244 |
@@ -528,7 +529,7 @@ Open-source choices for undefined flags, recorded for comparison only (class C, 
 | DAA / DAS | OF = 0 | not compared here (as AAA) |
 | AAM | AF = CF = OF = 0 | not compared here (as AAA) |
 | AAD | the flags of the 8-bit ADD of AH x imm8 and AL | not compared here (as AAA) |
-| BSWAP r16 | the 16-bit destination is zeroed | not compared here (SDM: result undefined; not measured) |
+| BSWAP r16 | the 16-bit destination is zeroed | the same - measured on the i5-13600K in the VMware guest (row "BSWAP with a 16-bit operand", U2351) |
 
 ## SDE-resolved ambiguities (AVX10.2)
 
