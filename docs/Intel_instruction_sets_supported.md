@@ -1,7 +1,7 @@
 # Instruction sets supported (Intel + AMD/VIA)
 
-_Generated 2026-10-30 14:35 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `05c681ed Ledger: U2383 (emu-oep --watch-write / --watch-value / --trace-from)
-and U2384 (tm_u32 with the host's user32 10.0.19041.6926) (P59)`). Do not edit by hand._
+_Generated 2026-10-30 16:14 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `829dcf88 Ledger: U2385 (the user32 model knows the bare host's 10.0.19041.6926)
+and U2386 (SystemProcessorInformation of the bare host) (P61)`). Do not edit by hand._
 
 Every instruction form (mnemonic + encoding) of the Intel SDM / XED list `Emulator/data/isa_manual_forms.tsv`, AMD and VIA forms included: **2912 forms, each
 listed exactly once**, in one of three tables by privilege class (`Emulator/data/isa_privilege.tsv`). Checked against an Intel i5-13600K (Raptor Lake) with
