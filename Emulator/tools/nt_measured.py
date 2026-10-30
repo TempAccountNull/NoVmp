@@ -62,7 +62,8 @@ CASES = ['sat', 'qsi', 'hvp', 'qip', 'wcp', 'qsix', 'iocp', 'wkf', 'tmr2', 'awcp
          'pii',   # P45 (U2141, sample exploration x8 system call 633): ProcessImageInformation (d3d11's DllMain)
          'reg',   # P46 (U2151, sample run 11 exploration x11 system call 660): the HKLM handle's tags (NtSetInformationKey 5, combase's start)
          'ksec',   # P47 (U2165, sample run 11 system call 759): \Device\KsecDD as bcrypt's DllMain opens it, the device requests bcrypt sends
-         'cm', 'lic']   # p3cm (U2280 / U2283, sample run 13 system call 798): \Device\DeviceApi\CMApi as cfgmgr32's DllMain opens it; its NtQueryLicenseValue
+         'cm', 'lic',   # p3cm (U2280 / U2283, sample run 13 system call 798): \Device\DeviceApi\CMApi as cfgmgr32's DllMain opens it; its NtQueryLicenseValue
+         'nqit']   # P55 (U2360, sample run 18 system call 830): NtQueryInformationThread(NtCurrentThread(), ThreadBasicInformation)
 # P41 (U2068): case term ends the process with exit code 2BH (its NtTerminateProcess( NULL, 2BH ) fixes the process' exit status)
 EXIT_CODE = {'term': 0x2B}
 # hex constants (9 .. 16 digits) that may appear: system constants and the pre-set fill pattern - never an address of the run
@@ -116,7 +117,22 @@ VOLATILE = [
                  'program psi_probe, twice): one inert key event (SendInput VK_F24 down / up) -> D54H, one 0-pixel mouse move -> D14H',
      'shape': 'the whole line exact with bit 40H of the +0 value masked: every other bit of +0 (D14H) and +8BCH exact; a value with another '
               'bit changed, a missing or non-hex field are rejected'},
+    # P55 (U2361): THREAD_BASIC_INFORMATION.Priority of the main thread (case nqit)
+    {'items': r'nqit\.0(n|\.gct)?',
+     'field': 'THREAD_BASIC_INFORMATION.Priority (+28H, KPRIORITY: the thread\'s CURRENT priority) of NtQueryInformationThread(NtCurrentThread(), '
+              '0 ThreadBasicInformation, 30H) - printed by tm_nt as a number',
+     'why': 'the current priority of a thread in a variable-priority class is its base priority (here 8: NORMAL_PRIORITY_CLASS 20H, '
+            'THREAD_PRIORITY_NORMAL 0 - nqit.prio) plus a temporary boost the scheduler adds and decays (a satisfied wait, a foreground '
+            'window, an I/O completion); whether a boost is still active when the query runs depends on the timing of the process start',
+     'evidence': 'two measurements that differ (P55, 2026-10-30, 20 processes of tm_nt nqit in the VMware guest: Priority 9 in 19 runs, 8 in '
+                 '1, per item; BasePriority 0 in all); documentation: Microsoft Learn "Scheduling Priorities" (the base priority from the '
+                 'priority class and level) and "Priority Boosts" (the system boosts the dynamic priority of a thread in the variable class, '
+                 'up to 15, and lowers it again by one level per quantum until it reaches the base)',
+     'shape': 'the whole line exact except the Priority value: an integer 8 .. 15 (the base 8 up to the top of the variable range); '
+              '7 or less, 16 or more, a missing or non-numeric value, and every other change (BasePriority, the relations, status, '
+              'lengths, padding) are rejected'},
 ]
+_V_PRIO = re.compile(r'^(tm_nt nqit\.0(?:n|\.gct)?: NtQueryInformationThread\(.*; ExitStatus .*, Priority )(-?\d+)(, BasePriority -?\d+)$')
 _V_PSI = re.compile(r'^(tm_nt u32\.psi: \+0 )([0-9A-F]{8})(H, \+8BCH [0-9A-F]{2}H)$')
 _V_CI100 = re.compile(r'^(tm_nt u32\.teb\.ci: .* \+900H )(<user va, not mapped>|[0-9A-F]{1,4}H|\S+)( \+908H .*)$')
 _V_REG = re.compile(r'^(tm_nt etw\.reg\d*: NtTraceControl\(0FH, .*?\) -> status [0-9A-F]{8}H, ReturnLength [0-9A-F]+H; changed bytes:)((?: \+[0-9A-F]{2})*)(; ReplyHandle \(\+18H\) .*)$')
@@ -140,6 +156,11 @@ def _q(s):
 def volatile_shape(line):
     """the shape of a VOLATILE line (a string two lines must share), None when the line breaks the shape, '' when no rule applies"""
     key = line.split(':', 1)[0]
+    if re.fullmatch(r'tm_nt ' + VOLATILE[3]['items'], key):   # P55 (U2361): the thread's current priority
+        m = _V_PRIO.match(line)
+        if not m or not 8 <= int(m.group(2)) <= 15:
+            return None
+        return m.group(1) + '<8..15>' + m.group(3)
     if re.fullmatch(r'tm_nt ' + VOLATILE[2]['items'], key):   # P57 (U2372): SERVERINFO +0 bit 40H, the last input event
         m = _V_PSI.match(line)
         if not m:
@@ -193,6 +214,7 @@ def red_green_selfcheck(by_case):
     w4 = rec['tm_nt wnf4.1000']
     ci = rec['tm_nt u32.teb.ci']   # k30 (U2177)
     ps = rec['tm_nt u32.psi']   # P57 (U2372)
+    qt, qn = rec['tm_nt nqit.0'], rec['tm_nt nqit.0n']   # P55 (U2361)
     red = [
         ('changed byte in Reserved2 (+40)', r5, r5.replace('changed bytes: +18 +2C', 'changed bytes: +18 +2C +40')),
         ('a stable changed byte missing (+2C)', r5, r5.replace('changed bytes: +18 +2C', 'changed bytes: +18')),
@@ -221,6 +243,13 @@ def red_green_selfcheck(by_case):
         ('u32.psi another bit of +0 changed (10H)', ps, ps.replace('+0 00000D14H', '+0 00000D04H')),
         ('u32.psi bit 40H and another bit changed', ps, ps.replace('+0 00000D14H', '+0 00000D50H')),
         ('u32.psi +8BCH changed', ps, ps.replace('+8BCH 04H', '+8BCH 05H')),
+        # P55 (U2361): the thread's current priority
+        ('nqit.0 Priority below the base (7)', qt, re.sub(r'Priority \d+,', 'Priority 7,', qt)),
+        ('nqit.0 Priority above the variable range (16)', qt, re.sub(r'Priority \d+,', 'Priority 16,', qt)),
+        ('nqit.0 BasePriority changed (1)', qt, qt.replace('BasePriority 0', 'BasePriority 1')),
+        ('nqit.0 TEB relation changed', qt, qt.replace('TebBaseAddress = the TEB', 'TebBaseAddress <other>')),
+        ('nqit.0n ReturnLength written', qn, qn.replace('ReturnLength not written CCCCCCCCH', 'ReturnLength 30H')),
+        ('nqit.0.2c a stable line (status)', rec['tm_nt nqit.0.2c'], rec['tm_nt nqit.0.2c'].replace('status C0000004H', 'status 00000000H')),
     ]
     green = [
         ('provider 5 not enabled (its session stopped)', r5, r4.replace('etw.reg4:', 'etw.reg5:').replace('provider 4, LoggerId 4', 'provider 5, LoggerId 5')),
@@ -231,6 +260,9 @@ def red_green_selfcheck(by_case):
         ('provider 5 at another level', f5, f5.replace('bytes 01 00 00 00 FF 00 00 00', 'bytes 01 00 00 00 04 00 00 00')),
         ('CLIENTINFO +100H a small value (k30 proof runs 20 - 22: 4FC0H)', ci, ci.replace('+900H <user va, not mapped>', '+900H 4FC0H')),
         ('u32.psi bit 40H set (the last input event a keyboard event: D54H, measured 2026-10-30)', ps, ps.replace('+0 00000D14H', '+0 00000D54H')),
+        # P55 (U2361): Priority 8 (no boost) / 15 (the top of the variable range) - measured 8 in 1 of 20 processes
+        ('nqit.0 Priority 8 (no boost active)', qt, re.sub(r'Priority \d+,', 'Priority 8,', qt) if 'Priority 8,' not in qt else re.sub(r'Priority \d+,', 'Priority 9,', qt)),
+        ('nqit.0n Priority 15 (the top of the variable range)', qn, re.sub(r'Priority \d+,', 'Priority 15,', qn)),
     ]
     bad = []
     for what, want, got in red:

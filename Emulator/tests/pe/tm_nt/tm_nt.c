@@ -4401,7 +4401,69 @@ static void case_lic( void )
 	/* cfgmgr32's DllMain (T10 exploration e1 system call 228): DataSize 4; then the size rule: 0 and 2 */
 	tm_lic( "lic.tsas.4", L"TerminalServices-RemoteConnectionManager-AllowAppServerMode", 4 );
 	tm_lic( "lic.tsas.4b", L"TerminalServices-RemoteConnectionManager-AllowAppServerMode", 4 );
-}static const struct tm_case g_cases[] = { { "sat", case_sat }, { "qsi", case_qsi }, { "hvp", case_hvp }, { "qip", case_qip }, { "wcp", case_wcp }, { "qsix", case_qsix }, { "iocp", case_iocp }, { "wkf", case_wkf }, { "tmr2", case_tmr2 }, { "awcp", case_awcp }, { "swf", case_swf }, { "etw", case_etw }, { "kd", case_kd }, { "of", case_of }, { "tls", case_tls }, { "ahc", case_ahc }, { "vmi", case_vmi }, { "csr", case_csr }, { "sec", case_sec }, { "csrc", case_csrc }, { "nls", case_nls }, { "con", case_con }, { "etwt", case_etwt }, { "tok", case_tok }, { "acc", case_acc }, { "bno", case_bno }, { "mut", case_mut }, { "wil", case_wil }, { "wnf", case_wnf }, { "wnfe", case_wnfe }, { "wnfs", case_wnfs }, { "t2s", case_t2s }, { "hku", case_hku }, { "alert", case_alert }, { "term", case_term }, { "time", case_time }, { "sp", case_sp }, { "mit", case_mit }, { "u32", case_u32 }, { "u32k", case_u32k }, { "fs", case_fs }, { "rvm", case_rvm }, { "atom", case_atom }, { "pii", case_pii }, { "reg", case_reg }, { "ksec", case_ksec }, { "cm", case_cm }, { "lic", case_lic } };
+}
+
+/* ------------------------------------------------------------------------------------------------ NtQueryInformationThread
+ * P55 (U2360; sample run 18 system call 830, the protector's .xditszm +AEA08H after decompressing its sections): NtQueryInformationThread(
+ * NtCurrentThread(), 0 ThreadBasicInformation, buffer, 30H, ReturnLength NULL). Prototype phnt ntpsapi.h NtQueryInformationThread (winternl.h
+ * documents the call; ThreadBasicInformation = THREADINFOCLASS 0); THREAD_BASIC_INFORMATION (phnt ntpsapi.h): ExitStatus +0 (NTSTATUS),
+ * TebBaseAddress +8, ClientId +10H {UniqueProcess +10H, UniqueThread +18H}, AffinityMask +20H (KAFFINITY), Priority +28H (KPRIORITY, LONG),
+ * BasePriority +2CH (LONG); 30H bytes. Printed as relations / values without identity (no address, no id): the TEB = gs:[30H], the ids =
+ * GetCurrentProcessId / GetCurrentThreadId, the mask = the process affinity mask; Priority / BasePriority as numbers (scheduling state, no
+ * identity). "last byte written" over THREE fills (CCH / 33H / 5AH, the k30 rule: a written byte equal to the fill is not missed). The
+ * lengths: 30H with ReturnLength set / NULL (the sample's call), 2CH / 38H / 0 (the length rule), and the pseudo-handle of GetCurrentThread. */
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtQueryInformationThread( HANDLE ThreadHandle, ULONG ThreadInformationClass, PVOID ThreadInformation,
+																	ULONG ThreadInformationLength, PULONG ReturnLength );
+static void tm_nqit( const char* tag, HANDLE h, ULONG len, int retset )
+{
+	static unsigned char first[ 0x100 ];
+	static const unsigned char fills[ 3 ] = { 0xCC, 0x33, 0x5A };
+	ULONG ret = 0xCCCCCCCC, r2;
+	TM_NTSTATUS st = 0;
+	size_t w = 0, j, k;
+	DWORD_PTR pam = 0, sam = 0;
+	GetProcessAffinityMask( GetCurrentProcess(), &pam, &sam );
+	for ( j = 0; j < 3; j++ )
+	{
+		TM_NTSTATUS s;
+		memset( g_buf, fills[ j ], len + 0x10 );
+		r2 = 0xCCCCCCCC;
+		s = NtQueryInformationThread( h, 0, len ? g_buf : NULL, len, retset ? &r2 : NULL );
+		for ( k = len + 0x10; k > w; k-- )
+			if ( g_buf[ k - 1 ] != fills[ j ] ) { w = k; break; }
+		if ( !j ) { st = s; ret = r2; memcpy( first, g_buf, sizeof( first ) ); }
+	}
+	printf( "tm_nt %s: NtQueryInformationThread(%s, 0, Length %lXH, ReturnLength %s) -> status %08lXH, ReturnLength %s%lXH, last byte written %zXH", tag,
+			h == (HANDLE)(LONG_PTR)-2 ? "NtCurrentThread()" : "<other>", (unsigned long)len, retset ? "set" : "NULL", (unsigned long)st,
+			ret == 0xCCCCCCCC ? "not written " : "", (unsigned long)ret, w );
+	if ( st >= 0 && len >= 0x30 )
+	{
+		const unsigned char* b = first;
+		printf( "; ExitStatus %lXH, padding after ExitStatus %02X %02X %02X %02X, TebBaseAddress %s, UniqueProcess %s, UniqueThread %s, AffinityMask %s, Priority %ld, BasePriority %ld",
+				(unsigned long)*(ULONG*)( b + 0 ), b[ 4 ], b[ 5 ], b[ 6 ], b[ 7 ],
+				*(ULONGLONG*)( b + 8 ) == (ULONGLONG)__readgsqword( 0x30 ) ? "= the TEB" : "<other>",
+				*(ULONGLONG*)( b + 0x10 ) == (ULONGLONG)GetCurrentProcessId() ? "= the process id" : "<other>",
+				*(ULONGLONG*)( b + 0x18 ) == (ULONGLONG)GetCurrentThreadId() ? "= the thread id" : "<other>",
+				*(ULONGLONG*)( b + 0x20 ) == (ULONGLONG)pam ? "= the process affinity mask" : "<other>", *(LONG*)( b + 0x28 ), *(LONG*)( b + 0x2C ) );
+	}
+	printf( "\n" );
+}
+static void case_nqit( void )
+{
+	tm_nqit( "nqit.0", (HANDLE)(LONG_PTR)-2, 0x30, 1 );
+	tm_nqit( "nqit.0n", (HANDLE)(LONG_PTR)-2, 0x30, 0 );
+	tm_nqit( "nqit.0.2c", (HANDLE)(LONG_PTR)-2, 0x2C, 1 );
+	tm_nqit( "nqit.0.38", (HANDLE)(LONG_PTR)-2, 0x38, 1 );
+	tm_nqit( "nqit.0.0", (HANDLE)(LONG_PTR)-2, 0, 1 );
+	tm_nqit( "nqit.0.gct", GetCurrentThread(), 0x30, 0 );
+	{
+		/* the thread's priority as the documented API reports it (GetThreadPriority: THREAD_PRIORITY_NORMAL 0 for a new main thread) - the
+		 * relation of BasePriority to the process' BasePriority (qip.0: 8) */
+		printf( "tm_nt nqit.prio: GetThreadPriority(GetCurrentThread()) %d, GetPriorityClass(GetCurrentProcess()) %lXH\n", GetThreadPriority( GetCurrentThread() ),
+				(unsigned long)GetPriorityClass( GetCurrentProcess() ) );
+	}
+}
+static const struct tm_case g_cases[] = { { "sat", case_sat }, { "qsi", case_qsi }, { "hvp", case_hvp }, { "qip", case_qip }, { "wcp", case_wcp }, { "qsix", case_qsix }, { "iocp", case_iocp }, { "wkf", case_wkf }, { "tmr2", case_tmr2 }, { "awcp", case_awcp }, { "swf", case_swf }, { "etw", case_etw }, { "kd", case_kd }, { "of", case_of }, { "tls", case_tls }, { "ahc", case_ahc }, { "vmi", case_vmi }, { "csr", case_csr }, { "sec", case_sec }, { "csrc", case_csrc }, { "nls", case_nls }, { "con", case_con }, { "etwt", case_etwt }, { "tok", case_tok }, { "acc", case_acc }, { "bno", case_bno }, { "mut", case_mut }, { "wil", case_wil }, { "wnf", case_wnf }, { "wnfe", case_wnfe }, { "wnfs", case_wnfs }, { "t2s", case_t2s }, { "hku", case_hku }, { "alert", case_alert }, { "term", case_term }, { "time", case_time }, { "sp", case_sp }, { "mit", case_mit }, { "u32", case_u32 }, { "u32k", case_u32k }, { "fs", case_fs }, { "rvm", case_rvm }, { "atom", case_atom }, { "pii", case_pii }, { "reg", case_reg }, { "ksec", case_ksec }, { "cm", case_cm }, { "lic", case_lic }, { "nqit", case_nqit } };
 
 int main( int argc, char** argv )
 {

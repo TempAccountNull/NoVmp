@@ -387,6 +387,7 @@ namespace emu::nt
 		if ( c.name == "NtFreeVirtualMemory" ) return svc_free_virtual_memory( c );
 		if ( c.name == "NtQueryVirtualMemory" ) return svc_query_virtual_memory( c );
 		if ( c.name == "NtQueryInformationProcess" ) return svc_query_information_process( c );
+		if ( c.name == "NtQueryInformationThread" ) return svc_query_information_thread( c );   // P55 (U2362): sample run 18 system call 830
 		if ( c.name == "NtContinue" )
 		{
 			// U2030: NtContinue( ContextRecord, TestAlert ) - continue at the CONTEXT (Wine 11.0 dlls/ntdll/signal_x86_64.c:1039-1043:
@@ -718,6 +719,49 @@ namespace emu::nt
 		reply r = answered( status::success, what );
 		const uint32_t rl = uint32_t( data.size() );
 		if ( !put( out, data.data(), data.size(), r ) || ( pret && !put( pret, &rl, 4, r ) ) ) return stopped( "writing the result failed after the probe" );
+		return r;
+	}
+
+	// P55 (U2362; sample run 18 system call 830: NtQueryInformationThread( NtCurrentThread(), 0, buffer, 30H, NULL ) from the protector's
+	// .xditszm +AEA08H). Prototype phnt ntpsapi.h NtQueryInformationThread (ThreadHandle, ThreadInformationClass, ThreadInformation,
+	// ThreadInformationLength, ReturnLength; winternl.h documents the call), class 0 = ThreadBasicInformation (phnt THREADINFOCLASS),
+	// THREAD_BASIC_INFORMATION (phnt ntpsapi.h): ExitStatus +0 (NTSTATUS), TebBaseAddress +8, ClientId +10H {UniqueProcess, UniqueThread},
+	// AffinityMask +20H (KAFFINITY), Priority +28H, BasePriority +2CH (KPRIORITY = LONG); 30H bytes. MEASURED natively (tm_nt nqit,
+	// Emulator/data/nt_measured_vmware_guest.txt): Length 30H -> STATUS_SUCCESS, all 30H bytes written (the 4 bytes after ExitStatus 0),
+	// ExitStatus 103H (STATUS_PENDING: the thread runs), TebBaseAddress = the TEB, ClientId = the process / thread ids, AffinityMask = the
+	// process affinity mask, Priority 9 (the current priority: the base 8 of NORMAL_PRIORITY_CLASS plus a scheduler boost - 9 in 19 of 20
+	// native processes, 8 in 1: a VOLATILE item, nt_measured.py VOLATILE[3]; the emulator answers the value measured most often),
+	// BasePriority 0; ReturnLength 30H when given (nqit.0), untouched when NULL (nqit.0n); Length 0 / 2CH / 38H -> STATUS_INFO_LENGTH_MISMATCH,
+	// nothing written, ReturnLength untouched (nqit.0.0 / .2c / .38). The pseudo handle of GetCurrentThread() is NtCurrentThread() (nqit.0.gct).
+	// Other handles / classes / lengths and a buffer that is not writable user memory: not measured - a loud stop.
+	reply kernel::svc_query_information_thread( const call& c )
+	{
+		if ( !c.stack_args ) return stopped( "NtQueryInformationThread: the stack argument ReturnLength is not readable" );
+		const uint64_t h = c.args[ 0 ], out = c.args[ 2 ], pret = c.args[ 4 ];
+		const uint32_t cls = uint32_t( c.args[ 1 ] ), len = uint32_t( c.args[ 3 ] );
+		if ( h != current_thread ) return stopped( "NtQueryInformationThread for ThreadHandle " + hex( h ) + ": only NtCurrentThread() is measured (tm_nt nqit)" );
+		if ( cls != 0 ) return stopped( "NtQueryInformationThread class " + hex( cls ) + ": only ThreadBasicInformation (0) is measured (tm_nt nqit)" );
+		if ( len == 0 || len == 0x2C || len == 0x38 )
+			return answered( status::info_length_mismatch, "ThreadBasicInformation, Length " + hex( len ) + ": STATUS_INFO_LENGTH_MISMATCH, nothing written, ReturnLength "
+																	 "untouched (measured: tm_nt nqit.0.0 / .2c / .38)" );
+		if ( len != 0x30 ) return stopped( "ThreadBasicInformation, Length " + hex( len ) + ": not measured (30H; 0 / 2CH / 38H = STATUS_INFO_LENGTH_MISMATCH)" );
+		if ( !user_buffer( out, 0x30, UC_PROT_WRITE ) || ( pret && !user_buffer( pret, 4, UC_PROT_WRITE ) ) )
+			return stopped( "ThreadBasicInformation: the buffer or ReturnLength is not writable user memory - not measured" );
+		uint8_t b[ 0x30 ] = {};
+		const uint32_t exit_status = status::pending, rl = 0x30;
+		const int32_t priority = 9, base_priority = 0;
+		const uint64_t aff = f_.active_processor_mask;
+		std::memcpy( b + 0x00, &exit_status, 4 );
+		std::memcpy( b + 0x08, &f_.teb, 8 );
+		std::memcpy( b + 0x10, &f_.process_id, 8 );
+		std::memcpy( b + 0x18, &f_.thread_id, 8 );
+		std::memcpy( b + 0x20, &aff, 8 );
+		std::memcpy( b + 0x28, &priority, 4 );
+		std::memcpy( b + 0x2C, &base_priority, 4 );
+		reply r = answered( status::success, "ThreadBasicInformation: ExitStatus 103H, TebBaseAddress " + hex( f_.teb ) + ", ClientId {" + hex( f_.process_id ) + ", " +
+												 hex( f_.thread_id ) + "}, AffinityMask " + hex( aff ) + ", Priority 9, BasePriority 0 (measured: tm_nt nqit.0" +
+												 ( pret ? "" : "n" ) + ")" );
+		if ( !put( out, b, 0x30, r ) || ( pret && !put( pret, &rl, 4, r ) ) ) return stopped( "writing the result failed after the probe" );
 		return r;
 	}
 }

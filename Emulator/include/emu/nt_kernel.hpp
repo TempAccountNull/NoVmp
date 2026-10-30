@@ -26,6 +26,8 @@
 //   NtQueryInformationProcess um\winternl.h NtQueryInformationProcess: ProcessBasicInformation (0), ProcessDebugPort (7),
 //                             ProcessWow64Information (26), ProcessBreakOnTermination (29) - the classes winternl.h
 //                             documents with their semantics; every other class (e.g. 1EH / 1FH) = stop
+//   NtQueryInformationThread  P55 (U2362): ThreadBasicInformation (0) of NtCurrentThread() only, MEASURED (tm_nt nqit; phnt ntpsapi.h
+//                             THREAD_BASIC_INFORMATION); other handles / classes = stop
 // Plan 3.M5 part 2 (U2030-U2035; nt_kernel_sys.cpp, each with its source there): NtContinue (a resume of the CONTEXT),
 //   NtQueryPerformanceCounter (U2094, plan 3.M6: the one virtual time base, emu/vclock.hpp; M5's stand-in counted one 100 ns tick
 //   per instruction), NtQuerySystemTime / NtDelayExecution / time-outs of NtWaitForSingleObject (U2094: tm_nt case time),
@@ -243,6 +245,7 @@ namespace emu::nt
 		reply svc_free_virtual_memory( const call& c );
 		reply svc_query_virtual_memory( const call& c );
 		reply svc_query_information_process( const call& c );
+		reply svc_query_information_thread( const call& c );   // P55 (U2362): ThreadBasicInformation of NtCurrentThread(), measured (tm_nt nqit)
 
 		bool put( uint64_t address, const void* data, uint64_t length, reply& r );   // write an OUT parameter (probed before)
 		bool get64( uint64_t address, uint64_t& v ) const;

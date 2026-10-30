@@ -4204,6 +4204,47 @@ namespace
 		CHECK( w5_stop( map( S + 0x38, 0, 1, 0x800000, 2 ) ), "kd.abs.map another AllocationType: stop" );
 	}
 
+	// P55 (U2364): nt_measured_nqit - NtQueryInformationThread( NtCurrentThread(), 0 ThreadBasicInformation ) as measured (tm_nt nqit.*):
+	// Length 30H = all 30H bytes {ExitStatus 103H, 0 after it, the TEB, the process / thread ids, the process affinity mask, Priority 9,
+	// BasePriority 0}, ReturnLength 30H when given / untouched when NULL (the sample's call, run 18 system call 830); Length 0 / 2CH / 38H =
+	// STATUS_INFO_LENGTH_MISMATCH with nothing written; another handle / class / length / an unwritable buffer = a loud stop; under --HLE the
+	// ntdll export is the same kernel service (hle.cpp ntdll list)
+	void t_nt_measured_nqit()
+	{
+		std::string err;
+		namespace N = emu::nt;
+		for ( auto b : { emu::env_boundary::sys, emu::env_boundary::hle } )
+		{
+			auto p = w5_create( w5_build( { w5_trivial }, err ), b, err );
+			CHECK( p != nullptr, "process: " + err );
+			if ( !p ) return;
+			const std::string mode = b == emu::env_boundary::sys ? "--Sys" : "--HLE";
+			const uint64_t S = w5_scratch, ct = N::current_thread, E = 0xEEEEEEEEEEEEEEEEull;
+			auto fill = [ & ]() { for ( uint64_t i = 0; i < 9; i++ ) w5_put( *p, S + 8 * i, E ); };
+			fill();
+			auto r = w5_call( *p, "NtQueryInformationThread", { ct, 0, S, 0x30, S + 0x40 } );
+			std::cout << "  " << mode << " nqit.0: " << r.text << "\n";
+			CHECK( w5_ok( r ) && w4_read( *p, S, 8 ) == 0x103 && w4_read( *p, S + 8, 8 ) == p->kern().facts().teb && w4_read( *p, S + 0x10, 8 ) == emu::win::guest_process_id &&
+					   w4_read( *p, S + 0x18, 8 ) == emu::win::guest_thread_id && w4_read( *p, S + 0x20, 8 ) == 0xFF && w4_read( *p, S + 0x28, 8 ) == 9 &&
+					   w4_read( *p, S + 0x30, 8 ) == E && w4_read( *p, S + 0x40, 8 ) == 0xEEEEEEEE00000030ull,
+				   mode + " nqit.0: ExitStatus 103H (+4 0), the TEB, the ids, AffinityMask, Priority 9, BasePriority 0, nothing beyond 30H, ReturnLength 30H: " + r.text );
+			fill();
+			r = w5_call( *p, "NtQueryInformationThread", { ct, 0, S, 0x30, 0 } );
+			CHECK( w5_ok( r ) && w4_read( *p, S + 8, 8 ) == p->kern().facts().teb && w4_read( *p, S + 0x40, 8 ) == E, mode + " nqit.0n: ReturnLength NULL (the sample's call): " + r.text );
+			for ( uint64_t len : { 0ull, 0x2Cull, 0x38ull } )
+			{
+				fill();
+				r = w5_call( *p, "NtQueryInformationThread", { ct, 0, S, len, S + 0x40 } );
+				CHECK( w5_status( r, N::status::info_length_mismatch ) && w4_read( *p, S, 8 ) == E && w4_read( *p, S + 0x40, 8 ) == E,
+					   mode + " nqit.0 Length " + std::to_string( len ) + ": STATUS_INFO_LENGTH_MISMATCH, nothing written, ReturnLength untouched: " + r.text );
+			}
+			CHECK( w5_stop( w5_call( *p, "NtQueryInformationThread", { N::current_process, 0, S, 0x30, 0 } ) ), mode + " another handle (NtCurrentProcess()): stop (not measured)" );
+			CHECK( w5_stop( w5_call( *p, "NtQueryInformationThread", { ct, 1, S, 0x30, 0 } ) ), mode + " another class (1): stop (not measured)" );
+			CHECK( w5_stop( w5_call( *p, "NtQueryInformationThread", { ct, 0, S, 0x40, 0 } ) ), mode + " Length 40H: stop (not measured)" );
+			CHECK( w5_stop( w5_call( *p, "NtQueryInformationThread", { ct, 0, 0x10, 0x30, 0 } ) ), mode + " an unmapped buffer: stop (not measured)" );
+		}
+	}
+
 	// P46 (U2145): nt_measured_pii - ProcessImageInformation (25H) of the process image (tm_nt pii.*, test PE T8): every field from the
 	// image's own header / file, ImageFlags 04H with DYNAMIC_BASE (tm_nt pii) and 00H without it at the preferred base (T8),
 	// ReturnLength 40H, the length rule (nothing written); the unmeasured image shapes stop (SizeOfCode 0, LoaderFlags, a COR header, a
@@ -4460,6 +4501,7 @@ namespace
 		{ "nt_measured_ksec", t_nt_measured_ksec },   // P47 (U2169)
 		{ "nt_measured_cmapi", t_nt_measured_cmapi },   // p3cm (U2285)
 		{ "nt_measured_run14", t_nt_measured_run14 },   // p3cm (U2291)
+		{ "nt_measured_nqit", t_nt_measured_nqit },   // P55 (U2364)
 	};
 }
 

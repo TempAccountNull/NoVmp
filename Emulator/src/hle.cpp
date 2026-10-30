@@ -58,7 +58,9 @@ namespace emu::hle
 								// P46 (U2146): NtQueryInformationProcess (test PE T8: ProcessImageInformation) - the kernel layer's service the same way
 								{ "NtQueryInformationProcess", api::nt_file_service },
 								// P49 (U2257): TX5's NtQuerySystemInformation (SystemKernelDebuggerInformation) - the kernel layer's service the same way
-								{ "NtQuerySystemInformation", api::nt_file_service }, { "NtGetContextThread", api::nt_file_service } };
+								{ "NtQuerySystemInformation", api::nt_file_service }, { "NtGetContextThread", api::nt_file_service },
+								// P55 (U2363): NtQueryInformationThread (ThreadBasicInformation, measured: tm_nt nqit) - the kernel layer's service the same way
+								{ "NtQueryInformationThread", api::nt_file_service } };
 		// P47 (U2168): bcrypt.dll's BCryptGenRandom (test PE T9)
 		const known bcrypt[] = { { "BCryptGenRandom", api::bcrypt_gen_random } };
 		// p3cm (U2284): cfgmgr32.dll's CM_Locate_DevNodeW (test PE T10)
