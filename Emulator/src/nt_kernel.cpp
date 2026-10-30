@@ -389,6 +389,7 @@ namespace emu::nt
 		if ( c.name == "NtQueryInformationProcess" ) return svc_query_information_process( c );
 		if ( c.name == "NtQueryInformationThread" ) return svc_query_information_thread( c );   // P55 (U2362): sample run 18 system call 830
 		if ( c.name == "NtSetInformationThread" && uint32_t( c.args[ 1 ] ) == 4 ) return svc_set_thread_affinity( c );   // P56 (U2366): sample run 19 system call 831
+		if ( c.name == "NtSetInformationThread" && uint32_t( c.args[ 1 ] ) == 0x11 ) return svc_set_thread_hide( c );   // P56 (U2370): sample run 19 system call 852
 		if ( c.name == "NtContinue" )
 		{
 			// U2030: NtContinue( ContextRecord, TestAlert ) - continue at the CONTEXT (Wine 11.0 dlls/ntdll/signal_x86_64.c:1039-1043:
@@ -794,5 +795,25 @@ namespace emu::nt
 		thread_affinity_ = nm;
 		return answered( status::success, "ThreadAffinityMask " + hex( mask ) + " AND the process mask " + hex( pam ) + " = " + hex( nm ) +
 											  ": the main thread's affinity (measured: tm_nt nsit.4.*" + std::string( nm != mask ? ", .mixed" : "" ) + ")" );
+	}
+
+	// P56 (U2370; sample run 19 system call 852: NtSetInformationThread( NtCurrentThread(), 11H, NULL, 0 ) from the protector right after it
+	// restored its sections' protections - an anti-debug step: a thread hidden from a debugger sends it no debug events). Prototype phnt
+	// ntpsapi.h NtSetInformationThread; class 11H = ThreadHideFromDebugger (phnt THREADINFOCLASS 17). MEASURED natively (tm_nt nhfd):
+	// Length 0 -> STATUS_SUCCESS whether the buffer is NULL or not (nhfd.s.null0 / .buf0 / .null0.again: also when already hidden), and the
+	// thread is hidden afterwards (nhfd.q.after: the query 11H returns 1); any other Length -> STATUS_INFO_LENGTH_MISMATCH and nothing changes
+	// (nhfd.s.buf1 / .buf4 / .null1; nhfd.q.still: 0). The emulated process has no debugger, so hiding changes nothing observable now; the
+	// state is kept (thread_hidden_) for a later query of class 11H (measured: nhfd.q.*, not modelled yet - that query stops). Other handles: stop.
+	reply kernel::svc_set_thread_hide( const call& c )
+	{
+		const uint64_t h = c.args[ 0 ];
+		const uint32_t len = uint32_t( c.args[ 3 ] );
+		if ( h != current_thread ) return stopped( "NtSetInformationThread 11H for ThreadHandle " + hex( h ) + ": only NtCurrentThread() is measured (tm_nt nhfd)" );
+		if ( len != 0 ) return answered( status::info_length_mismatch, "ThreadHideFromDebugger, Length " + hex( len ) + ": STATUS_INFO_LENGTH_MISMATCH, nothing changes "
+																			"(measured: tm_nt nhfd.s.buf1 / .buf4 / .null1)" );
+		const bool was = thread_hidden_;
+		thread_hidden_ = true;
+		return answered( status::success, std::string( "ThreadHideFromDebugger: the main thread is hidden from a debugger" ) + ( was ? " (already hidden)" : "" ) +
+											  " - no debugger is emulated (measured: tm_nt nhfd.s.null0" + ( c.args[ 2 ] ? " / .buf0" : "" ) + ")" );
 	}
 }

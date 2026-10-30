@@ -4255,6 +4255,13 @@ namespace
 				CHECK( w5_status( set( 0x01, len, S + 0x80 ), N::status::info_length_mismatch ) && aff() == 0xFF, mode + " nsit.4.len" + std::to_string( len ) + ": STATUS_INFO_LENGTH_MISMATCH, unchanged" );
 			CHECK( w5_status( set( 0x01, 8, 0 ), N::status::access_violation ) && aff() == 0xFF, mode + " nsit.4.null: STATUS_ACCESS_VIOLATION, unchanged" );
 			CHECK( w5_stop( w5_call( *p, "NtSetInformationThread", { N::current_process, 4, S + 0x80, 8 } ) ), mode + " NtSetInformationThread 4 on another handle: stop (not measured)" );
+			// P56 (U2371): NtSetInformationThread 11H ThreadHideFromDebugger (tm_nt nhfd.s.*)
+			CHECK( w5_status( w5_call( *p, "NtSetInformationThread", { ct, 0x11, 0, 1 } ), N::status::info_length_mismatch ), mode + " nhfd.s.null1: STATUS_INFO_LENGTH_MISMATCH" );
+			CHECK( w5_status( w5_call( *p, "NtSetInformationThread", { ct, 0x11, S + 0x80, 4 } ), N::status::info_length_mismatch ), mode + " nhfd.s.buf4: STATUS_INFO_LENGTH_MISMATCH" );
+			CHECK( w5_ok( w5_call( *p, "NtSetInformationThread", { ct, 0x11, 0, 0 } ) ), mode + " nhfd.s.null0 (the sample's call): STATUS_SUCCESS" );
+			CHECK( w5_ok( w5_call( *p, "NtSetInformationThread", { ct, 0x11, S + 0x80, 0 } ) ), mode + " nhfd.s.buf0 / null0.again: STATUS_SUCCESS again" );
+			CHECK( w5_stop( w5_call( *p, "NtSetInformationThread", { N::current_process, 0x11, 0, 0 } ) ), mode + " 11H on another handle: stop (not measured)" );
+			CHECK( w5_stop( w5_call( *p, "NtQueryInformationThread", { ct, 0x11, S, 1, 0 } ) ), mode + " the query 11H: stop (measured, not modelled)" );
 		}
 	}
 

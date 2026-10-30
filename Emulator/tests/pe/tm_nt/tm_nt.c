@@ -4513,7 +4513,47 @@ static void case_nsit( void )
 	tm_nsit( "nsit.4.restore", "&(the process mask)", (ULONGLONG)pam, 8, 0, (ULONGLONG)pam );
 	printf( "tm_nt nsit.mask: the process mask %s, the system mask %s\n", pam == sam ? "= the system mask" : "<other>", pam ? "non-zero" : "0" );
 }
-static const struct tm_case g_cases[] = { { "sat", case_sat }, { "qsi", case_qsi }, { "hvp", case_hvp }, { "qip", case_qip }, { "wcp", case_wcp }, { "qsix", case_qsix }, { "iocp", case_iocp }, { "wkf", case_wkf }, { "tmr2", case_tmr2 }, { "awcp", case_awcp }, { "swf", case_swf }, { "etw", case_etw }, { "kd", case_kd }, { "of", case_of }, { "tls", case_tls }, { "ahc", case_ahc }, { "vmi", case_vmi }, { "csr", case_csr }, { "sec", case_sec }, { "csrc", case_csrc }, { "nls", case_nls }, { "con", case_con }, { "etwt", case_etwt }, { "tok", case_tok }, { "acc", case_acc }, { "bno", case_bno }, { "mut", case_mut }, { "wil", case_wil }, { "wnf", case_wnf }, { "wnfe", case_wnfe }, { "wnfs", case_wnfs }, { "t2s", case_t2s }, { "hku", case_hku }, { "alert", case_alert }, { "term", case_term }, { "time", case_time }, { "sp", case_sp }, { "mit", case_mit }, { "u32", case_u32 }, { "u32k", case_u32k }, { "fs", case_fs }, { "rvm", case_rvm }, { "atom", case_atom }, { "pii", case_pii }, { "reg", case_reg }, { "ksec", case_ksec }, { "cm", case_cm }, { "lic", case_lic }, { "nqit", case_nqit }, { "nsit", case_nsit } };
+/* ------------------------------------------------------------------------------------------------ NtSetInformationThread 11H
+ * P56 (U2369; sample run 19 system call 852, 10.8 M instructions after 831, right after the protector restored its sections' protections):
+ * NtSetInformationThread( NtCurrentThread(), 11H ThreadHideFromDebugger, NULL, 0 ). Prototype phnt ntpsapi.h NtSetInformationThread;
+ * ThreadHideFromDebugger = THREADINFOCLASS 17 (11H). Measured: the sample's call; the length / buffer rule (1 / 4 with a buffer, 0 with a
+ * buffer, 1 without); the state read back with NtQueryInformationThread 11H (a BOOLEAN; Length 1, ReturnLength) before and after, and its
+ * length rule (4, 0). No identity: statuses, lengths and the 0 / 1 state only. The thread stays hidden afterwards (one process per case). */
+static void tm_nhfd_q( const char* tag, ULONG len )
+{
+	unsigned char b[ 8 ];
+	ULONG ret = 0xCCCCCCCC;
+	TM_NTSTATUS st;
+	memset( b, 0xCC, sizeof( b ) );
+	st = NtQueryInformationThread( (HANDLE)(LONG_PTR)-2, 0x11, b, len, &ret );
+	printf( "tm_nt %s: NtQueryInformationThread(NtCurrentThread(), 11H ThreadHideFromDebugger, Length %lXH, ReturnLength set) -> status %08lXH, ReturnLength %s%lXH, bytes %02X %02X %02X %02X\n",
+			tag, (unsigned long)len, (unsigned long)st, ret == 0xCCCCCCCC ? "not written " : "", (unsigned long)ret, b[ 0 ], b[ 1 ], b[ 2 ], b[ 3 ] );
+}
+static void tm_nhfd_s( const char* tag, int withbuf, ULONG len )
+{
+	unsigned char b[ 8 ];
+	TM_NTSTATUS st;
+	memset( b, 0x01, sizeof( b ) );
+	st = NtSetInformationThread( (HANDLE)(LONG_PTR)-2, 0x11, withbuf ? b : NULL, len );
+	printf( "tm_nt %s: NtSetInformationThread(NtCurrentThread(), 11H ThreadHideFromDebugger, %s, Length %lXH) -> status %08lXH\n", tag, withbuf ? "&(01H bytes)" : "NULL",
+			(unsigned long)len, (unsigned long)st );
+}
+static void case_nhfd( void )
+{
+	tm_nhfd_q( "nhfd.q.before", 1 );
+	tm_nhfd_s( "nhfd.s.buf1", 1, 1 );
+	tm_nhfd_s( "nhfd.s.buf4", 1, 4 );
+	tm_nhfd_s( "nhfd.s.null1", 0, 1 );
+	tm_nhfd_q( "nhfd.q.still", 1 );
+	tm_nhfd_s( "nhfd.s.buf0", 1, 0 );
+	tm_nhfd_q( "nhfd.q.after.buf0", 1 );
+	tm_nhfd_s( "nhfd.s.null0", 0, 0 );   /* the sample's call */
+	tm_nhfd_q( "nhfd.q.after", 1 );
+	tm_nhfd_s( "nhfd.s.null0.again", 0, 0 );
+	tm_nhfd_q( "nhfd.q.len4", 4 );
+	tm_nhfd_q( "nhfd.q.len0", 0 );
+}
+static const struct tm_case g_cases[] = { { "sat", case_sat }, { "qsi", case_qsi }, { "hvp", case_hvp }, { "qip", case_qip }, { "wcp", case_wcp }, { "qsix", case_qsix }, { "iocp", case_iocp }, { "wkf", case_wkf }, { "tmr2", case_tmr2 }, { "awcp", case_awcp }, { "swf", case_swf }, { "etw", case_etw }, { "kd", case_kd }, { "of", case_of }, { "tls", case_tls }, { "ahc", case_ahc }, { "vmi", case_vmi }, { "csr", case_csr }, { "sec", case_sec }, { "csrc", case_csrc }, { "nls", case_nls }, { "con", case_con }, { "etwt", case_etwt }, { "tok", case_tok }, { "acc", case_acc }, { "bno", case_bno }, { "mut", case_mut }, { "wil", case_wil }, { "wnf", case_wnf }, { "wnfe", case_wnfe }, { "wnfs", case_wnfs }, { "t2s", case_t2s }, { "hku", case_hku }, { "alert", case_alert }, { "term", case_term }, { "time", case_time }, { "sp", case_sp }, { "mit", case_mit }, { "u32", case_u32 }, { "u32k", case_u32k }, { "fs", case_fs }, { "rvm", case_rvm }, { "atom", case_atom }, { "pii", case_pii }, { "reg", case_reg }, { "ksec", case_ksec }, { "cm", case_cm }, { "lic", case_lic }, { "nqit", case_nqit }, { "nsit", case_nsit }, { "nhfd", case_nhfd } };
 
 int main( int argc, char** argv )
 {

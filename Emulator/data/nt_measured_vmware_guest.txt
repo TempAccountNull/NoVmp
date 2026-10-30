@@ -65,6 +65,7 @@
 # p3cm (U2288 - U2290, sample run 14 explorations s7 - s9): mut.anon* = the unnamed mutant of the DllMain phase after setupapi.dll's providers (NtCreateMutant 1F0001H, NULL, FALSE); kd.abs.1 / .2 / kd.abs.map = the SAMPLE'S OWN code (its section .xditszm) opening \KnownDlls\ntdll.dll by its absolute name (access 5) and mapping a second, read-only view of it (STATUS_IMAGE_NOT_AT_BASE; only .mrdata differs from the loaded copy in its read-only pages).
 # P55 (U2360 / U2361, sample run 18 system call 830): case nqit = NtQueryInformationThread(NtCurrentThread(), 0 ThreadBasicInformation) - relations only (the TEB, the process / thread ids, the process affinity mask), Priority / BasePriority as numbers (scheduling state, no identity); Priority is a VOLATILE item (nt_measured.py VOLATILE[3]: 8 .. 15, measured 9 in 19 of 20 processes, 8 in 1).
 # P56 (U2365 / U2366, sample run 19 system call 831): case nsit = NtSetInformationThread(NtCurrentThread(), 4 ThreadAffinityMask) - every set read back through ThreadBasicInformation, relations to the process affinity mask only (no mask value); constant over 10 processes.
+# P56 (U2369 / U2370, sample run 19 system call 852): case nhfd = NtSetInformationThread(NtCurrentThread(), 11H ThreadHideFromDebugger) and its read-back by NtQueryInformationThread 11H - statuses, lengths and the 0 / 1 state only; constant over 10 processes.
 tm_nt sat.0: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 330H) -> status C0000225H, ReturnLength 0H, written 0H
 tm_nt sat.1: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 0H) -> status C0000225H, ReturnLength 0H, written 0H
 tm_nt sat.2: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 8H) -> status C0000225H, ReturnLength 0H, written 0H
@@ -1140,3 +1141,15 @@ tm_nt nsit.4.null: NtSetInformationThread(NtCurrentThread(), 4 ThreadAffinityMas
 tm_nt nsit.4.low2: NtSetInformationThread(NtCurrentThread(), 4 ThreadAffinityMask, &(its lowest processor), Length 8H) -> status 00000000H; the thread affinity before = the process mask, after = the mask set, buffer unchanged
 tm_nt nsit.4.restore: NtSetInformationThread(NtCurrentThread(), 4 ThreadAffinityMask, &(the process mask), Length 8H) -> status 00000000H; the thread affinity before <other>, after = the process mask, buffer unchanged
 tm_nt nsit.mask: the process mask = the system mask, the system mask non-zero
+tm_nt nhfd.q.before: NtQueryInformationThread(NtCurrentThread(), 11H ThreadHideFromDebugger, Length 1H, ReturnLength set) -> status 00000000H, ReturnLength 1H, bytes 00 CC CC CC
+tm_nt nhfd.s.buf1: NtSetInformationThread(NtCurrentThread(), 11H ThreadHideFromDebugger, &(01H bytes), Length 1H) -> status C0000004H
+tm_nt nhfd.s.buf4: NtSetInformationThread(NtCurrentThread(), 11H ThreadHideFromDebugger, &(01H bytes), Length 4H) -> status C0000004H
+tm_nt nhfd.s.null1: NtSetInformationThread(NtCurrentThread(), 11H ThreadHideFromDebugger, NULL, Length 1H) -> status C0000004H
+tm_nt nhfd.q.still: NtQueryInformationThread(NtCurrentThread(), 11H ThreadHideFromDebugger, Length 1H, ReturnLength set) -> status 00000000H, ReturnLength 1H, bytes 00 CC CC CC
+tm_nt nhfd.s.buf0: NtSetInformationThread(NtCurrentThread(), 11H ThreadHideFromDebugger, &(01H bytes), Length 0H) -> status 00000000H
+tm_nt nhfd.q.after.buf0: NtQueryInformationThread(NtCurrentThread(), 11H ThreadHideFromDebugger, Length 1H, ReturnLength set) -> status 00000000H, ReturnLength 1H, bytes 01 CC CC CC
+tm_nt nhfd.s.null0: NtSetInformationThread(NtCurrentThread(), 11H ThreadHideFromDebugger, NULL, Length 0H) -> status 00000000H
+tm_nt nhfd.q.after: NtQueryInformationThread(NtCurrentThread(), 11H ThreadHideFromDebugger, Length 1H, ReturnLength set) -> status 00000000H, ReturnLength 1H, bytes 01 CC CC CC
+tm_nt nhfd.s.null0.again: NtSetInformationThread(NtCurrentThread(), 11H ThreadHideFromDebugger, NULL, Length 0H) -> status 00000000H
+tm_nt nhfd.q.len4: NtQueryInformationThread(NtCurrentThread(), 11H ThreadHideFromDebugger, Length 4H, ReturnLength set) -> status C0000004H, ReturnLength not written CCCCCCCCH, bytes CC CC CC CC
+tm_nt nhfd.q.len0: NtQueryInformationThread(NtCurrentThread(), 11H ThreadHideFromDebugger, Length 0H, ReturnLength set) -> status C0000004H, ReturnLength not written CCCCCCCCH, bytes CC CC CC CC

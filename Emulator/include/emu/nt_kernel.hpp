@@ -30,6 +30,8 @@
 //                             THREAD_BASIC_INFORMATION); other handles / classes = stop
 //   NtSetInformationThread    P56 (U2366): class 4 ThreadAffinityMask of NtCurrentThread(), MEASURED (tm_nt nsit; the new mask = the
 //                             value AND the process mask, 0 = STATUS_INVALID_PARAMETER; Length other than 8 = STATUS_INFO_LENGTH_MISMATCH)
+//                             and class 11H ThreadHideFromDebugger, MEASURED (tm_nt nhfd: Length 0 = STATUS_SUCCESS, the buffer ignored;
+//                             any other Length = STATUS_INFO_LENGTH_MISMATCH)
 // Plan 3.M5 part 2 (U2030-U2035; nt_kernel_sys.cpp, each with its source there): NtContinue (a resume of the CONTEXT),
 //   NtQueryPerformanceCounter (U2094, plan 3.M6: the one virtual time base, emu/vclock.hpp; M5's stand-in counted one 100 ns tick
 //   per instruction), NtQuerySystemTime / NtDelayExecution / time-outs of NtWaitForSingleObject (U2094: tm_nt case time),
@@ -249,6 +251,7 @@ namespace emu::nt
 		reply svc_query_information_process( const call& c );
 		reply svc_query_information_thread( const call& c );   // P55 (U2362): ThreadBasicInformation of NtCurrentThread(), measured (tm_nt nqit)
 		reply svc_set_thread_affinity( const call& c );        // P56 (U2366): NtSetInformationThread 4 ThreadAffinityMask, measured (tm_nt nsit)
+		reply svc_set_thread_hide( const call& c );           // P56 (U2370): NtSetInformationThread 11H ThreadHideFromDebugger, measured (tm_nt nhfd)
 
 		bool put( uint64_t address, const void* data, uint64_t length, reply& r );   // write an OUT parameter (probed before)
 		bool get64( uint64_t address, uint64_t& v ) const;
@@ -280,6 +283,7 @@ namespace emu::nt
 		std::map<uint64_t, object> handles_;
 		uint64_t next_handle_ = 4;
 		uint64_t thread_affinity_ = 0;   // P56 (U2366): the main thread's affinity set by NtSetInformationThread 4 (0 = the process mask)
+		bool thread_hidden_ = false;   // P56 (U2370): ThreadHideFromDebugger set by NtSetInformationThread 11H (no debugger is emulated; kept for a later query)
 		bool dispatch_more( const call& c, reply& r );   // nt_kernel_sys.cpp: the services of the --Sys process start
 		reply svc_protect_virtual_memory( const call& c );
 		reply svc_event( const call& c );
