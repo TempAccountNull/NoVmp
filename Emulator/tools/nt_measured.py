@@ -103,7 +103,21 @@ VOLATILE = [
                  '"+900H 4FC0H", the recording and the other 27 runs "+900H <user va, not mapped>"); the rest of the line unchanged',
      'shape': 'the whole line exact except the +900H token: non-zero, either "<user va, not mapped>" or a hex value 1H..FFFFH; 0, a region '
               'shape <Rn>+X, user32+X, <kernel va> or a large value are rejected'},
+    # P57 (U2372): SERVERINFO +0 bit 40H (the u32.psi token "+0 ...H")
+    {'items': r'u32\.psi',
+     'field': 'bit 40H of SERVERINFO +0 (dwSRVIFlags; gSharedInfo.psi of user32, printed by tm_u32 as "+0 <8 hex digits>H")',
+     'why': 'the bit records whether the LAST INPUT EVENT of the session was a keyboard event (set) or a mouse event (clear): it follows the '
+            'user\'s (or any program\'s injected) input on the desktop, at any time',
+     'evidence': 'meaning: user32.dll 10.0.19044.7807 (public symbols) reads it in RealDefWindowProcWorker for WM_CHANGEUISTATE (127H) '
+                 'UIS_INITIALIZE to choose UIS_CLEAR (bit set) or UIS_SET (bit clear), which Microsoft Learn (WM_CHANGEUISTATE) documents '
+                 'as "changed based on the last input event"; the same bit makes WinHelpA centre on the active window instead of the cursor '
+                 'and the list box ignore mouse tracking. Measurements that differ: D14H recorded 2026-10-27; D54H in the gates and '
+                 'standalone runs of 2026-10-30 ~04:25 - 05:10 (main 07ff9ec8 too); D14H again at 07:40. Cause measured (P57, our own '
+                 'program psi_probe, twice): one inert key event (SendInput VK_F24 down / up) -> D54H, one 0-pixel mouse move -> D14H',
+     'shape': 'the whole line exact with bit 40H of the +0 value masked: every other bit of +0 (D14H) and +8BCH exact; a value with another '
+              'bit changed, a missing or non-hex field are rejected'},
 ]
+_V_PSI = re.compile(r'^(tm_nt u32\.psi: \+0 )([0-9A-F]{8})(H, \+8BCH [0-9A-F]{2}H)$')
 _V_CI100 = re.compile(r'^(tm_nt u32\.teb\.ci: .* \+900H )(<user va, not mapped>|[0-9A-F]{1,4}H|\S+)( \+908H .*)$')
 _V_REG = re.compile(r'^(tm_nt etw\.reg\d*: NtTraceControl\(0FH, .*?\) -> status [0-9A-F]{8}H, ReturnLength [0-9A-F]+H; changed bytes:)((?: \+[0-9A-F]{2})*)(; ReplyHandle \(\+18H\) .*)$')
 _V_FIELDS = re.compile(r'^(tm_nt etw\.reg\d*\.fields: RegType \d+, LoggerId \d+, Reserved0 \d+, ReplyCallback (?:unchanged|changed), ReplyBufferSize [0-9A-F]+H, '
@@ -126,6 +140,11 @@ def _q(s):
 def volatile_shape(line):
     """the shape of a VOLATILE line (a string two lines must share), None when the line breaks the shape, '' when no rule applies"""
     key = line.split(':', 1)[0]
+    if re.fullmatch(r'tm_nt ' + VOLATILE[2]['items'], key):   # P57 (U2372): SERVERINFO +0 bit 40H, the last input event
+        m = _V_PSI.match(line)
+        if not m:
+            return None
+        return m.group(1) + '%08X<bit 40H: the last input event>' % ( int(m.group(2), 16) & ~0x40 ) + m.group(3)
     if re.fullmatch(r'tm_nt ' + VOLATILE[1]['items'], key):   # k30 (U2177): CLIENTINFO +100H
         m = _V_CI100.match(line)
         if not m:
@@ -173,6 +192,7 @@ def red_green_selfcheck(by_case):
     r4, f4 = rec['tm_nt etw.reg4'], rec['tm_nt etw.reg4.fields']
     w4 = rec['tm_nt wnf4.1000']
     ci = rec['tm_nt u32.teb.ci']   # k30 (U2177)
+    ps = rec['tm_nt u32.psi']   # P57 (U2372)
     red = [
         ('changed byte in Reserved2 (+40)', r5, r5.replace('changed bytes: +18 +2C', 'changed bytes: +18 +2C +40')),
         ('a stable changed byte missing (+2C)', r5, r5.replace('changed bytes: +18 +2C', 'changed bytes: +18')),
@@ -197,6 +217,10 @@ def red_green_selfcheck(by_case):
         ('CLIENTINFO +100H a kernel address', ci, ci.replace('+900H <user va, not mapped>', '+900H <kernel va>')),
         ('CLIENTINFO another field changed (+898H)', ci, ci.replace('+898H 4E4H', '+898H 4E5H')),
         ('case sp: bytes written 39 (the single-fill miscount of k30)', rec['tm_nt sp.3.sys'], rec['tm_nt sp.3.sys'].replace('bytes written 40', 'bytes written 39')),
+        # P57 (U2372): SERVERINFO +0 - only bit 40H may vary
+        ('u32.psi another bit of +0 changed (10H)', ps, ps.replace('+0 00000D14H', '+0 00000D04H')),
+        ('u32.psi bit 40H and another bit changed', ps, ps.replace('+0 00000D14H', '+0 00000D50H')),
+        ('u32.psi +8BCH changed', ps, ps.replace('+8BCH 04H', '+8BCH 05H')),
     ]
     green = [
         ('provider 5 not enabled (its session stopped)', r5, r4.replace('etw.reg4:', 'etw.reg5:').replace('provider 4, LoggerId 4', 'provider 5, LoggerId 5')),
@@ -206,6 +230,7 @@ def red_green_selfcheck(by_case):
         ('provider 4 enabled by a session (changed bytes)', r4, r4.replace('changed bytes: +18 +2C', 'changed bytes: +18 +2C +70 +87')),
         ('provider 5 at another level', f5, f5.replace('bytes 01 00 00 00 FF 00 00 00', 'bytes 01 00 00 00 04 00 00 00')),
         ('CLIENTINFO +100H a small value (k30 proof runs 20 - 22: 4FC0H)', ci, ci.replace('+900H <user va, not mapped>', '+900H 4FC0H')),
+        ('u32.psi bit 40H set (the last input event a keyboard event: D54H, measured 2026-10-30)', ps, ps.replace('+0 00000D14H', '+0 00000D54H')),
     ]
     bad = []
     for what, want, got in red:
