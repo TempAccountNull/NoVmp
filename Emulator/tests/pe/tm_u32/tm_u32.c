@@ -13,9 +13,11 @@
  * pointers as "<kernel va>" (shape only), handles as <handle>; machine / session / user values (system metrics, colours, the kernel
  * delta) as zero / non-zero or their shape. The emulator implements the model from these lines (Emulator/src/nt_kernel_win32k.cpp).
  *
- * The user32 offsets used here (gSharedInfo B4070H, gpsi B42A8H, gfServerProcess B44A8H, apfnDispatch 92070H) are the PUBLIC symbols
- * of the guest's user32.dll 10.0.19044.7807 (Microsoft symbol server, user32.pdb 5201D0E610EE8C31D9BCB3C4398D252A1; E:\sources\
- * DOWNLOADS.md): this program refuses another user32 build (SizeOfImage / TimeDateStamp / CheckSum checked first).
+ * The user32 offsets used here are the PUBLIC symbols of the two measured builds (g_builds below): the VMware guest's user32.dll
+ * 10.0.19044.7807 (Microsoft symbol server, user32.pdb 5201D0E610EE8C31D9BCB3C4398D252A1; E:\sources\DOWNLOADS.md) and - P58 (U2384) - the
+ * bare host's 10.0.19041.6926 (user32.pdb 86DBAA707D2105E1F66A1FA9031551941, capture\symbols_bare_host, read by our own PDB reader): the
+ * same symbol names (gSharedInfo, gpsi, gfServerProcess, apfnDispatch, gdwRegisteredClasses, gcxGray, gcyGray, ghbrWhite, ghbrBlack,
+ * gfSystemInitialized, gPackedProcessDpiInfo +4, guiContextInfo, gfFirstThread). Another build (SizeOfImage + TimeDateStamp) is refused.
  *
  * usage: tm_u32.exe OUTFILE   (writes its lines to OUTFILE - a GUI process has no console; tm_nt case u32 prints them); exit 0 = ran,
  *        2 = usage, 3 = another user32 build */
@@ -25,12 +27,21 @@
 #include <string.h>
 #include <stdarg.h>
 
-/* the guest build's user32 (public symbols, see above) */
-#define U32_SIZEOFIMAGE 0x1A1000u   /* the capture's user32.dll: SizeOfImage 1A1000H, TimeDateStamp CF0B5B34H, CheckSum 1B2DDCH */
-#define U32_GSHAREDINFO 0xB4070u
-#define U32_GPSI 0xB42A8u
-#define U32_GFSERVER 0xB44A8u
-#define U32_APFNDISPATCH 0x92070u
+/* the measured user32 builds (public symbols, see above); RVAs */
+struct u32_build
+{
+	ULONG size_of_image, timestamp;
+	const char* name;
+	ULONG gsharedinfo, gpsi, gfserver, apfn, ci_d0, gcxgray, gcygray, ghbrwhite, ghbrblack, gfsysinit, lpk, uicontext, gffirst;
+};
+static const struct u32_build g_builds[] = {
+	/* the VMware guest: SizeOfImage 1A1000H, TimeDateStamp CF0B5B34H, CheckSum 1B2DDCH */
+	{ 0x1A1000u, 0xCF0B5B34u, "10.0.19044.7807", 0xB4070u, 0xB42A8u, 0xB44A8u, 0x92070u, 0xB4364u, 0xB4314u, 0xB4310u, 0xB4390u, 0xB4388u, 0xB4348u, 0xB43A4u,
+	  0xB4730u, 0xB3924u },
+	/* P58 (U2384): the bare host: SizeOfImage 19D000H, TimeDateStamp CD1AFCBDH, CheckSum 1A1300H */
+	{ 0x19D000u, 0xCD1AFCBDu, "10.0.19041.6926", 0xB1050u, 0xB1288u, 0xB1488u, 0x8F070u, 0xB1344u, 0xB12F4u, 0xB12F0u, 0xB1368u, 0xB1360u, 0xB1328u, 0xB137Cu,
+	  0xB1710u, 0xB0924u } };
+static const struct u32_build* g_b;
 
 static FILE* g_out;
 
@@ -130,13 +141,18 @@ int WINAPI wWinMain( HINSTANCE hi, HINSTANCE hp, PWSTR cmd, int show )
 	g_u32size = nt->OptionalHeader.SizeOfImage;
 	say( "tm_nt u32.mod: user32.dll SizeOfImage %lXH, TimeDateStamp %08lXH, CheckSum %08lXH; CharUpperW(L\"tm\") -> %s\n", (unsigned long)nt->OptionalHeader.SizeOfImage,
 		 (unsigned long)nt->FileHeader.TimeDateStamp, (unsigned long)nt->OptionalHeader.CheckSum, buf[ 0 ] == 'T' && buf[ 1 ] == 'M' ? "L\"TM\"" : "other" );
-	if ( nt->OptionalHeader.SizeOfImage != U32_SIZEOFIMAGE )
 	{
-		say( "tm_nt u32.refused: another user32 build - the offsets of this program are those of 10.0.19044.7807\n" );
+		size_t k;
+		for ( k = 0; k < sizeof( g_builds ) / sizeof( g_builds[ 0 ] ); k++ )
+			if ( nt->OptionalHeader.SizeOfImage == g_builds[ k ].size_of_image && nt->FileHeader.TimeDateStamp == g_builds[ k ].timestamp ) g_b = &g_builds[ k ];
+	}
+	if ( !g_b )
+	{
+		say( "tm_nt u32.refused: another user32 build - the offsets of this program are those of 10.0.19044.7807 and 10.0.19041.6926\n" );
 		fclose( g_out );
 		return 3;
 	}
-	si = (const ULONGLONG*)( u + U32_GSHAREDINFO );
+	si = (const ULONGLONG*)( u + g_b->gsharedinfo );
 	/* gSharedInfo = the SHAREDINFO user32 copied from its connection reply (+8 .. +240H of the 240H bytes; P44 x1 disassembly of
 	   _UserClientDllInitialize: user32+189AB .. +18A1A) */
 	tm_qwords( "u32.si.0", si, 5, 0 );
@@ -150,11 +166,11 @@ int WINAPI wWinMain( HINSTANCE hi, HINSTANCE hp, PWSTR cmd, int show )
 			say( "tm_nt u32.si.wm%d: +%XH maxMsgs %lXH, abMsgs %s\n", k, 0x28 + 0x10 * k, (unsigned long)*(const ULONG*)w, s );
 		}
 	}
-	tm_shape( s, sizeof( s ), *(const ULONGLONG*)( u + U32_GPSI ) );
-	say( "tm_nt u32.gpsi: gpsi %s, = gSharedInfo.psi %s; gfServerProcess %lXH\n", s, *(const ULONGLONG*)( u + U32_GPSI ) == si[ 0 ] ? "yes" : "no",
-		 (unsigned long)*(const ULONG*)( u + U32_GFSERVER ) );
+	tm_shape( s, sizeof( s ), *(const ULONGLONG*)( u + g_b->gpsi ) );
+	say( "tm_nt u32.gpsi: gpsi %s, = gSharedInfo.psi %s; gfServerProcess %lXH\n", s, *(const ULONGLONG*)( u + g_b->gpsi ) == si[ 0 ] ? "yes" : "no",
+		 (unsigned long)*(const ULONG*)( u + g_b->gfserver ) );
 	tm_shape( s, sizeof( s ), *(const ULONGLONG*)( peb + 0x58 ) );
-	say( "tm_nt u32.peb: KernelCallbackTable (58H) %s (= user32+%XH apfnDispatch %s)", s, U32_APFNDISPATCH, *(const ULONGLONG*)( peb + 0x58 ) == g_u32 + U32_APFNDISPATCH ? "yes" : "no" );
+	say( "tm_nt u32.peb: KernelCallbackTable (58H) %s (= user32+%XH apfnDispatch %s)", s, (unsigned)g_b->apfn, *(const ULONGLONG*)( peb + 0x58 ) == g_u32 + g_b->apfn ? "yes" : "no" );
 	tm_shape( s, sizeof( s ), *(const ULONGLONG*)( peb + 0xF8 ) );
 	say( ", GdiSharedHandleTable (F8H) %s", s );
 	tm_shape( s, sizeof( s ), *(const ULONGLONG*)( peb + 0x230 ) );
@@ -169,9 +185,9 @@ int WINAPI wWinMain( HINSTANCE hi, HINSTANCE hp, PWSTR cmd, int show )
 		say( "tm_nt u32.teb: Win32ThreadInfo (78H) non-zero %s, = GetCurrentThreadId() %s\n", w32ti ? "yes" : "no", w32ti == GetCurrentThreadId() ? "yes" : "no" );
 		tm_shape( s, sizeof( s ), *(const ULONGLONG*)( ci + 0x20 ) );
 		say( "tm_nt u32.ci: CI_flags (+0) %llXH, +8 %llXH, dwExpWinVer (+10H) %lXH (= the image's subsystem version %lXH %s), dwCompatFlags (+14H) %lXH, dwCompatFlags2 (+18H) %lXH, "
-			 "pDeskInfo (+20H) %s, +E0H byte %02XH, +D0H = user32+B4364H %s\n", *(const ULONGLONG*)ci, *(const ULONGLONG*)( ci + 8 ), (unsigned long)*(const ULONG*)( ci + 0x10 ), (unsigned long)expver,
-			 *(const ULONG*)( ci + 0x10 ) == expver ? "yes" : "no", (unsigned long)*(const ULONG*)( ci + 0x14 ), (unsigned long)*(const ULONG*)( ci + 0x18 ), s, ci[ 0xE0 ],
-			 *(const ULONGLONG*)( ci + 0xD0 ) == g_u32 + 0xB4364 ? "yes" : "no" );
+			 "pDeskInfo (+20H) %s, +E0H byte %02XH, +D0H = user32+%XH %s\n", *(const ULONGLONG*)ci, *(const ULONGLONG*)( ci + 8 ), (unsigned long)*(const ULONG*)( ci + 0x10 ), (unsigned long)expver,
+			 *(const ULONG*)( ci + 0x10 ) == expver ? "yes" : "no", (unsigned long)*(const ULONG*)( ci + 0x14 ), (unsigned long)*(const ULONG*)( ci + 0x18 ), s, ci[ 0xE0 ], (unsigned)g_b->ci_d0,
+			 *(const ULONGLONG*)( ci + 0xD0 ) == g_u32 + g_b->ci_d0 ? "yes" : "no" );
 	}
 	{
 		/* the shared info user32 read: psi +0 (dwSRVIFlags, user32+17A2C) and psi +8BCH (user32+181FD) */
@@ -202,12 +218,12 @@ int WINAPI wWinMain( HINSTANCE hi, HINSTANCE hp, PWSTR cmd, int show )
 		/* user32's globals after its initialization (its ClientThreadSetup callback: P44 x8): gcxGray B4314H, gcyGray B4310H, ghbrWhite
 		   B4390H / ghbrBlack B4388H (= GetStockObject( WHITE_BRUSH / BLACK_BRUSH )), gfSystemInitialized B4348H, B43A4H, guiContextInfo
 		   B4730H (8 bytes), gfFirstThread B3924H */
-		const ULONGLONG wh = *(const ULONGLONG*)( u + 0xB4390 ), bl = *(const ULONGLONG*)( u + 0xB4388 );
-		say( "tm_nt u32.g: gcxGray %lXH, gcyGray %lXH, ghbrWhite = GetStockObject(0) %s, ghbrBlack = GetStockObject(4) %s, gfSystemInitialized %lXH, B43A4H %lXH, "
-			 "guiContextInfo %08lXH %08lXH, gfFirstThread %lXH\n", (unsigned long)*(const ULONG*)( u + 0xB4314 ), (unsigned long)*(const ULONG*)( u + 0xB4310 ),
+		const ULONGLONG wh = *(const ULONGLONG*)( u + g_b->ghbrwhite ), bl = *(const ULONGLONG*)( u + g_b->ghbrblack );
+		say( "tm_nt u32.g: gcxGray %lXH, gcyGray %lXH, ghbrWhite = GetStockObject(0) %s, ghbrBlack = GetStockObject(4) %s, gfSystemInitialized %lXH, %XH %lXH, "
+			 "guiContextInfo %08lXH %08lXH, gfFirstThread %lXH\n", (unsigned long)*(const ULONG*)( u + g_b->gcxgray ), (unsigned long)*(const ULONG*)( u + g_b->gcygray ),
 			 wh && wh == (ULONGLONG)(ULONG_PTR)GetStockObject( 0 ) ? "yes" : "no", bl && bl == (ULONGLONG)(ULONG_PTR)GetStockObject( 4 ) ? "yes" : "no",
-			 (unsigned long)*(const ULONG*)( u + 0xB4348 ), (unsigned long)*(const ULONG*)( u + 0xB43A4 ), (unsigned long)*(const ULONG*)( u + 0xB4730 ),
-			 (unsigned long)*(const ULONG*)( u + 0xB4734 ), (unsigned long)*(const ULONG*)( u + 0xB3924 ) );
+			 (unsigned long)*(const ULONG*)( u + g_b->gfsysinit ), (unsigned)g_b->lpk, (unsigned long)*(const ULONG*)( u + g_b->lpk ), (unsigned long)*(const ULONG*)( u + g_b->uicontext ),
+			 (unsigned long)*(const ULONG*)( u + g_b->uicontext + 4 ), (unsigned long)*(const ULONG*)( u + g_b->gffirst ) );
 	}
 	{
 		/* P46 (U2159; sample run 11 exploration x63): user32 RegisterWindowMessageW -> win32u NtUserRegisterWindowMessage( &UNICODE_STRING ) for
