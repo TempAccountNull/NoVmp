@@ -377,7 +377,10 @@ HOST_DIFFS = [
     (r'etwt\d*\.blob', 'measurement artifact: tm_nt reads the traits blob at the GUEST kernelbase build\'s fixed RVA; the emulator maps the capture\'s own kernelbase bytes'),
     (r'etwt\d*\.set', 'GUEST answer keyed by (provider GUID, traits size) of the guest kernelbase (nt_kernel_measured.cpp): the host build registers other traits - a (GUID, size) pair that is not listed stops loudly'),
     (r'sp\.2\.map', 'host value: SizeOfImage of dcomp.dll from the capture\'s file (svc_map_view_of_section)'),
-    (r'u32\..*', 'MEASUREMENT GAP: tm_u32 refused on the host (another user32 build, 10.0.19041.6926 - the offsets of 10.0.19044.7807 only); queued task 3 makes tm_u32 run on both builds'),
+    # P60 (USER DECISION 2026-10-30, P60 step 1): the host's u32 lines (host_u32_ref_v1, tm_u32 U2384 with both builds) - 7 of 51 differ
+    (r'u32\.mod', 'BUILD LAYOUT: user32 10.0.19041.6926 of the bare host (SizeOfImage / TimeDateStamp / CheckSum of the capture\'s file, which the emulator maps; nt_kernel_win32k.cpp u32_builds selects by them)'),
+    (r'u32\.(peb|ci|g|teb\.ci)', 'BUILD LAYOUT: the RVA of the same public symbol in the host build (apfnDispatch 8F070H; gdwRegisteredClasses B1344H; gPackedProcessDpiInfo+4 B137CH) - the emulator: u32_builds apfn_dispatch, the rest written by user32\'s own code'),
+    (r'u32\.region\.R(2|4)', 'ENVIRONMENT: the committed size of the user handle table (R2) / desktop heap (R4) view of the host\'s session - the emulator answers the host measurement (u32_builds he_committed / desk_committed)'),
     (r'(nqit|nsit|nhfd)\..*', 'not in the host package (newer cases: HOST_NOT_MEASURED)'),
     (r'ahc\.46', 'not in the host package (newer: the LookupCdb name of test PE T11, U2375)'),
 ]

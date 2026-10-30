@@ -44,16 +44,17 @@ namespace emu::nt
 			return r;
 		}
 
-		// ---- the measured shapes (tm_nt u32.*; the guest's user32.dll 10.0.19044.7807, public symbols E:\sources\ms_symbols) ----------
+		// ---- the measured shapes (tm_nt u32.*; the guest's user32.dll 10.0.19044.7807, public symbols E:\sources\ms_symbols; P60: equal
+		// on the bare host's 10.0.19041.6926 except the per-build values of u32_builds below) ----------
 		// placeholder bases of the four views inside the watched window (the real ones are ASLR addresses; tm_u32 prints only relations)
 		constexpr uint64_t si_base = win32k_view_window;                  // R1: the user shared-info section view (psi, pDispInfo, abMsgs)
 		constexpr uint64_t si_size = 0x8000, si_committed = 0x4000;       // u32.region.R1: 8000H, 4000H committed, PAGE_READONLY, MEM_MAPPED
 		constexpr uint64_t he_base = win32k_view_window + 0x100000;       // R2: the user handle table view (aheList)
-		constexpr uint64_t he_size = 0x200000, he_committed = 0x23000;    // u32.region.R2
+		constexpr uint64_t he_size = 0x200000;                            // u32.region.R2 (its committed part: per measured build below)
 		constexpr uint64_t gdi_base = win32k_view_window + 0x1000000;     // R3: the GDI shared memory (PEB GdiSharedHandleTable)
 		constexpr uint64_t gdi_size = 0x181000;                           // u32.region.R3: all committed
 		constexpr uint64_t desk_base = win32k_view_window + 0x2000000;    // R4: the desktop heap view (CLIENTINFO pDeskInfo)
-		constexpr uint64_t desk_size = 0x1401000, desk_committed = 0x199000;   // u32.region.R4 (the committed size: the first measurement's, a snapshot)
+		constexpr uint64_t desk_size = 0x1401000;                         // u32.region.R4 (its committed part: per measured build below)
 		constexpr uint64_t psi_off = 0x1040, dispinfo_off = 0x2C00;       // u32.si.0: psi = R1+1040H, pDispInfo = R1+2C00H
 		constexpr uint32_t he_entry_size = 0x20;                          // u32.si.10: HeEntrySize 20H
 		struct wmsg
@@ -72,8 +73,55 @@ namespace emu::nt
 		constexpr uint32_t gdi_batch_limit = 0x14;                        // u32.peb: GdiDCAttributeList (108H) 14H
 		constexpr uint64_t ci_desk_info = 0x1040, ci_thread_info = 0xE3430;   // u32.teb.ci: +20H = R4+1040H, +60H = R4+<a heap block> (placeholder E3430H)
 		constexpr uint64_t ci_98 = 0x4E4;                                 // u32.teb.ci: +98H 4E4H
-		constexpr uint32_t client_thread_setup = 84;                      // user32 apfnDispatch (user32+92070H) entry 84 = __ClientThreadSetup (user32+1DC50H)
-		constexpr uint64_t user32_apfn_dispatch = 0x92070;                // u32.peb: KernelCallbackTable = user32+92070H
+		constexpr uint32_t client_thread_setup = 84;                      // apfnDispatch entry 84 = __ClientThreadSetup in BOTH measured builds (below)
+
+		// P60 (USER DECISION 2026-10-30, P60 step 2: "--host uses the host's user32 10.0.19041.6926 layout, from the public symbols + this
+		// measurement"): the MEASURED user32 builds, selected by the user32.dll image the process maps (SizeOfImage + TimeDateStamp of its
+		// headers - the capture's file; tm_u32 selects its table the same way, U2384); another build stops loudly. Per build:
+		//   apfn_dispatch   the RVA of the public symbol apfnDispatch (PEB KernelCallbackTable, tm_nt u32.peb) - BUILD LAYOUT (the two
+		//                   PDBs: guest 5201D0E6... age 3, host 86DBAA70... age 3; read by our own PDB reader); entry 84 is
+		//                   __ClientThreadSetup in both (the two captured user32.dll files read as data: guest user32+1DC50H, host +1DA10H)
+		//   he_committed    u32.region.R2 committed (the user handle table view) - ENVIRONMENT (the session's handle count: the bare host's
+		//                   interactive session has more USER objects than the guest's)
+		//   desk_committed  u32.region.R4 committed (the desktop heap view) - ENVIRONMENT (the desktop's heap use)
+		// Every other measured u32 value (R1 / R3, psi +0 / +8BCH, the awmControl pairs, the GDI shared memory, CLIENTINFO) is EQUAL on both
+		// (tm_nt u32: 51 lines each, 7 differ: u32.mod / .peb / .ci / .g / .teb.ci = build layout, u32.region.R2 / R4 = environment;
+		// notes\eread\P60_u32_host.md). Sources: guest = Emulator/data/nt_measured_vmware_guest.txt (VMware guest 19044.7807), host =
+		// nt_measured_bare_host.txt (the user's bare-host run of host_u32_ref_v1, 2026-10-30, Windows 19045.7417 with user32 10.0.19041.6926).
+		struct u32_build
+		{
+			const char* version;
+			uint32_t size_of_image, time_date_stamp;
+			uint64_t apfn_dispatch, he_committed, desk_committed;
+		};
+		constexpr u32_build u32_builds[] = {
+			{ "10.0.19044.7807 (the VMware guest)", 0x1A1000, 0xCF0B5B34, 0x92070, 0x23000, 0x199000 },
+			{ "10.0.19041.6926 (the bare host)", 0x19D000, 0xCD1AFCBD, 0x8F070, 0x6A000, 0x41A000 },
+		};
+
+		// the user32.dll image view of the process and its measured build (nullptr + why: no user32 view / another build)
+		const u32_build* user32_build_of( const engine& e, const std::map<uint64_t, view>& views, uint64_t& base, std::string& why )
+		{
+			base = 0;
+			for ( const auto& [ b, v ] : views )
+				if ( v.type == mem2::image && v.name.find( "user32.dll" ) != std::string::npos ) base = b;
+			if ( !base )
+			{
+				why = "no user32.dll image view in the process";
+				return nullptr;
+			}
+			std::string err;
+			uint32_t lfanew = 0, tds = 0, soi = 0;
+			if ( !e.read( base + 0x3C, &lfanew, 4, err ) || lfanew > 0x1000 || !e.read( base + lfanew + 8, &tds, 4, err ) || !e.read( base + lfanew + 0x18 + 0x38, &soi, 4, err ) )
+			{
+				why = "user32.dll's headers are not readable: " + err;
+				return nullptr;
+			}
+			for ( const auto& b : u32_builds )
+				if ( b.size_of_image == soi && b.time_date_stamp == tds ) return &b;
+			why = "user32.dll SizeOfImage " + hex( soi ) + ", TimeDateStamp " + hex( tds ) + " is not a measured build (10.0.19044.7807 / 10.0.19041.6926)";
+			return nullptr;
+		}
 	}
 
 	bool kernel::map_watched_view( uint64_t base, uint64_t size, uint64_t committed, const std::vector<uint8_t>& content, const std::string& name,
@@ -125,7 +173,7 @@ namespace emu::nt
 	// into its gSharedInfo (SHAREDINFO, 238H: user32+189AB .. +18A1A), sets gpsi = gSharedInfo.psi and tests psi +0 bit 2. MEASURED (tm_u32,
 	// the SHAREDINFO user32 kept after its own connection - u32.si.*, u32.region.*): psi = R1+1040H, aheList = R2+0, HeEntrySize 20H,
 	// pDispInfo = R1+2C00H, +20H = R1's base, awmControl[0..32] = the measured (maxMsgs, R1 offset) pairs; R1 a read-only MEM_MAPPED view
-	// of 8000H (4000H committed), R2 one of 200000H (23000H committed) - the views win32k maps into the client during this request
+	// of 8000H (4000H committed), R2 one of 200000H (23000H committed; the bare host 6A000H, P60) - the views win32k maps into the client during this request
 	// (ReactOS 0.4.16 win32ss/user/winsrv/usersrv/init.c UserClientConnect -> NtUserProcessConnect, reference only). Status: STATUS_SUCCESS
 	// (user32 fails its start on a negative status - a GUI program that started saw a success). Not written (no reader: ntdll / user32 never
 	// read them): the reply's PORT_MESSAGE header, *BufferLength, the connection information's first 8 bytes (USERCONNECT version
@@ -162,12 +210,17 @@ namespace emu::nt
 			if ( v.name == "CSR API port client view" ) cview = b;
 		const uint64_t delta = 0x00007DF600000000ull - cview, data = iptr - delta;
 		if ( !cview || data < cview || data + 0x240 > cview + 0x10000 ) return stop_( what + " - the connection information is not inside the client port view: not measured" );
+		// P60: the measured user32 build of this process (the caller is its _UserClientDllInitialize) - another build stops
+		uint64_t u32 = 0;
+		std::string bwhy;
+		const u32_build* bld = user32_build_of( e_, views_, u32, bwhy );
+		if ( !bld ) return stop_( what + " - " + bwhy + ": not measured" );
 		// the two views (the contents user32 reads, measured; the rest watched)
 		std::vector<uint8_t> si( size_t( si_committed ), 0 );
 		std::memcpy( si.data() + psi_off, &srvi_flags, 4 );
 		si[ size_t( psi_off + 0x8BC ) ] = psi_8bc;
 		if ( !map_watched_view( si_base, si_size, si_committed, si, "user shared-info view (R1, model of the USERSRV connection)", { { psi_off, psi_off + 4 }, { psi_off + 0x8BC, psi_off + 0x8BD } }, err ) ||
-			 !map_watched_view( he_base, he_size, he_committed, {}, "user handle table view (R2, model of the USERSRV connection)", {}, err ) )
+			 !map_watched_view( he_base, he_size, bld->he_committed, {}, "user handle table view (R2, model of the USERSRV connection)", {}, err ) )
 			return stop_( what + " - " + err );
 		user_si_view_ = si_base;
 		user_he_view_ = he_base;
@@ -487,7 +540,8 @@ namespace emu::nt
 	// The thread's FIRST win32k service converts the process (once) and the thread to GUI (PsConvertToGuiThread: ReactOS 0.4.16
 	// win32ss/user/ntuser/main.c:240-420 InitProcessCallback / UserProcessCreate, :450-720 InitThreadCallback, win32ss/gdi/ntgdi/init.c
 	// GdiProcessCreate - reference only). In T6's start (P44 x7 / x8) that service is NtGdiInit (gdi32full GdiDllInitialize) - no win32k
-	// service before it - and user32's ClientThreadSetup ran natively (tm_u32: CLIENTINFO flags 8 and +D0H = user32+B4364H, gfFirstThread
+	// service before it - and user32's ClientThreadSetup ran natively (tm_u32: CLIENTINFO flags 8 and +D0H = user32+B4364H (the host build:
+	// +B1344H, the same public symbol gdwRegisteredClasses), gfFirstThread
 	// 0, gcxGray 8: only its kernel callback writes them) - so NtGdiInit makes the callback (ReactOS main.c:697-707 co_IntClientThreadSetup
 	// at the end of InitThreadCallback). MEASURED end state (tm_nt u32.*): PEB GdiSharedHandleTable (F8H) = R3 (181000H, read-only,
 	// MEM_MAPPED, all committed) whose +180094H = 1 and the stock-object array +1800B0H (24 x 8 bytes: GDI handles of the measured type
@@ -495,7 +549,7 @@ namespace emu::nt
 	// Win32ThreadInfo (78H) = the thread id; CLIENTINFO (TEB+800H): dwExpWinVer (+10H) = the image's subsystem version, the compat flags 0,
 	// pDeskInfo (+20H) = R4+1040H, +28H = R4's base, +60H = a block of R4 (placeholder), +98H 4E4H, the rest 0 (CI_flags 0: user32 sets
 	// bit 3 itself) - +90H / +100H hold user addresses not mapped in the process (not modelled: watched); R4 = the desktop heap view
-	// (1401000H, its first 199000H committed); a window station and a desktop handle in the process (ReactOS main.c:600-660: the startup
+	// (1401000H, its first 199000H committed; the bare host 41A000H, P60); a window station and a desktop handle in the process (ReactOS main.c:600-660: the startup
 	// desktop opened for the process).
 	reply kernel::gui_convert( const call& c )
 	{
@@ -503,10 +557,11 @@ namespace emu::nt
 		if ( !user_connected_ ) return stop_( c.name + ": the GUI conversion before user32's USERSRV connection - not measured" );
 		uint64_t kct = 0, u32 = 0;
 		e_.read( f_.peb + 0x58, &kct, 8, err );
-		for ( const auto& [ b, v ] : views_ )
-			if ( v.type == mem2::image && v.name.find( "user32.dll" ) != std::string::npos ) u32 = b;
-		if ( !u32 || kct != u32 + user32_apfn_dispatch )
-			return stop_( c.name + ": PEB KernelCallbackTable " + hex( kct ) + " is not the measured user32 build's apfnDispatch (user32+92070H) - the callback numbers are those of user32 10.0.19044.7807" );
+		std::string bwhy;
+		const u32_build* bld = user32_build_of( e_, views_, u32, bwhy );   // P60: the measured build of this process' user32
+		if ( !bld ) return stop_( c.name + ": " + bwhy + " - the callback numbers / offsets are those of the measured builds only" );
+		if ( kct != u32 + bld->apfn_dispatch )
+			return stop_( c.name + ": PEB KernelCallbackTable " + hex( kct ) + " is not the measured user32 build's apfnDispatch (user32+" + hex( bld->apfn_dispatch ) + ", " + bld->version + ")" );
 		if ( !gui_process_ )
 		{
 			std::vector<uint8_t> g( size_t( gdi_size ), 0 );
@@ -528,7 +583,7 @@ namespace emu::nt
 			winsta_handle_ = open_handle( ws );
 			gui_process_ = true;
 		}
-		if ( !map_watched_view( desk_base, desk_size, desk_committed, {}, "desktop heap view (R4, model of the thread's GUI conversion)", {}, err ) ) return stop_( c.name + ": " + err );
+		if ( !map_watched_view( desk_base, desk_size, bld->desk_committed, {}, "desktop heap view (R4, model of the thread's GUI conversion)", {}, err ) ) return stop_( c.name + ": " + err );
 		desk_view_ = desk_base;
 		object dk;
 		dk.kind = "desktop";

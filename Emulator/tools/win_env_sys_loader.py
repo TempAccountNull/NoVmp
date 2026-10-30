@@ -375,11 +375,18 @@ EXPECTED = {
 }
 # P57 (U2382): the service sequences under --env bare_host where they differ from EXPECTED (recorded from the emulated --host run, as EXPECTED was
 # recorded from the emulated --guest runs; the test PE's native exit status on the bare host confirms each). Empty = every sequence equals EXPECTED.
-EXPECTED_HOST = {}
+EXPECTED_HOST = {
+    # P60 (U2385): T6 under --host (the bare host's user32 10.0.19041.6926 / gdi32full / ntdll): 368 services = the guest's 369 without the
+    # NtAllocateVirtualMemory at position 272 (the guest's run makes one more NtAllocateVirtualMemory during user32's start; the host
+    # build's DLLs need one fewer - observed in the emulated runs, not analysed further); the bare host's native exit status 36H
+    # (hostref_bare_host.txt) confirms the run
+    'T6': EXPECTED['T6'][:272] + EXPECTED['T6'][273:],
+}
 # P57 (U2382): the MEASUREMENT GAPS of the bare host - a test PE whose start needs a measurement of the host's builds that does not exist yet:
 # under --env bare_host it must stop LOUDLY with this text (emu-oep exit 4; --HLE: reported) instead of passing; the gap is listed, not hidden
-HOST_GAPS = {'T6': ('NtGdiInit: PEB KernelCallbackTable', 'user32 10.0.19041.6926 of the bare host - the callback numbers / offsets are those of '
-                    'user32 10.0.19044.7807 (tm_u32 refused on the host); queued task 3')}
+# P60 (USER DECISION 2026-10-30, P60 step 2): T6's gap closed - the user32 model knows the bare host's 10.0.19041.6926 (nt_kernel_win32k.cpp
+# u32_builds, from the host's u32 measurement of host_u32_ref_v1 and the public symbols); T6 must now pass under --host like the others
+HOST_GAPS = {}
 STATUS = {'T2': 0x2B, 'T3': 0x2E, 'T5': 0x2F, 'T6': 0x36, 'T7': 0x1F343A34, 'T8': 0x1C007FFF, 'T9': 0x3900007F, 'T10': 0x3A000100}
 # P41: the registry items the start of a process without a console asks (capture_sysdlls.py --reg / --reg-value; local, never committed)
 P41_REGISTRY = [

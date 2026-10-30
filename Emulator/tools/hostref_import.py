@@ -8,13 +8,19 @@ r"""hostref_import.py (P57 queued task 1, ledger U2381): the bare-host native re
 Screened before writing (exit 1, nothing written): nt_measured.py's identifier screen (no SID string, no DESKTOP- name, no \Users\ path, no
 drive path, no hex number of 9 .. 16 digits outside the allowed constants) and no line naming the package / staging folders. The registry
 subset is NOT written here (it stays local: capture\sysdlls\bare_host\registry.txt).
-usage: python -I -X utf8 hostref_import.py RUN_DIR REPO_ROOT"""
+P60 (USER DECISION 2026-10-30, P60 step 1; --merge): a run of a ONE-CASE host package (host_u32_ref_v1: refs.tsv holds tm_nt.u32 only)
+REPLACES the lines of exactly its case(s) in the existing nt_measured_bare_host.txt (in place, the other cases unchanged) and adds a header
+line naming that run; hostref_bare_host.txt is not written (such a package has no test-PE statuses). Same screen; same refusals.
+usage: python -I -X utf8 hostref_import.py RUN_DIR REPO_ROOT [--merge]"""
 import importlib.util
 import os
 import re
 import sys
 
 run, root = sys.argv[1], sys.argv[2]
+merge = sys.argv[3:] == ['--merge']   # P60
+if len(sys.argv) not in (3, 4) or (len(sys.argv) == 4 and not merge):
+    sys.exit(__doc__.strip().splitlines()[-1])
 HERE = os.path.dirname(os.path.abspath(__file__))
 spec = importlib.util.spec_from_file_location('ntm', os.path.join(HERE, 'nt_measured.py'))
 ntm = importlib.util.module_from_spec(spec)
@@ -62,7 +68,7 @@ for r in refs:
 # the screen
 allowed = getattr(ntm, 'ALLOWED_HEX', set())
 for l in ntm_lines + [t for v in text.values() for t in v]:
-    for rx in (r'S-1-5-21-', r'(?i)DESKTOP-[A-Z0-9]{4}', r'(?i)\\Users\\', r'(?i)\b[A-Z]:\\', r'(?i)programdata', r'(?i)host_reg_ref'):
+    for rx in (r'S-1-5-21-', r'(?i)DESKTOP-[A-Z0-9]{4}', r'(?i)\\Users\\', r'(?i)\b[A-Z]:\\', r'(?i)programdata', r'(?i)host_[a-z0-9]+_ref'):
         if re.search(rx, l):
             bad.append('identifier screen (%s): %s' % (rx, l[:60]))
     for h in re.findall(r'\b[0-9A-Fa-f]{9,16}\b', l):
@@ -75,6 +81,34 @@ if bad:
     for b in bad[:20]:
         print('FAIL', b)
     sys.exit(1)
+if merge:   # P60: replace the run's case(s) in place
+    if not cases or status or tx:
+        sys.exit('REFUSED: --merge takes a run of tm_nt case(s) only (cases %s, statuses %d, TX %d)' % (cases, len(status), len(tx)))
+    path = os.path.join(root, 'Emulator', 'data', 'nt_measured_bare_host.txt')
+    old = open(path, encoding='ascii').read().replace('\r\n', '\n').rstrip('\n').split('\n')
+    ohead = [l for l in old if l.startswith('#')]
+    obody = [l for l in old if not l.startswith('#')]
+    isc = lambda l, c: re.match(r'tm_nt %s\d*(\.|:)' % re.escape(c), l) is not None
+    out, done = [], set()
+    for l in obody:
+        c = next((c for c in cases if isc(l, c)), None)
+        if c is None:
+            out.append(l)
+        elif c not in done:
+            out += [x for x in ntm_lines if isc(x, c)]
+            done.add(c)
+    for c in cases:
+        if c not in done:
+            out += [x for x in ntm_lines if isc(x, c)]
+    pkg = man.get('package', '?').split()
+    ohead = [l for l in ohead if not any(l.startswith('# Case %s ' % c) for c in cases)]
+    ohead += ['# Case %s (%d lines): from the host package %s (tm_nt + tm_u32 of %s), run by the user on %s (Windows %s.%s); merged by hostref_import.py --merge (P60).' % (
+        c, len([x for x in ntm_lines if isc(x, c)]), pkg[0] if pkg else '?', pkg[-1][:8] if pkg else '?', man.get('captured', '?'), man.get('os_build'), man.get('os_ubr')) for c in cases]
+    with open(path, 'w', encoding='ascii', newline='\r\n') as f:
+        f.write('\n'.join(ohead + out) + '\n')
+    print('nt_measured_bare_host.txt: case(s) %s replaced in place (%d lines; was %d); %d lines in all; hostref_bare_host.txt not written' % (
+        ', '.join(cases), len(ntm_lines), sum(1 for l in obody if any(isc(l, c) for c in cases)), len(out)))
+    sys.exit(0)
 hdr = ['# BARE-HOST native measurements of our own test PE tm_nt (the measured-service model, decision 3.0.7), environment bare_host: the',
        '# i5-13600K host, Windows 10 build %s.%s (the bare-host DLL capture capture\\sysdlls\\bare_host: the same ntdll.dll, SHA-256 %s...).' % (
            man.get('os_build'), man.get('os_ubr'), man.get('ntdll_sha256', '')[:16]),
