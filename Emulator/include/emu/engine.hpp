@@ -105,6 +105,19 @@ namespace emu
 		// profile once guest code ran)
 		uc_err install_cpuid_profile( const std::vector<uc_x86_cpuid>& leaves );
 
+		// P57 (U2374): per-logical-processor CPUID - the profile's cpuid_lp table (loaded at open for --host / --guest when the data file
+		// exists; an explicit cpuid_file has none). select_lp( N ): the emulated thread now runs on LP N - its APIC ID through the fork's
+		// UC_CTL_X86_APIC_ID (01H EBX[31:24], 0BH / 1FH EDX: x86_apic_cpuid_fixup) and its other rows through a UC_X86_INS_CPUID hook (the
+		// row's four registers, IA32_BIOS_SIGN_ID as the executed CPUID deposits it); false with the reason. Nothing changes until it is called.
+		const cpuid_lp_table& lp_table() const { return lp_; }
+		bool select_lp( unsigned lp, std::string& error );
+		int current_lp() const { return cur_lp_; }
+		struct lp_hook_state
+		{
+			const std::vector<cpuid_lp_row>* rows = nullptr;
+			uint64_t bios_sign_id = 0;   // the profile's microcode revision << 32 (0 = none: nothing deposited)
+		};
+
 		// U2092: BACKING (optional) = an emulator-owned host buffer of SIZE bytes (readable / writable, never executable) that holds
 		// the region's bytes (uc_mem_map_ptr): the environment updates it directly (KUSER_SHARED_DATA's time fields at a guest read);
 		// the buffer must outlive the engine
@@ -138,6 +151,10 @@ namespace emu
 		uc_engine* uc_ = nullptr;
 		engine_config cfg_;
 		cpuid_profile profile_;
+		cpuid_lp_table lp_;             // P57 (U2374)
+		int cur_lp_ = -1;
+		bool lp_hooked_ = false;
+		std::unique_ptr<lp_hook_state> lp_state_;
 		std::vector<mapped_region> regions_;   // sorted by base, non-overlapping
 		uint64_t mapped_bytes_ = 0;
 		bool ran_ = false;

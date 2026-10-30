@@ -66,6 +66,7 @@
 # P55 (U2360 / U2361, sample run 18 system call 830): case nqit = NtQueryInformationThread(NtCurrentThread(), 0 ThreadBasicInformation) - relations only (the TEB, the process / thread ids, the process affinity mask), Priority / BasePriority as numbers (scheduling state, no identity); Priority is a VOLATILE item (nt_measured.py VOLATILE[3]: 8 .. 15, measured 9 in 19 of 20 processes, 8 in 1).
 # P56 (U2365 / U2366, sample run 19 system call 831): case nsit = NtSetInformationThread(NtCurrentThread(), 4 ThreadAffinityMask) - every set read back through ThreadBasicInformation, relations to the process affinity mask only (no mask value); constant over 10 processes.
 # P56 (U2369 / U2370, sample run 19 system call 852): case nhfd = NtSetInformationThread(NtCurrentThread(), 11H ThreadHideFromDebugger) and its read-back by NtQueryInformationThread 11H - statuses, lengths and the 0 / 1 state only; constant over 10 processes.
+# P57 (U2375): ahc.46 = the LookupCdb name t11_cpulp.exe (test PE T11, the per-processor CPUID measurement; measured natively).
 tm_nt sat.0: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 330H) -> status C0000225H, ReturnLength 0H, written 0H
 tm_nt sat.1: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 0H) -> status C0000225H, ReturnLength 0H, written 0H
 tm_nt sat.2: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 8H) -> status C0000225H, ReturnLength 0H, written 0H
@@ -511,6 +512,7 @@ tm_nt ahc.42: NtApphelpCacheControl(6 LookupCdb, Name "tx4_xstate.exe", ParamsOu
 tm_nt ahc.43: NtApphelpCacheControl(6 LookupCdb, Name "tx5_peb.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
 tm_nt ahc.44: NtApphelpCacheControl(6 LookupCdb, Name "tx6_align.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
 tm_nt ahc.45: NtApphelpCacheControl(6 LookupCdb, Name "t10_cm.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.46: NtApphelpCacheControl(6 LookupCdb, Name "t11_cpulp.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
 tm_nt vmi.fresh: NtSetInformationVirtualMemory(-1, 4, 1, {a fresh image view's base, 1000H}, &1, 4) -> status C00000BBH
 tm_nt vmi.again: the same call again -> status C00000BBH
 tm_nt vmi.loaded: the same call on this process' kernelbase.dll base -> status C00000BBH

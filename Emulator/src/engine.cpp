@@ -90,6 +90,27 @@ namespace emu
 			e->log_line( "cpuid profile file: " + path + ( cfg.cpuid_file.empty() ? "" : " (explicit file, overrides the choice)" ) + " (" +
 						 std::to_string( e->profile_.file_bytes ) + " bytes, " + std::to_string( e->profile_.leaves.size() ) + " (leaf, sub-leaf) rows, microcode line " +
 						 ( e->profile_.has_microcode ? "present" : "absent" ) + "; values not printed)" );
+			// P57 (U2374): the profile's per-logical-processor table beside it (only for the choice's own file)
+			if ( cfg.cpuid_file.empty() )
+			{
+				const std::string lpn = cpuid_lp_file_name( cfg.profile );
+				const std::filesystem::path lpp = std::filesystem::path( path ).parent_path() / lpn;
+				std::error_code fec;
+				if ( !lpn.empty() && std::filesystem::is_regular_file( lpp, fec ) )
+				{
+					if ( !load_cpuid_lp_file( lpp.string(), e->lp_, error ) )
+					{
+						e->log_line( "REFUSED: " + error );
+						return nullptr;
+					}
+					size_t nr = 0;
+					for ( const auto& r : e->lp_.rows ) nr += r.size();
+					e->log_line( "per-LP CPUID table: " + lpp.string() + " (" + std::to_string( e->lp_.apic.size() ) + " logical processors, the profile's LP " +
+								 std::to_string( e->lp_.start ) + ", " + std::to_string( nr ) + " LP rows; values not printed; applied when the environment selects an LP)" );
+				}
+				else
+					e->log_line( "per-LP CPUID table: none (" + lpp.string() + " absent): every logical processor answers the profile" );
+			}
 		}
 
 		// 2. the engine
@@ -238,6 +259,94 @@ namespace emu
 	{
 		if ( uc_ ) uc_close( uc_ );
 		uc_ = nullptr;
+	}
+
+	// P57 (U2374): the CPUID hook of the per-LP rows - before the instruction (the fork's helper_cpuid runs UC_X86_INS_CPUID hooks first;
+	// returning 1 skips its own lookup): a row of the current LP for (EAX, ECX) answers EAX / EBX / ECX / EDX (zero-extended: 253666-093
+	// Vol2A CPUID p. 3-203 "(EAX, EBX, ECX, EDX) := CPUID_INFO(EAX, ECX)") and deposits IA32_BIOS_SIGN_ID as the executed instruction does
+	// ("IA32_BIOS_SIGN_ID MSR := Update with installed microcode revision number", same page; fork U1471). ECX selects the row only for the
+	// leaves with sub-leaves - the fork's list (cpu.c x86_cpuid_leaf_has_subleaves); otherwise the row of sub-leaf 0 answers any ECX.
+	namespace
+	{
+		bool lp_leaf_has_subleaves( uint32_t leaf )
+		{
+			switch ( leaf )
+			{
+			case 0x4: case 0x7: case 0xb: case 0xd: case 0xf: case 0x10: case 0x12: case 0x14: case 0x17: case 0x18: case 0x1b: case 0x1d: case 0x1e:
+			case 0x1f: case 0x20: case 0x23: case 0x24: case 0x29:
+				return true;
+			default:
+				return false;
+			}
+		}
+
+		int on_lp_cpuid( uc_engine* uc, void* user )
+		{
+			const auto* st = static_cast<const engine::lp_hook_state*>( user );
+			if ( !st || !st->rows || st->rows->empty() ) return 0;
+			uint64_t rax = 0, rcx = 0;
+			uc_reg_read( uc, UC_X86_REG_RAX, &rax );
+			uc_reg_read( uc, UC_X86_REG_RCX, &rcx );
+			const uint32_t leaf = uint32_t( rax ), sub = lp_leaf_has_subleaves( leaf ) ? uint32_t( rcx ) : 0;
+			for ( const auto& r : *st->rows )
+				if ( r.leaf == leaf && r.subleaf == sub )
+				{
+					const int ids[ 4 ] = { UC_X86_REG_RAX, UC_X86_REG_RBX, UC_X86_REG_RCX, UC_X86_REG_RDX };
+					for ( int i = 0; i < 4; i++ )
+					{
+						const uint64_t v = r.r[ i ];
+						uc_reg_write( uc, ids[ i ], &v );
+					}
+					if ( st->bios_sign_id )
+					{
+						uc_x86_msr m{ 0x8B, st->bios_sign_id };
+						uc_reg_write( uc, UC_X86_REG_MSR, &m );
+					}
+					return 1;
+				}
+			return 0;
+		}
+	}
+
+	bool engine::select_lp( unsigned lp, std::string& error )
+	{
+		if ( !lp_.loaded || lp >= lp_.apic.size() )
+		{
+			error = lp_.loaded ? "logical processor " + std::to_string( lp ) + " is not in the per-LP table (" + std::to_string( lp_.apic.size() ) + " LPs)"
+							   : "no per-LP CPUID table for this profile";
+			return false;
+		}
+		const uc_err ue = uc_ctl_set_x86_apic_id( uc_, lp_.apic[ lp ] );
+		if ( ue != UC_ERR_OK )
+		{
+			error = std::string( "UC_CTL_X86_APIC_ID: " ) + uc_strerror( ue );
+			return false;
+		}
+		if ( !lp_state_ )
+		{
+			lp_state_ = std::make_unique<lp_hook_state>();
+			uint32_t rev = 0;
+			int plat = 0;
+			if ( uc_ctl_get_x86_microcode( uc_, &rev, &plat ) == UC_ERR_OK && rev ) lp_state_->bios_sign_id = uint64_t( rev ) << 32;
+		}
+		lp_state_->rows = &lp_.rows[ lp ];
+		bool any = false;
+		for ( const auto& r : lp_.rows ) any = any || !r.empty();
+		if ( any && !lp_hooked_ )
+		{
+			uc_hook h{};
+			if ( uc_hook_add( uc_, &h, UC_HOOK_INSN, (void*)on_lp_cpuid, lp_state_.get(), 1, 0, UC_X86_INS_CPUID ) != UC_ERR_OK )
+			{
+				error = "uc_hook_add (the per-LP CPUID rows) failed";
+				return false;
+			}
+			lp_hooked_ = true;
+		}
+		const int prev = cur_lp_;
+		cur_lp_ = int( lp );
+		log_line( "logical processor " + std::to_string( lp ) + ( prev < 0 ? " selected" : " selected (was " + std::to_string( prev ) + ")" ) + ": APIC ID through UC_CTL_X86_APIC_ID, " +
+				  std::to_string( lp_.rows[ lp ].size() ) + " LP row(s) through the CPUID hook (values not printed)" );
+		return true;
 	}
 
 	uc_err engine::install_cpuid_profile( const std::vector<uc_x86_cpuid>& leaves )

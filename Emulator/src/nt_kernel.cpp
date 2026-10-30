@@ -793,8 +793,23 @@ namespace emu::nt
 			return answered( status::invalid_parameter, "ThreadAffinityMask " + hex( mask ) + ": no processor of the process mask " + hex( pam ) +
 															" - STATUS_INVALID_PARAMETER, the affinity unchanged (measured: tm_nt nsit.4.zero / .outside)" );
 		thread_affinity_ = nm;
+		// P57 (U2374): the logical processor the thread runs on (per-LP CPUID, engine::select_lp): it stays where it is while the new mask
+		// holds that processor; otherwise it moves to the LOWEST processor of the new mask (our choice: Windows picks within the mask - the
+		// processor of a multi-processor mask is not measured; a one-processor mask, as tm_nt / T11 / the sample set, is exact). Measured
+		// natively by test PE T11 (t11_cpulp): pinned to each processor, CPUID answers that processor's APIC ID.
+		std::string lp_note;
+		if ( e_.lp_table().loaded && e_.current_lp() >= 0 && !( ( nm >> unsigned( e_.current_lp() ) ) & 1 ) )
+		{
+			unsigned k = 0;
+			while ( !( ( nm >> k ) & 1 ) ) k++;
+			std::string why;
+			if ( !e_.select_lp( k, why ) ) return stopped( "ThreadAffinityMask " + hex( nm ) + ": the thread cannot move to logical processor " + std::to_string( k ) + ": " + why );
+			lp_note = "; the thread now runs on logical processor " + std::to_string( k );
+		}
+		else if ( e_.current_lp() >= 0 )
+			lp_note = "; the thread stays on logical processor " + std::to_string( e_.current_lp() );
 		return answered( status::success, "ThreadAffinityMask " + hex( mask ) + " AND the process mask " + hex( pam ) + " = " + hex( nm ) +
-											  ": the main thread's affinity (measured: tm_nt nsit.4.*" + std::string( nm != mask ? ", .mixed" : "" ) + ")" );
+											  ": the main thread's affinity (measured: tm_nt nsit.4.*" + std::string( nm != mask ? ", .mixed" : "" ) + ")" + lp_note );
 	}
 
 	// P56 (U2370; sample run 19 system call 852: NtSetInformationThread( NtCurrentThread(), 11H, NULL, 0 ) from the protector right after it

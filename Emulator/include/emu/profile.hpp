@@ -50,6 +50,31 @@ namespace emu
 	// what the choice is, for the verbose log (no value)
 	const char* profile_description( cpu_profile_choice choice );
 
+	// P57 (U2374): the PER-LOGICAL-PROCESSOR CPUID table of a profile - Emulator\data\cpuid_lp_<profile name without "cpuid_">, written by
+	// Emulator\tools\gen_cpuid_lp.py from the capture's raw per-LP rows (each logical processor pinned). Lines: "start N" (the LP the
+	// profile's rows come from), "lp N apic X" (one per LP, N = 0, 1, ... in order), "row N LEAF SUB EAX EBX ECX EDX" (the profile row as
+	// LP N answers it, only where it differs from the start LP outside the APIC fields); '#' lines are comments. Strict like the profile
+	// parser (bounded, the line number in the error). SDM 253665-093 Vol1 Chapter 21: 01H EBX[31:24] Initial APIC ID (pp. 21-9 / 21-10),
+	// 0BH / 1FH EDX x2APIC ID (pp. 21-39 / 21-71), the Domain "Logical Processor" / "Core" fields (04H p. 21-21, 18H p. 21-63, 1AH p. 21-66).
+	struct cpuid_lp_row
+	{
+		uint32_t leaf = 0, subleaf = 0;
+		uint32_t r[ 4 ] = {};   // EAX, EBX, ECX, EDX
+	};
+	struct cpuid_lp_table
+	{
+		bool loaded = false;
+		unsigned start = 0;
+		std::vector<uint32_t> apic;                    // by LP number: its APIC ID (01H EBX[31:24] = the low 8 bits, 0BH / 1FH EDX = all 32)
+		std::vector<std::vector<cpuid_lp_row>> rows;   // by LP number
+		std::string path;
+		uint64_t file_bytes = 0;
+	};
+	bool parse_cpuid_lp_table( std::string_view text, cpuid_lp_table& out, std::string& error );
+	bool load_cpuid_lp_file( const std::string& path, cpuid_lp_table& out, std::string& error );
+	// the per-LP file of a choice ("cpuid_lp_i5-13600k_bare_host.txt" ...), "" for --max / --cpuid-runtime
+	std::string cpuid_lp_file_name( cpu_profile_choice choice );
+
 	// Emulator\data of the repository the running executable belongs to: the executables live in build\x64\<cfg>\tests
 	// (emu-oep, emu-snippet, emu-selftest, like emu-alltest), so the folder is <exe dir>\..\..\..\..\Emulator\data;
 	// false when it does not exist

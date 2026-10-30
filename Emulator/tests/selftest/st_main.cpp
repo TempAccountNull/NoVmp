@@ -39,6 +39,7 @@
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <set>   // P57 (U2376)
 #include <sstream>
 #include <string>
 #include <vector>
@@ -312,6 +313,90 @@ namespace
 
 	void t_engine_profile_host() { check_profile_leaves( emu::cpu_profile_choice::host ); }
 	void t_engine_profile_guest() { check_profile_leaves( emu::cpu_profile_choice::guest ); }
+
+	// P57 (U2376): per-logical-processor CPUID (engine::select_lp, Emulator\data\cpuid_lp_*.txt): for every LP of the --host and --guest
+	// tables, CPUID of every profile row executed by the engine = the profile row with that LP's APIC ID (01H EBX[31:24], 0BH / 1FH EDX of a
+	// non-zero row: the fork's x86_apic_cpuid_fixup) and that LP's rows (the CPUID hook), the CR4 bits as above; the APIC IDs are distinct;
+	// a hooked row deposits IA32_BIOS_SIGN_ID = the profile's revision << 32 (253666-093 Vol2A CPUID p. 3-203 Operation). The table parser
+	// refuses malformed input. No CPUID value is printed (only counts).
+	void check_per_lp( emu::cpu_profile_choice p )
+	{
+		auto e = open_engine( p );
+		if ( !e ) return;
+		const auto& t = e->lp_table();
+		CHECK( t.loaded && t.apic.size() >= 2 && t.start < t.apic.size(), std::string( "the per-LP table of " ) + emu::name_of( p ) + " is loaded" );
+		if ( !t.loaded || !put_code( *e, { 0x0F, 0xA2 } ) ) return;
+		const auto& rows = e->profile().leaves;
+		std::set<uint32_t> ids( t.apic.begin(), t.apic.end() );
+		CHECK( ids.size() == t.apic.size(), "the APIC IDs of the table are distinct" );
+		size_t checked = 0, bad = 0, hooked = 0, sign_ok = 0;
+		std::string err;
+		for ( unsigned lp = 0; lp < t.apic.size(); lp++ )
+		{
+			CHECK( e->select_lp( lp, err ) && e->current_lp() == int( lp ), "select_lp " + std::to_string( lp ) + ": " + err );
+			const uint64_t cr4 = get64( *e, UC_X86_REG_CR4 );
+			for ( const auto& r : rows )
+			{
+				uint32_t want[ 4 ] = { r.eax, r.ebx, r.ecx, r.edx };
+				bool from_row = false;
+				for ( const auto& o : t.rows[ lp ] )
+					if ( o.leaf == r.leaf && o.subleaf == r.subleaf )
+					{
+						for ( int k = 0; k < 4; k++ ) want[ k ] = o.r[ k ];
+						from_row = true;
+					}
+				if ( !from_row )
+				{
+					if ( r.leaf == 1 && r.subleaf == 0 ) want[ 1 ] = ( want[ 1 ] & 0x00FFFFFFu ) | ( ( t.apic[ lp ] & 0xFFu ) << 24 );
+					if ( ( r.leaf == 0xB || r.leaf == 0x1F ) && ( want[ 0 ] | want[ 1 ] | want[ 2 ] | want[ 3 ] ) ) want[ 3 ] = t.apic[ lp ];
+					if ( r.leaf == 1 && r.subleaf == 0 ) want[ 2 ] = ( want[ 2 ] & ~( 1u << 27 ) ) | ( ( cr4 >> 18 ) & 1 ? 1u << 27 : 0 );
+					if ( r.leaf == 7 && r.subleaf == 0 ) want[ 2 ] = ( want[ 2 ] & ~( 1u << 4 ) ) | ( ( cr4 >> 22 ) & 1 ? 1u << 4 : 0 );
+				}
+				set64( *e, UC_X86_REG_RAX, r.leaf );
+				set64( *e, UC_X86_REG_RCX, r.subleaf );
+				const uint64_t sentinel = 0xFFFFFFFF00000000ull;
+				uc_x86_msr m{ 0x8B, 0 };
+				uc_reg_write( e->handle(), UC_X86_REG_MSR, &m );
+				set64( *e, UC_X86_REG_RBX, sentinel );
+				set64( *e, UC_X86_REG_RDX, sentinel );
+				const uc_err ue = e->emulate( st_code, st_code + 2, 1 );
+				const uint64_t got[ 4 ] = { get64( *e, UC_X86_REG_RAX ), get64( *e, UC_X86_REG_RBX ), get64( *e, UC_X86_REG_RCX ), get64( *e, UC_X86_REG_RDX ) };
+				bool ok = ue == UC_ERR_OK;
+				for ( int k = 0; k < 4; k++ ) ok = ok && got[ k ] == want[ k ];   // zero-extended: the upper halves cleared
+				checked++;
+				if ( !ok && bad++ < 8 )
+					std::cout << "  LP " << lp << " leaf " << std::hex << r.leaf << "." << r.subleaf << std::dec << ( from_row ? " (LP row)" : "" ) << " differs\n";
+				if ( from_row )
+				{
+					hooked++;
+					uc_reg_read( e->handle(), UC_X86_REG_MSR, &m );
+					sign_ok += e->profile().has_microcode ? m.value == ( uint64_t( e->profile().microcode_rev ) << 32 ) : true;
+				}
+			}
+		}
+		std::cout << "  " << emu::name_of( p ) << ": " << t.apic.size() << " LPs, " << checked << " CPUID executions, " << hooked << " from LP rows, " << bad << " differing\n";
+		CHECK( bad == 0 && checked == rows.size() * t.apic.size(), "every row on every LP = the profile + the LP's APIC ID / rows" );
+		CHECK( sign_ok == hooked, "a hooked CPUID deposits IA32_BIOS_SIGN_ID" );
+		CHECK( !e->select_lp( unsigned( t.apic.size() ), err ), "an LP outside the table: refused" );
+	}
+	void t_engine_cpuid_per_lp()
+	{
+		check_per_lp( emu::cpu_profile_choice::guest );
+		check_per_lp( emu::cpu_profile_choice::host );
+		emu::cpuid_lp_table t;
+		std::string err;
+		CHECK( emu::parse_cpuid_lp_table( "# c\r\nstart 1\nlp 0 apic 0\nlp 1 apic 8\nrow 1 1A 0 20000001 0 0 0\n", t, err ) && t.apic.size() == 2 && t.start == 1 &&
+				   t.rows[ 1 ].size() == 1 && t.rows[ 1 ][ 0 ].r[ 0 ] == 0x20000001,
+			   "parse: a valid table: " + err );
+		for ( const char* bad : { "lp 0 apic 0\n", "start 0\nlp 1 apic 0\n", "start 0\nlp 0 apic 0\nrow 1 1 0 0 0 0 0\n", "start 2\nlp 0 apic 0\n",
+								  "start 0\nlp 0 apic 0\nrow 0 1 0 0 0 0\n", "start 0\nlp 0 apic 0\nrow 0 1 0 0 0 0 0\nrow 0 1 0 1 1 1 1\n", "start 0\nlp 0 apic G\n",
+								  "start 0\nstart 0\nlp 0 apic 0\n", "start 0\nlp 0 apic 0\nbogus\n" } )
+		{
+			emu::cpuid_lp_table q;
+			std::string why;
+			CHECK( !emu::parse_cpuid_lp_table( bad, q, why ) && !why.empty(), std::string( "parse refused (" ) + why + ")" );
+		}
+	}
 
 	// the profile is installed at uc_open: the fork's reset XCR0 comes from the profile's leaf 0DH only when the profile
 	// was installed before the engine initialised (fork U1530: 7H for both i5-13600K captures, as Windows); --max has none
@@ -4463,6 +4548,7 @@ namespace
 		{ "engine_profile_at_open", t_engine_profile_at_open },
 		{ "engine_profile_host", t_engine_profile_host },
 		{ "engine_profile_guest", t_engine_profile_guest },
+		{ "engine_cpuid_per_lp", t_engine_cpuid_per_lp },   // P57 (U2376)
 		{ "engine_strict_after_first_insn", t_engine_strict_after_first_insn },
 		{ "engine_rng", t_engine_rng },
 		{ "engine_memory_map", t_engine_memory_map },

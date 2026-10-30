@@ -767,6 +767,10 @@ Add-Suite 'win_env_sys_loader' 'emulator win_env' 'py' ( Join-Path $Root 'Emulat
 # anti-debug surface and PEB / TEB relations, #AC) under --Sys --loader (the real ntdll dispatch) and --HLE (win_exception.cpp): the same
 # exit statuses, CPU events and printed observations, equal to the native reference of decision 3.0.7 (detached and on a pipe).
 Add-Suite 'win_env_exceptions' 'emulator win_env' 'py' ( Join-Path $Root 'Emulator\tools\win_env_exceptions.py' ) @( $Root, $T )
+# U2377 (P57 step 4, USER DECISION 2026-10-30 plan 3.M7.a P56 (4)): per-processor CPUID - test PE T11 pinned to each processor
+# (SetThreadAffinityMask) reads that processor's CPUID 01H / 04H / 06H / 0BH / 1AH / 1FH under --guest --Sys --loader = the recorded native
+# reference Emulator\data\t11_cpulp_vmware_guest.txt (+ the live native reference of decision 3.0.7 when the ntdll is the capture's).
+Add-Suite 'win_env_cpulp' 'emulator win_env' 'py' ( Join-Path $Root 'Emulator\tools\win_env_cpulp.py' ) @( $Root, $T )
 # U2051 (coordinator p3sys, plan 3.M5 --Sys, notes\eread\P39_sys_loader.md): the native measurements of the undocumented services of
 # the --Sys loader (Emulator\data\nt_measured_vmware_guest.txt, our own test PE tm_nt; USER DECISION 2026-10-25: phnt prototypes,
 # behaviour measured natively in the VMware guest, decision 3.0.7): the file's shape and identifier screen, and - when the live ntdll is

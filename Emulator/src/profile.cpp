@@ -150,6 +150,108 @@ namespace emu
 		return true;
 	}
 
+	// P57 (U2374): the per-logical-processor table (include/emu/profile.hpp)
+	bool parse_cpuid_lp_table( std::string_view text, cpuid_lp_table& out, std::string& error )
+	{
+		out = cpuid_lp_table{};
+		bool have_start = false;
+		size_t line_no = 0, pos = 0, rows = 0;
+		auto hex32 = []( const std::string& s, uint32_t& v ) {
+			if ( s.empty() || s.size() > 8 ) return false;
+			v = 0;
+			for ( char ch : s )
+			{
+				const int d = ch >= '0' && ch <= '9' ? ch - '0' : ch >= 'a' && ch <= 'f' ? ch - 'a' + 10 : ch >= 'A' && ch <= 'F' ? ch - 'A' + 10 : -1;
+				if ( d < 0 ) return false;
+				v = ( v << 4 ) | uint32_t( d );
+			}
+			return true;
+		};
+		while ( pos <= text.size() )
+		{
+			size_t end = text.find( '\n', pos );
+			if ( end == std::string_view::npos ) end = text.size();
+			std::string line( text.substr( pos, end - pos ) );
+			pos = end + 1;
+			line_no++;
+			if ( !line.empty() && line.back() == '\r' ) line.pop_back();
+			if ( line.empty() || line[ 0 ] == '#' ) continue;
+			std::vector<std::string> f;
+			for ( size_t i = 0; i < line.size(); )
+			{
+				while ( i < line.size() && line[ i ] == ' ' ) i++;
+				size_t j = i;
+				while ( j < line.size() && line[ j ] != ' ' ) j++;
+				if ( j > i ) f.push_back( line.substr( i, j - i ) );
+				i = j;
+			}
+			auto fail = [ & ]( const std::string& why ) {
+				error = "line " + std::to_string( line_no ) + ": " + why;
+				return false;
+			};
+			if ( f.size() == 2 && f[ 0 ] == "start" )
+			{
+				if ( have_start || f[ 1 ].empty() || f[ 1 ].size() > 3 || f[ 1 ].find_first_not_of( "0123456789" ) != std::string::npos || std::stoul( f[ 1 ] ) > 255 )
+					return fail( "\"start N\" (once, N decimal 0 .. 255)" );
+				out.start = std::stoul( f[ 1 ] );
+				have_start = true;
+			}
+			else if ( f.size() == 4 && f[ 0 ] == "lp" && f[ 2 ] == "apic" )
+			{
+				uint32_t id = 0;
+				if ( f[ 1 ].find_first_not_of( "0123456789" ) != std::string::npos || f[ 1 ].size() > 3 || std::stoul( f[ 1 ] ) != out.apic.size() || !hex32( f[ 3 ], id ) )
+					return fail( "\"lp N apic X\": N must be the next LP number (0, 1, ... in order), X hex" );
+				out.apic.push_back( id );
+				out.rows.emplace_back();
+			}
+			else if ( f.size() == 8 && f[ 0 ] == "row" )
+			{
+				if ( f[ 1 ].find_first_not_of( "0123456789" ) != std::string::npos || f[ 1 ].size() > 3 ) return fail( "\"row N ...\": N decimal" );
+				const unsigned lp = std::stoul( f[ 1 ] );
+				if ( lp >= out.apic.size() ) return fail( "row for LP " + f[ 1 ] + " before its \"lp\" line" );
+				cpuid_lp_row r;
+				if ( !hex32( f[ 2 ], r.leaf ) || !hex32( f[ 3 ], r.subleaf ) || !hex32( f[ 4 ], r.r[ 0 ] ) || !hex32( f[ 5 ], r.r[ 1 ] ) || !hex32( f[ 6 ], r.r[ 2 ] ) ||
+					 !hex32( f[ 7 ], r.r[ 3 ] ) )
+					return fail( "\"row N LEAF SUB EAX EBX ECX EDX\" (hex, at most 8 digits)" );
+				for ( const auto& o : out.rows[ lp ] )
+					if ( o.leaf == r.leaf && o.subleaf == r.subleaf ) return fail( "repeated row for LP " + f[ 1 ] );
+				out.rows[ lp ].push_back( r );
+				if ( ++rows > max_profile_rows * 64 ) return fail( "too many rows" );
+			}
+			else
+				return fail( "not a \"start\", \"lp\" or \"row\" line" );
+			if ( out.apic.size() > 256 ) return fail( "more than 256 logical processors" );
+		}
+		if ( !have_start || out.apic.empty() || out.start >= out.apic.size() )
+		{
+			error = "no \"start\" line, no \"lp\" line, or the start LP is not listed";
+			return false;
+		}
+		out.loaded = true;
+		return true;
+	}
+
+	bool load_cpuid_lp_file( const std::string& path, cpuid_lp_table& out, std::string& error )
+	{
+		std::string text;
+		if ( !read_input_file( path, max_profile_bytes, text, error ) ) return false;
+		std::string why;
+		if ( !parse_cpuid_lp_table( text, out, why ) )
+		{
+			error = path + ": " + why;
+			return false;
+		}
+		out.path = path;
+		out.file_bytes = uint64_t( text.size() );
+		return true;
+	}
+
+	std::string cpuid_lp_file_name( cpu_profile_choice choice )
+	{
+		const std::string p = profile_file_name( choice );   // "cpuid_<name>.txt"
+		return p.empty() ? std::string() : "cpuid_lp_" + p.substr( 6 );
+	}
+
 	const char* profile_file_name( cpu_profile_choice choice )
 	{
 		switch ( choice )

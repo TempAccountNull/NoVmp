@@ -1393,7 +1393,8 @@ namespace emu::nt
 												  "bcryptprimitives.dll",   // P47 (U2167): ahc.38 bcrypt loads bcryptprimitives.dll (T9 exploration x8 system call 238)
 												  // P49 (U2245): ahc.39 .. ahc.44 the exception test PEs TX1 - TX6's image names
 												  "tx1_seh.exe", "tx2_veh.exe", "tx3_step.exe", "tx4_xstate.exe", "tx5_peb.exe", "tx6_align.exe",
-												  "t10_cm.exe" };   // p3cm (U2282; first measured by P48 W2 4dafd820; X1' 2026-10-29: ahc.45 - M7 owns ahc.39 .. 44): test PE T10's image name
+												  "t10_cm.exe",   // p3cm (U2282; first measured by P48 W2 4dafd820; X1' 2026-10-29: ahc.45 - M7 owns ahc.39 .. 44): test PE T10's image name
+												  "t11_cpulp.exe" };   // P57 (U2375): ahc.46 test PE T11's image name (measured: tm_nt ahc.46)
 		static const char* const measured80[] = { "msvcrt.dll", "oleaut32.dll", "dwmapi.dll", "setupapi.dll" };
 		uint32_t outv = 0xFFFFFFFF;
 		for ( const char* m : measured0 ) if ( ln == m ) outv = 0;

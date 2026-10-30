@@ -1484,7 +1484,8 @@ static void case_ahc( void )
 											L"bcryptprimitives.dll",   /* P47 (U2167): ahc.38 - bcrypt loads bcryptprimitives.dll (T9 exploration x8 system call 238) */
 											/* P49 (U2245): ahc.39 .. ahc.44 - the exception test PEs TX1 - TX6's image names (their loader's LookupCdb) */
 											L"tx1_seh.exe", L"tx2_veh.exe", L"tx3_step.exe", L"tx4_xstate.exe", L"tx5_peb.exe", L"tx6_align.exe",
-											L"t10_cm.exe" };   /* p3cm (U2282; first measured by P48 W2 4dafd820; X1' 2026-10-29: ahc.45 - M7 owns ahc.39 .. 44): test PE T10's image name (its loader's LookupCdb) */
+											L"t10_cm.exe",   /* p3cm (U2282; first measured by P48 W2 4dafd820; X1' 2026-10-29: ahc.45 - M7 owns ahc.39 .. 44): test PE T10's image name (its loader's LookupCdb) */
+											L"t11_cpulp.exe" };   /* P57 (U2375): ahc.46 - test PE T11's image name (its loader's LookupCdb) */
 	size_t q, k;
 	for ( q = 0; q < sizeof( names ) / sizeof( names[ 0 ] ); q++ )
 	{

@@ -1377,6 +1377,15 @@ namespace emu::win
 		kf.image_file_size = file.size();
 		kf.image_mapped_base = map_.base;
 		kernel_ = std::make_unique<nt::kernel>( *e_, kf );
+		// P57 (U2374): per-logical-processor CPUID - the main thread starts on the logical processor the profile's rows come from (the
+		// profile's own answers stay unchanged there); NtSetInformationThread 4 moves it (nt_kernel.cpp svc_set_thread_affinity)
+		if ( e_->lp_table().loaded )
+		{
+			std::string lerr;
+			if ( !e_->select_lp( e_->lp_table().start, lerr ) ) return refuse( "per-LP CPUID: " + lerr );
+			log_.push_back( "per-LP CPUID: the main thread starts on logical processor " + std::to_string( e_->lp_table().start ) + " of " +
+							std::to_string( e_->lp_table().apic.size() ) + " (the profile's own); NtSetInformationThread 4 moves it" );
+		}
 		hle_ = std::make_unique<hle::module>();
 		start_va_ = map_.entry;
 
