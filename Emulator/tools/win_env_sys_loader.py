@@ -33,9 +33,13 @@ by it; the system DLLs are mapped as data and run only in emulation):
   - P46 (U2144): T8 (t8_pii, a console program linked WITHOUT /DYNAMICBASE, started detached) asks NtQueryInformationProcess 25H
     ProcessImageInformation (sample run 10's stop) three times and encodes every field's relation to its own PE header: 1C007FFFH natively
     (DETACHED), under --Sys (213 services) and under --HLE (ntdll's NtQueryInformationProcess = the kernel layer)
-A changed service sequence fails this suite (a newly answered or changed service must update EXPECTED and the notes). Exit 0 = PASS,
-1 = FAIL, 2 = usage.
-usage: python -I win_env_sys_loader.py REPO_ROOT TESTS_DIR
+A changed service sequence fails this suite (a newly answered or changed service must update EXPECTED and the notes).
+P57 queued task 2 (ledger U2382): --env bare_host runs T2 - T10 under --host --Sys --loader / --HLE with the BARE-HOST capture
+(capture\sysdlls\bare_host: the host's DLLs, its registry subset from host_reg_ref_v2) against the bare host's native exit statuses
+(Emulator/data/hostref_bare_host.txt; T3's copy carries the host ntdll's service number); the service sequences are those of EXPECTED_HOST
+when given for a test PE, else EXPECTED (the guest's) - a difference is reported with its first position; the native reference applies only
+on the bare host. Exit 0 = PASS, 1 = FAIL, 2 = usage.
+usage: python -I win_env_sys_loader.py REPO_ROOT TESTS_DIR [--env vmware_guest|bare_host]
 """
 import hashlib
 import importlib.util
@@ -369,6 +373,13 @@ EXPECTED = {
            'NtAllocateVirtualMemory NtAllocateVirtualMemory NtSetEvent NtSetInformationWorkerFactory NtSetEvent NtTestAlert NtContinue '
            'NtTerminateProcess NtClose NtClose NtClose NtClose NtClose NtQueryWnfStateData NtTerminateProcess ').split(),
 }
+# P57 (U2382): the service sequences under --env bare_host where they differ from EXPECTED (recorded from the emulated --host run, as EXPECTED was
+# recorded from the emulated --guest runs; the test PE's native exit status on the bare host confirms each). Empty = every sequence equals EXPECTED.
+EXPECTED_HOST = {}
+# P57 (U2382): the MEASUREMENT GAPS of the bare host - a test PE whose start needs a measurement of the host's builds that does not exist yet:
+# under --env bare_host it must stop LOUDLY with this text (emu-oep exit 4; --HLE: reported) instead of passing; the gap is listed, not hidden
+HOST_GAPS = {'T6': ('NtGdiInit: PEB KernelCallbackTable', 'user32 10.0.19041.6926 of the bare host - the callback numbers / offsets are those of '
+                    'user32 10.0.19044.7807 (tm_u32 refused on the host); queued task 3')}
 STATUS = {'T2': 0x2B, 'T3': 0x2E, 'T5': 0x2F, 'T6': 0x36, 'T7': 0x1F343A34, 'T8': 0x1C007FFF, 'T9': 0x3900007F, 'T10': 0x3A000100}
 # P41: the registry items the start of a process without a console asks (capture_sysdlls.py --reg / --reg-value; local, never committed)
 P41_REGISTRY = [
@@ -406,10 +417,22 @@ def say(msg):
 
 
 def main(argv):
-    if len(argv) != 2:
+    env = 'vmware_guest'
+    if len(argv) == 4 and argv[2] == '--env' and argv[3] in ('vmware_guest', 'bare_host'):
+        env = argv[3]
+    elif len(argv) != 2:
         print(__doc__.strip().splitlines()[-1])
         return 2
     root, tests = os.path.abspath(argv[0]), os.path.abspath(argv[1])
+    flag = '--guest' if env == 'vmware_guest' else '--host'
+    STATUS_ENV = dict(STATUS)
+    EXPECTED_ENV = dict(EXPECTED)
+    if env == 'bare_host':   # P57 (U2382): the bare host's native exit statuses (hostref_bare_host.txt) and its recorded sequences
+        for l in open(os.path.join(root, 'Emulator', 'data', 'hostref_bare_host.txt'), encoding='ascii'):
+            f = l.rstrip('\r\n').split(' ', 2)
+            if f[0] == 'status':
+                STATUS_ENV[f[1]] = int(f[2], 16)
+        EXPECTED_ENV.update(EXPECTED_HOST)
     oep = os.path.join(tests, 'emu-oep.exe')
     pe_dir = os.path.join(tests, 'test_pe')
     tm = os.path.join(pe_dir, 'tm_nt.exe')
@@ -426,7 +449,7 @@ def main(argv):
         if not os.path.isfile(p):
             say('FAIL %s missing (build.cmd first)' % p)
             return 1
-    cap = T1H.capture_dir(root, 'vmware_guest')
+    cap = T1H.capture_dir(root, env)
     man = T1H.manifest(cap) if cap else {}
     reg = open(os.path.join(cap, 'registry.txt'), encoding='ascii').read().lower().splitlines() if cap and os.path.isfile(os.path.join(cap, 'registry.txt')) else []
     check(cap and all('file_' + n in man for n in ('kernel32.dll', 'kernelbase.dll', 'apisetschema.dll', 'locale.nls')) and 'nls_case' in man and
@@ -440,15 +463,24 @@ def main(argv):
                  'T3: the marker once, unpatched; NtTerminateProcess in the capture\'s ntdll'):
         return 1
     struct.pack_into('<I', img, at + 8, nums['NtTerminateProcess'])
-    sub = os.path.join(pe_dir, 'sysloader')
+    sub = os.path.join(pe_dir, 'sysloader' if env == 'vmware_guest' else 'sysloader_' + env)
     os.makedirs(sub, exist_ok=True)
     t3p = os.path.join(sub, 't3_tls.vmware_guest.exe')
     open(t3p, 'wb').write(bytes(img))
-    rc, out = T1H.run([oep, '--guest', '--Sys', t2])
+    rc, out = T1H.run([oep, flag, '--Sys', t2])
     check(rc == 3 and any(l.startswith('[emu-oep] error: --Sys:') and 'LdrInitializeThunk' in l for l in out), 'T2 --Sys without --loader: refused, exit 3')
-    outdir = os.path.join(tests, 'sysloader_out')
+    outdir = os.path.join(tests, 'sysloader_out' if env == 'vmware_guest' else 'sysloader_out_' + env)
     status = {}
     for tag, path in (('T2', t2), ('T3', t3p), ('T5', t5), ('T6', t6), ('T7', t7), ('T8', t8), ('T9', t9), ('T10', t10)):
+        if env == 'bare_host' and tag in HOST_GAPS:   # P57 (U2382): a listed measurement gap - a loud stop with its reason, nothing else checked
+            od = os.path.join(outdir, tag.lower() + '_sys')
+            os.makedirs(od, exist_ok=True)
+            rc, out = T1H.run([oep, flag, '--Sys', '--loader', '--out-dir', od, path])
+            stop = [l for l in out if l.startswith('[emu-oep] stop: ')]
+            check(rc == 4 and len(stop) == 1 and HOST_GAPS[tag][0] in stop[0],
+                  '%s --host: MEASUREMENT GAP (listed) - a loud stop "%s..." (emu-oep exit 4, got %d): %s' % (tag, HOST_GAPS[tag][0], rc, HOST_GAPS[tag][1]))
+            status[tag] = None
+            continue
         od = os.path.join(outdir, tag.lower() + '_sys')
         os.makedirs(od, exist_ok=True)
         cf = os.path.join(od, 'console_capture.txt')
@@ -457,7 +489,7 @@ def main(argv):
         ff = os.path.join(od, 'fs_access.txt')   # P45 (U2128)
         if os.path.isfile(ff):
             os.remove(ff)   # this suite's own output file of an earlier run
-        rc, out = T1H.run([oep, '--guest', '--Sys', '--loader', '--counters', '--out-dir', od, path])
+        rc, out = T1H.run([oep, flag, '--Sys', '--loader', '--counters', '--out-dir', od, path])
         obs = T1H.observable(out)
         check(any('env: NLS view at ' in l for l in obs) and any('env: API set schema view at ' in l and 'schema version 6' in l for l in obs) and
               any('env: --Sys loader start: CONTEXT at ' in l and 'RDX = the ntdll base' in l for l in obs) and
@@ -466,12 +498,12 @@ def main(argv):
         sc = [l for l in obs if re.match(r'\[emu-oep\] observable: syscall \d+: ', l) and ' number ' in l]
         names = [re.match(r'\[emu-oep\] observable: syscall \d+: (\S+) ', l).group(1) for l in sc]
         answered = [(' -> status ' in l) or ('process terminated' in l) or ('-> continue at the CONTEXT' in l) or ('-> callback into user mode: ' in l) for l in sc]   # P44: + a callback
-        first_bad = next((i for i, (a, b) in enumerate(zip(names, EXPECTED[tag])) if a != b), None)
-        check(names == EXPECTED[tag] and all(answered), '%s: the %d services in the recorded order, every one answered (got %d; first difference at %s)' %
-              (tag, len(EXPECTED[tag]), len(names), first_bad))
+        first_bad = next((i for i, (a, b) in enumerate(zip(names, EXPECTED_ENV[tag])) if a != b), None)
+        check(names == EXPECTED_ENV[tag] and all(answered), '%s: the %d services in the recorded order, every one answered (got %d; first difference at %s)' %
+              (tag, len(EXPECTED_ENV[tag]), len(names), first_bad))
         st = [l for l in obs if l.startswith('[emu-oep] observable: exit status: ')]
         status[tag] = int(st[0].split(': ', 2)[2].split()[0], 16) if len(st) == 1 else None
-        check(rc == 0 and status[tag] == STATUS[tag], '%s --Sys --loader: PASS - the guest exit status %02XH (got %s), emu-oep exit 0 (got %d)' % (tag, STATUS[tag], status[tag], rc))
+        check(rc == 0 and status[tag] == STATUS_ENV[tag], '%s --Sys --loader: PASS - the guest exit status %02XH (got %s), emu-oep exit 0 (got %d)' % (tag, STATUS_ENV[tag], status[tag], rc))
         check(any('forwarded to the host: 0 (no such path exists)' in l for l in obs), '%s: nothing forwarded to the host' % tag)
         reads = [l for l in out if l.startswith('[emu-oep] probe: read ')]
         check(any('PEB.AnsiCodePageData' in l for l in reads) and any('PEB.UnicodeCaseTableData' in l for l in reads) and any('PARAMS.ImagePathName' in l for l in reads),
@@ -516,15 +548,18 @@ def main(argv):
             check(not os.path.isfile(cf) and any('console capture: 0 output attempt(s)' in l for l in out), '%s --Sys: no output attempt, no capture file' % tag)
     # --HLE: the same observable result
     for tag, path in (('T2', t2), ('T3', t3p), ('T5', t5), ('T6', t6), ('T7', t7), ('T8', t8), ('T9', t9), ('T10', t10)):
+        if env == 'bare_host' and tag in HOST_GAPS:
+            say('%s --HLE --host: skipped (MEASUREMENT GAP, listed: %s)' % (tag, HOST_GAPS[tag][1]))
+            continue
         od = os.path.join(outdir, tag.lower() + '_hle')
         os.makedirs(od, exist_ok=True)
         cf = os.path.join(od, 'console_capture.txt')
         if os.path.isfile(cf):
             os.remove(cf)
-        rc, out = T1H.run([oep, '--guest', '--HLE', '--out-dir', od, path])
+        rc, out = T1H.run([oep, flag, '--HLE', '--out-dir', od, path])
         st = [l for l in out if l.startswith('[emu-oep] observable: exit status: ')]
         h = int(st[0].split(': ', 2)[2].split()[0], 16) if len(st) == 1 else None
-        check(rc == 0 and h == STATUS[tag] and h == status.get(tag), '%s --HLE: the guest exit status %02XH = the --Sys result (got %s)' % (tag, STATUS[tag], h))
+        check(rc == 0 and h == STATUS_ENV[tag] and h == status.get(tag), '%s --HLE: the guest exit status %02XH = the --Sys result (got %s)' % (tag, STATUS_ENV[tag], h))
         if tag == 'T7':
             body = open(os.path.join(od, 'fs_access.txt'), encoding='ascii').read() if os.path.isfile(os.path.join(od, 'fs_access.txt')) else ''
             check(body.count(chr(10)) == 4 and 'C000003AH' in body and body.count('C0000034H') == 2, 'T7 --HLE: fs_access.txt holds T7\'s 3 file-system calls (the ntdll stubs = the kernel layer) with the same answers')
@@ -564,17 +599,19 @@ def main(argv):
                         time.sleep(0.5)
             m = [re.search(r'exit code ([0-9A-F]+)H', l) for l in r.stdout.splitlines() if l.startswith('tm_nt %s: ' % how)]
             code = int(m[0].group(1), 16) if len(m) == 1 and m[0] else None
-            check(r.returncode == 0 and code == STATUS[tag] and code == status.get(tag),
-                  'NATIVE REFERENCE (labelled, decision 3.0.7: our own test PE in the VMware guest, started %s by tm_nt %s): %s exit code %s = the emulated %s'
-                  % ('NORMALLY' if tag == 'T6' else 'DETACHED', how, tag, hex(code) if code is not None else None, hex(STATUS[tag])))
+            check(r.returncode == 0 and code == STATUS_ENV[tag] and code == status.get(tag),
+                  'NATIVE REFERENCE (labelled, decision 3.0.7: our own test PE in the %s, started %s by tm_nt %s): %s exit code %s = the emulated %s'
+                  % (env, 'NORMALLY' if tag == 'T6' else 'DETACHED', how, tag, hex(code) if code is not None else None, hex(STATUS_ENV[tag])))
     else:
-        say('native reference: not applicable here (the live ntdll.dll is not the VMware-guest capture)')
+        say('native reference: not applicable here (the live ntdll.dll is not the %s capture)' % env)
     if fails:
         say('FAIL (%d problem(s))' % len(fails))
         return 1
     say('PASS: T2 / T3 / T5 / T6 / T7 / T8 / T9 / T10 run to their end under --Sys --loader (the real LdrInitializeThunk, %d / %d / %d / %d answered services, the model of a process '
         'started without a console; T6: user32\'s USERSRV connection and GUI start, P44) with the exit status 2BH / 2EH / 2FH / 36H = --HLE = the native '
-        'reference; T5\'s output attempts captured in both modes' % (len(EXPECTED['T2']), len(EXPECTED['T3']), len(EXPECTED['T5']), len(EXPECTED['T6'])))
+        'reference; T5\'s output attempts captured in both modes' % (len(EXPECTED['T2']), len(EXPECTED['T3']), len(EXPECTED['T5']), len(EXPECTED['T6'])) +
+        ('' if env == 'vmware_guest' else ' [--env bare_host: the bare host\'s exit statuses; listed measurement gaps (a loud stop each, not run to the end): %s]' %
+         ', '.join(sorted(HOST_GAPS))))
     return 0
 
 

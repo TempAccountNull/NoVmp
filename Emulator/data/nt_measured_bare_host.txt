@@ -1,0 +1,1011 @@
+# BARE-HOST native measurements of our own test PE tm_nt (the measured-service model, decision 3.0.7), environment bare_host: the
+# i5-13600K host, Windows 10 build 19045.7417 (the bare-host DLL capture capture\sysdlls\bare_host: the same ntdll.dll, SHA-256 e1ff52ee55a24dc0...).
+# Source: the host package host_reg_ref_v2 (tm_nt of 07ff9ec8), run by the user on 2026-10-30T16:20:28; one process per case from a copy in a fresh
+# folder, current directory <SystemRoot> (as nt_measured.py). Placeholders as nt_measured_vmware_guest.txt (<va>, <handle>, <ptr:+XH>,
+# <value:T>, ...). Imported by Emulator/tools/hostref_import.py (P57, ledger U2381). Cases not in that package (newer than it): nqit, nsit, nhfd.
+tm_nt sat.0: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 330H) -> status C0000225H, ReturnLength 0H, written 0H
+tm_nt sat.1: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 0H) -> status C0000225H, ReturnLength 0H, written 0H
+tm_nt sat.2: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 8H) -> status C0000225H, ReturnLength 0H, written 0H
+tm_nt sat.3: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 10H) -> status C0000225H, ReturnLength 0H, written 0H
+tm_nt sat.4: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 18H) -> status C0000225H, ReturnLength 0H, written 0H
+tm_nt sat.5: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 2 name(s), Length 1000H) -> status C0000225H, ReturnLength 0H, written 0H
+tm_nt sat.name0: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 1 name(s), Length 100H) -> status C0000225H, ReturnLength 0H, written 0H
+tm_nt sat.name1: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 1 name(s), Length 100H) -> status C0000225H, ReturnLength 0H, written 0H
+tm_nt sat.none: NtQuerySecurityAttributesToken(NtCurrentProcessToken(), 0 name(s), Length 100H) -> status 00000000H, ReturnLength 68H, written 100H; Version 1, Reserved 0, AttributeCount 1, AttributeV1 <ptr:+10H>; [0] "TSA://ProcUnique" ValueType 2 Flags 41H ValueCount 2 Values <ptr:+58H> <value:2>
+tm_nt qsi.c5: NtQuerySystemInformation(C5H, Length 8H, ReturnLength NULL) -> status 00000000H, ReturnLength CCCCCCCCH, written 8H; HypervisorSharedUserVa <va>
+tm_nt qsi.c5r: NtQuerySystemInformation(C5H, Length 8H, ReturnLength set) -> status 00000000H, ReturnLength 8H, written 8H; HypervisorSharedUserVa <va>
+tm_nt qsi.c5.0: NtQuerySystemInformation(C5H, Length 0H, ReturnLength set) -> status C0000004H, ReturnLength 8H, written 0H
+tm_nt qsi.c5.4: NtQuerySystemInformation(C5H, Length 4H, ReturnLength set) -> status C0000004H, ReturnLength 8H, written 0H
+tm_nt qsi.c5.10: NtQuerySystemInformation(C5H, Length 10H, ReturnLength set) -> status 00000000H, ReturnLength 8H, written 8H; HypervisorSharedUserVa <va>
+tm_nt qsi.37: NtQuerySystemInformation(37H, Length 408H, ReturnLength NULL) -> status 00000000H, ReturnLength CCCCCCCCH, written 18H; HighestNodeNumber 0, Reserved CCCCCCCCH; node 0 Mask FFFFFH Group 0 Reserved 0 0 0; non-zero bytes after node 0: 0
+tm_nt qsi.37r: NtQuerySystemInformation(37H, Length 408H, ReturnLength set) -> status 00000000H, ReturnLength 18H, written 18H; HighestNodeNumber 0, Reserved CCCCCCCCH; node 0 Mask FFFFFH Group 0 Reserved 0 0 0; non-zero bytes after node 0: 0
+tm_nt qsi.37.0: NtQuerySystemInformation(37H, Length 0H, ReturnLength set) -> status C0000004H, ReturnLength 4H, written 0H
+tm_nt qsi.37.8: NtQuerySystemInformation(37H, Length 8H, ReturnLength set) -> status 00000000H, ReturnLength 4H, written 4H; HighestNodeNumber 0, Reserved CCCCCCCCH; non-zero bytes after node 0: 0
+tm_nt qsi.37.18: NtQuerySystemInformation(37H, Length 18H, ReturnLength set) -> status 00000000H, ReturnLength 18H, written 18H; HighestNodeNumber 0, Reserved CCCCCCCCH; node 0 Mask FFFFFH Group 0 Reserved 0 0 0; non-zero bytes after node 0: 0
+tm_nt qsi.37.410: NtQuerySystemInformation(37H, Length 410H, ReturnLength set) -> status 00000000H, ReturnLength 18H, written 18H; HighestNodeNumber 0, Reserved CCCCCCCCH; node 0 Mask FFFFFH Group 0 Reserved 0 0 0; non-zero bytes after node 0: 0
+tm_nt qsi.37.4: NtQuerySystemInformation(37H, Length 4H, ReturnLength set) -> status 00000000H, ReturnLength 4H, written 4H; bytes 00 00 00 00
+tm_nt qsi.37.c: NtQuerySystemInformation(37H, Length CH, ReturnLength set) -> status 00000000H, ReturnLength 4H, written 4H; HighestNodeNumber 0, Reserved CCCCCCCCH; non-zero bytes after node 0: 0
+tm_nt qsi.37.10: NtQuerySystemInformation(37H, Length 10H, ReturnLength set) -> status 00000000H, ReturnLength 4H, written 4H; HighestNodeNumber 0, Reserved CCCCCCCCH; non-zero bytes after node 0: 0
+tm_nt qsi.37.17: NtQuerySystemInformation(37H, Length 17H, ReturnLength set) -> status 00000000H, ReturnLength 4H, written 4H; HighestNodeNumber 0, Reserved CCCCCCCCH; non-zero bytes after node 0: 0
+tm_nt qsi.c0: NtQuerySystemInformation(C0H, Length 20H, ReturnLength NULL) -> status 00000000H, ReturnLength CCCCCCCCH, written 20H; bytes 07 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+tm_nt qsi.c0r: NtQuerySystemInformation(C0H, Length 20H, ReturnLength set) -> status 00000000H, ReturnLength 20H, written 20H; bytes 07 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+tm_nt qsi.c0.0: NtQuerySystemInformation(C0H, Length 0H, ReturnLength set) -> status C0000004H, ReturnLength 20H, written 0H
+tm_nt qsi.c0.10: NtQuerySystemInformation(C0H, Length 10H, ReturnLength set) -> status C0000004H, ReturnLength 20H, written 0H
+tm_nt qsi.c0.1f: NtQuerySystemInformation(C0H, Length 1FH, ReturnLength set) -> status C0000004H, ReturnLength 20H, written 0H
+tm_nt qsi.c0.28: NtQuerySystemInformation(C0H, Length 28H, ReturnLength set) -> status 00000000H, ReturnLength 20H, written 20H; bytes 07 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+tm_nt qsi.1: NtQuerySystemInformation(1H, Length CH, ReturnLength NULL) -> status 00000000H, ReturnLength CCCCCCCCH, written CH; bytes 09 00 06 00 01 B7 14 00 FF BF 9B BD
+tm_nt qsi.1r: NtQuerySystemInformation(1H, Length CH, ReturnLength set) -> status 00000000H, ReturnLength CH, written CH; bytes 09 00 06 00 01 B7 14 00 FF BF 9B BD
+tm_nt qsi.1.0: NtQuerySystemInformation(1H, Length 0H, ReturnLength set) -> status C0000004H, ReturnLength CH, written 0H
+tm_nt qsi.1.8: NtQuerySystemInformation(1H, Length 8H, ReturnLength set) -> status C0000004H, ReturnLength CH, written 0H
+tm_nt qsi.1.10: NtQuerySystemInformation(1H, Length 10H, ReturnLength set) -> status 00000000H, ReturnLength CH, written CH; bytes 09 00 06 00 01 B7 14 00 FF BF 9B BD
+tm_nt qsi.32: NtQuerySystemInformation(32H, Length 8H, ReturnLength NULL) -> status 00000000H, ReturnLength CCCCCCCCH, written 8H; bytes 00 00 00 00 00 80 FF FF
+tm_nt qsi.32r: NtQuerySystemInformation(32H, Length 8H, ReturnLength set) -> status 00000000H, ReturnLength 8H, written 8H; bytes 00 00 00 00 00 80 FF FF
+tm_nt qsi.32.4: NtQuerySystemInformation(32H, Length 4H, ReturnLength set) -> status C0000004H, ReturnLength 8H, written 0H
+tm_nt qsi.32.10: NtQuerySystemInformation(32H, Length 10H, ReturnLength set) -> status C0000004H, ReturnLength 8H, written 0H
+tm_nt hvp.mbi: NtQueryVirtualMemory(<va>, MemoryBasicInformation) -> status 00000000H, ReturnLength 30H; BaseAddress = the VA, AllocationBase = the VA, AllocationProtect 2H, RegionSize 1000H, State 1000H, Protect 2H, Type 20000H; page offset of the VA 0H
+tm_nt hvp.data: TimeUpdateLock non-zero, +4 0, QpcMultiplier non-zero, QpcBias 0, non-zero bytes in [+18H, page end) 0; KUSER QpcData 0083H
+tm_nt qip.22: NtQueryInformationProcess(NtCurrentProcess(), 22H, Length 4H, ReturnLength NULL) -> status 00000000H, ReturnLength CCCCCCCCH, written 4H; ExecuteFlags DH
+tm_nt qip.22r: NtQueryInformationProcess(NtCurrentProcess(), 22H, Length 4H, ReturnLength set) -> status 00000000H, ReturnLength 4H, written 4H; ExecuteFlags DH
+tm_nt qip.22.8: NtQueryInformationProcess(NtCurrentProcess(), 22H, Length 8H, ReturnLength set) -> status C0000004H, ReturnLength CCCCCCCCH, written 0H
+tm_nt qip.24: NtQueryInformationProcess(NtCurrentProcess(), 24H, Length 4H, ReturnLength NULL) -> status 00000000H, ReturnLength CCCCCCCCH, written 4H; Cookie <non-zero>
+tm_nt qip.24r: NtQueryInformationProcess(NtCurrentProcess(), 24H, Length 4H, ReturnLength set) -> status 00000000H, ReturnLength 4H, written 4H; Cookie <non-zero>
+tm_nt qip.24.8: NtQueryInformationProcess(NtCurrentProcess(), 24H, Length 8H, ReturnLength set) -> status C0000004H, ReturnLength CCCCCCCCH, written 0H
+tm_nt qip.0: NtQueryInformationProcess(NtCurrentProcess(), 0, Length 30H, Size field 0H, ReturnLength set) -> status 00000000H, ReturnLength 30H, last byte written 30H; ExitStatus 103H, PebBaseAddress = the PEB, AffinityMask = the process affinity mask, BasePriority 8H, UniqueProcessId = the process id, InheritedFromUniqueProcessId <non-zero, multiple of 4>, padding after ExitStatus CC CC CC CC, after BasePriority CC CC CC CC
+tm_nt qip.0x: NtQueryInformationProcess(NtCurrentProcess(), 0, Length 40H, Size field 40H, ReturnLength set) -> status 00000000H, ReturnLength 40H, last byte written 3CH; Size unchanged, ExitStatus 103H, PebBaseAddress = the PEB, AffinityMask = the process affinity mask, BasePriority 8H, UniqueProcessId = the process id, InheritedFromUniqueProcessId <non-zero, multiple of 4>, padding after ExitStatus CC CC CC CC, after BasePriority CC CC CC CC, Flags (+38H) 0H, +3CH..+3FH CC CC CC CC
+tm_nt qip.0xr: NtQueryInformationProcess(NtCurrentProcess(), 0, Length 40H, Size field 40H, ReturnLength NULL) -> status 00000000H, ReturnLength CCCCCCCCH, last byte written 3CH; Size unchanged, ExitStatus 103H, PebBaseAddress = the PEB, AffinityMask = the process affinity mask, BasePriority 8H, UniqueProcessId = the process id, InheritedFromUniqueProcessId <non-zero, multiple of 4>, padding after ExitStatus CC CC CC CC, after BasePriority CC CC CC CC, Flags (+38H) 0H, +3CH..+3FH CC CC CC CC
+tm_nt qip.0x.size30: NtQueryInformationProcess(NtCurrentProcess(), 0, Length 40H, Size field 30H, ReturnLength NULL) -> status 00000000H, ReturnLength CCCCCCCCH, last byte written 3CH; Size changed, ExitStatus 103H, PebBaseAddress = the PEB, AffinityMask = the process affinity mask, BasePriority 8H, UniqueProcessId = the process id, InheritedFromUniqueProcessId <non-zero, multiple of 4>, padding after ExitStatus CC CC CC CC, after BasePriority CC CC CC CC, Flags (+38H) 0H, +3CH..+3FH CC CC CC CC
+tm_nt qip.0.38: NtQueryInformationProcess(NtCurrentProcess(), 0, Length 38H, Size field 40H, ReturnLength NULL) -> status C0000004H, ReturnLength CCCCCCCCH, last byte written 8H
+tm_nt qip.0.48: NtQueryInformationProcess(NtCurrentProcess(), 0, Length 48H, Size field 48H, ReturnLength NULL) -> status C0000004H, ReturnLength CCCCCCCCH, last byte written 8H
+tm_nt qip.56: NtQueryInformationProcess(NtCurrentProcess(), 56H, Length B0H, ReturnLength NULL) -> status C0000003H, ReturnLength CCCCCCCCH, written 0H
+tm_nt qip.56r: NtQueryInformationProcess(NtCurrentProcess(), 56H, Length B0H, ReturnLength set) -> status C0000003H, ReturnLength CCCCCCCCH, written 0H
+tm_nt qip.56.0: NtQueryInformationProcess(NtCurrentProcess(), 56H, Length 0H, ReturnLength set) -> status C0000003H, ReturnLength CCCCCCCCH, written 0H
+tm_nt qip.56.8: NtQueryInformationProcess(NtCurrentProcess(), 56H, Length 8H, ReturnLength set) -> status C0000003H, ReturnLength CCCCCCCCH, written 0H
+tm_nt qip.56.100: NtQueryInformationProcess(NtCurrentProcess(), 56H, Length 100H, ReturnLength set) -> status C0000003H, ReturnLength CCCCCCCCH, written 0H
+tm_nt qip.24.same: two queries equal
+tm_nt wcp: NtCreateWaitCompletionPacket(&h, DesiredAccess 1, NULL) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt wcp.close: NtClose(the packet) -> status 00000000H
+tm_nt wcp.all: NtCreateWaitCompletionPacket(&h, DesiredAccess 1F0003H, NULL) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt qsix.6b.0.50: NtQuerySystemInformationEx(6BH, input 0H, Length 50H) -> status C0000004H, ReturnLength 2A0H, written 30H; bytes 00 00 00 00 30 00 00 00 01 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 03 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+tm_nt qsix.6b.0.2000: NtQuerySystemInformationEx(6BH, input 0H, Length 2000H) -> status 00000000H, ReturnLength 2A0H, written 2A0H; bytes 00 00 00 00 30 00 00 00 01 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 03 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 00 00 00 01 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 0C 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 00 00 00 01 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 00 00 00 01 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 C0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 00 00 00 01 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 03 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 00 00 00 01 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 0C 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 10 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 20 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 80 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00 04 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00 08 00 00 00 00 00 00 00 00 00 00 00 00 00
+tm_nt qsix.6b.0.0: NtQuerySystemInformationEx(6BH, input 0H, Length 0H) -> status C0000004H, ReturnLength 2A0H, written 0H
+tm_nt qsix.6b.1.50: NtQuerySystemInformationEx(6BH, input 1H, Length 50H) -> status 00000000H, ReturnLength 30H, written 30H; bytes 01 00 00 00 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 FF FF 0F 00 00 00 00 00 00 00 00 00 00 00 00 00
+tm_nt qsix.6b.1.2000: NtQuerySystemInformationEx(6BH, input 1H, Length 2000H) -> status 00000000H, ReturnLength 30H, written 30H; bytes 01 00 00 00 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 FF FF 0F 00 00 00 00 00 00 00 00 00 00 00 00 00
+tm_nt qsix.6b.1.0: NtQuerySystemInformationEx(6BH, input 1H, Length 0H) -> status C0000004H, ReturnLength 30H, written 0H
+tm_nt qsix.6b.2.50: NtQuerySystemInformationEx(6BH, input 2H, Length 50H) -> status C0000004H, ReturnLength 818H, written 38H; bytes 02 00 00 00 38 00 00 00 01 0C 40 00 00 C0 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 03 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+tm_nt qsix.6b.2.2000: NtQuerySystemInformationEx(6BH, input 2H, Length 2000H) -> status 00000000H, ReturnLength 818H, written 818H; bytes 02 00 00 00 38 00 00 00 01 0C 40 00 00 C0 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 03 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 80 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 03 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 02 10 40 00 00 00 20 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 03 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 03 0C 40 00 00 00 80 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 FF FF 0F 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 0C 40 00 00 C0 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 0C 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 80 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 0C 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 02 10 40 00 00 00 20 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 0C 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 0C 40 00 00 C0 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 80 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 02 10 40 00 00 00 20 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 0C 40 00 00 C0 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 C0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 80 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 C0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 02 10 40 00 00 00 20 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 C0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 0C 40 00 00 C0 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 03 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 80 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 03 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 02 10 40 00 00 00 20 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 03 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 0C 40 00 00 C0 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 0C 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 80 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 0C 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 02 10 40 00 00 00 20 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 0C 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 80 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 10 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 00 01 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 10 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 02 10 40 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 F0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 80 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 20 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 00 01 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 20 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 80 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 00 01 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 80 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 80 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 00 01 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 80 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 80 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 00 01 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 02 10 40 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 0F 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 80 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 00 01 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 80 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 04 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 00 01 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 04 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 80 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 08 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 00 01 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 08 00 00 00 00 00 00 00 00 00 00 00 00 00
+tm_nt qsix.6b.2.0: NtQuerySystemInformationEx(6BH, input 2H, Length 0H) -> status C0000004H, ReturnLength 818H, written 0H
+tm_nt qsix.6b.3.50: NtQuerySystemInformationEx(6BH, input 3H, Length 50H) -> status 00000000H, ReturnLength 30H, written 30H; bytes 03 00 00 00 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 FF FF 0F 00 00 00 00 00 00 00 00 00 00 00 00 00
+tm_nt qsix.6b.3.2000: NtQuerySystemInformationEx(6BH, input 3H, Length 2000H) -> status 00000000H, ReturnLength 30H, written 30H; bytes 03 00 00 00 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 FF FF 0F 00 00 00 00 00 00 00 00 00 00 00 00 00
+tm_nt qsix.6b.3.0: NtQuerySystemInformationEx(6BH, input 3H, Length 0H) -> status C0000004H, ReturnLength 30H, written 0H
+tm_nt qsix.6b.4.50: NtQuerySystemInformationEx(6BH, input 4H, Length 50H) -> status 00000000H, ReturnLength 50H, written 50H; bytes 04 00 00 00 50 00 00 00 01 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 14 14 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 FF FF 0F 00 00 00 00 00
+tm_nt qsix.6b.4.2000: NtQuerySystemInformationEx(6BH, input 4H, Length 2000H) -> status 00000000H, ReturnLength 50H, written 50H; bytes 04 00 00 00 50 00 00 00 01 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 14 14 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 FF FF 0F 00 00 00 00 00
+tm_nt qsix.6b.4.0: NtQuerySystemInformationEx(6BH, input 4H, Length 0H) -> status C0000004H, ReturnLength 50H, written 0H
+tm_nt qsix.6b.7.50: NtQuerySystemInformationEx(6BH, input 7H, Length 50H) -> status C0000001H, ReturnLength 0H, written 0H
+tm_nt qsix.6b.7.2000: NtQuerySystemInformationEx(6BH, input 7H, Length 2000H) -> status C0000001H, ReturnLength 0H, written 0H
+tm_nt qsix.6b.7.0: NtQuerySystemInformationEx(6BH, input 7H, Length 0H) -> status C0000001H, ReturnLength 0H, written 0H
+tm_nt qsix.6b.ffff.50: NtQuerySystemInformationEx(6BH, input FFFFH, Length 50H) -> status C0000004H, ReturnLength B68H, written 30H; bytes 03 00 00 00 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 FF FF 0F 00 00 00 00 00 00 00 00 00 00 00 00 00
+tm_nt qsix.6b.ffff.2000: NtQuerySystemInformationEx(6BH, input FFFFH, Length 2000H) -> status 00000000H, ReturnLength B68H, written B68H; bytes 03 00 00 00 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 FF FF 0F 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 00 00 00 01 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 03 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 0C 40 00 00 C0 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 03 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 80 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 03 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 02 10 40 00 00 00 20 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 03 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 03 0C 40 00 00 00 80 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 FF FF 0F 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 00 00 00 01 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 0C 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 0C 40 00 00 C0 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 0C 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 80 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 0C 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 02 10 40 00 00 00 20 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 0C 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 00 00 00 01 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 0C 40 00 00 C0 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 80 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 02 10 40 00 00 00 20 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 00 00 00 01 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 C0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 0C 40 00 00 C0 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 C0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 80 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 C0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 02 10 40 00 00 00 20 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 C0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 00 00 00 01 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 03 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 0C 40 00 00 C0 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 03 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 80 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 03 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 02 10 40 00 00 00 20 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 03 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 00 00 00 01 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 0C 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 0C 40 00 00 C0 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 0C 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 80 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 0C 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 02 10 40 00 00 00 20 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 0C 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 10 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 80 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 10 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 00 01 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 10 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 02 10 40 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 F0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 20 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 80 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 20 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 00 01 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 20 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 80 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 00 01 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 80 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 80 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 80 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 00 01 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 80 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 80 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 00 01 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 02 10 40 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 0F 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 80 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 00 01 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00 04 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 80 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 04 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 00 01 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 04 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00 08 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 80 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 08 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 38 00 00 00 01 08 40 00 00 00 01 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 08 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 FF FF 0F 00 00 00 00 00 00 00 00 00 00 00 00 00 04 00 00 00 50 00 00 00 01 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 14 14 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 FF FF 0F 00 00 00 00 00
+tm_nt qsix.6b.ffff.0: NtQuerySystemInformationEx(6BH, input FFFFH, Length 0H) -> status C0000004H, ReturnLength B68H, written 0H
+tm_nt iocp.9: NtCreateIoCompletion(&h, DesiredAccess 1F0003H, NULL, Count 9) -> status 00000000H, handle <handle> (non-zero, multiple of 4); NtClose -> 00000000H
+tm_nt iocp.0: NtCreateIoCompletion(&h, DesiredAccess 1F0003H, NULL, Count 0) -> status 00000000H, handle <handle> (non-zero, multiple of 4); NtClose -> 00000000H
+tm_nt iocp.1: NtCreateIoCompletion(&h, DesiredAccess 1F0003H, NULL, Count 1) -> status 00000000H, handle <handle> (non-zero, multiple of 4); NtClose -> 00000000H
+tm_nt iocp.8: NtCreateIoCompletion(&h, DesiredAccess 1F0003H, NULL, Count 8) -> status 00000000H, handle <handle> (non-zero, multiple of 4); NtClose -> 00000000H
+tm_nt wkf.io: NtCreateIoCompletion(Count 9) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt wkf: NtCreateWorkerFactory(&h, F00FFH, NULL, the port, NtCurrentProcess(), start, param, 200H, 100000H, 1000H) -> status 00000000H, handle <handle> (non-zero, multiple of 4), start routine runs 0
+tm_nt wkf.badport: NtCreateWorkerFactory(..., CompletionPortHandle NtCurrentProcess(), ...) -> status C0000024H, handle not written
+tm_nt wkf.800: NtCreateWorkerFactory(&h, F00FFH, NULL, a fresh port, NtCurrentProcess(), start, param, 200H, 800000H, 1000H) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt wkf.runs: start routine runs after 200 ms 0
+tm_nt wkf.close: NtClose(the factory) -> 00000000H
+tm_nt tmr2: NtCreateTimer2(&h, NULL, NULL, Attributes 8, DesiredAccess 100002H) -> status 00000000H, handle <handle> (non-zero, multiple of 4); NtClose -> 00000000H
+tm_nt awcp.timer: NtAssociateWaitCompletionPacket(packet, port, a timer2 (not set), key, apc, 0, 0, &b) -> status 00000000H, AlreadySignaled FALSE
+tm_nt awcp.timer.null: NtAssociateWaitCompletionPacket(packet, port, a timer2 (not set), key, apc, 0, 0, NULL) -> status 00000000H, AlreadySignaled -
+tm_nt awcp.timer.info1: NtAssociateWaitCompletionPacket(packet, port, a timer2 (not set), key, apc, 0, 1, &b) -> status 00000000H, AlreadySignaled FALSE
+tm_nt awcp.event0: NtAssociateWaitCompletionPacket(packet, port, a synchronization event (non-signaled), key, apc, 0, 0, &b) -> status 00000000H, AlreadySignaled FALSE
+tm_nt awcp.event1: NtAssociateWaitCompletionPacket(packet, port, a synchronization event (signaled), key, apc, 0, 0, &b) -> status 00000000H, AlreadySignaled TRUE
+tm_nt awcp.badtarget: NtAssociateWaitCompletionPacket(packet, port, NtCurrentProcess() (a process, non-signaled), key, apc, 0, 0, &b) -> status 00000000H, AlreadySignaled FALSE
+tm_nt swf.5.4.300: NtSetInformationWorkerFactory(factory, class 5, value 300H, Length 4) -> status 00000000H; the start routine has run: no
+tm_nt swf.5.4.200: NtSetInformationWorkerFactory(factory, class 5, value 200H, Length 4) -> status 00000000H; the start routine has run: no
+tm_nt swf.5.4.1: NtSetInformationWorkerFactory(factory, class 5, value 1H, Length 4) -> status 00000000H; the start routine has run: no
+tm_nt swf.5.4.10: NtSetInformationWorkerFactory(factory, class 5, value 10H, Length 4) -> status 00000000H; the start routine has run: no
+tm_nt swf.4.4.0: NtSetInformationWorkerFactory(factory, class 4, value 0H, Length 4) -> status 00000000H; the start routine has run: no
+tm_nt swf.4.4.1: NtSetInformationWorkerFactory(factory, class 4, value 1H, Length 4) -> status 00000000H; the start routine has run: yes
+tm_nt swf.3.4.1: NtSetInformationWorkerFactory(factory, class 3, value 1H, Length 4) -> status 00000000H; the start routine has run: yes
+tm_nt swf.6.4.0: NtSetInformationWorkerFactory(factory, class 6, value 0H, Length 4) -> status C0000002H; the start routine has run: yes
+tm_nt swf.9.4.0: NtSetInformationWorkerFactory(factory, class 9, value 0H, Length 4) -> status C0000001H; the start routine has run: yes
+tm_nt swf.10.4.100000: NtSetInformationWorkerFactory(factory, class 10, value 100000H, Length 4) -> status C0000004H; the start routine has run: yes
+tm_nt swf.11.4.8: NtSetInformationWorkerFactory(factory, class 11, value 8H, Length 4) -> status 00000000H; the start routine has run: yes
+tm_nt swf.12.4.0: NtSetInformationWorkerFactory(factory, class 12, value 0H, Length 4) -> status 00000000H; the start routine has run: yes
+tm_nt swf.13.4.0: NtSetInformationWorkerFactory(factory, class 13, value 0H, Length 4) -> status 00000000H; the start routine has run: yes
+tm_nt swf.14.4.180: NtSetInformationWorkerFactory(factory, class 14, value 180H, Length 4) -> status 00000000H; the start routine has run: yes
+tm_nt swf.14.4.200: NtSetInformationWorkerFactory(factory, class 14, value 200H, Length 4) -> status 00000000H; the start routine has run: yes
+tm_nt swf.0.8.ffffffffff676980: NtSetInformationWorkerFactory(factory, class 0, value FFFFFFFFFF676980H, Length 8) -> status C0000003H; the start routine has run: yes
+tm_nt swf.1.8.ffffffffff676980: NtSetInformationWorkerFactory(factory, class 1, value FFFFFFFFFF676980H, Length 8) -> status C0000003H; the start routine has run: yes
+tm_nt swf.2.8.ffffffffdc3cba00: NtSetInformationWorkerFactory(factory, class 2, value FFFFFFFFDC3CBA00H, Length 8) -> status 00000000H; the start routine has run: yes
+tm_nt swf.5.8.200: NtSetInformationWorkerFactory(factory, class 5, value 200H, Length 8) -> status C0000004H; the start routine has run: yes
+tm_nt swf.5.0.200: NtSetInformationWorkerFactory(factory, class 5, value 200H, Length 0) -> status C0000004H; the start routine has run: yes
+tm_nt swf.13.4.1: NtSetInformationWorkerFactory(factory, class 13, value 1H, Length 4) -> status 00000000H; the start routine has run: yes
+tm_nt swf.2.8.ffffffffee1e5d00: NtSetInformationWorkerFactory(factory, class 2, value FFFFFFFFEE1E5D00H, Length 8) -> status 00000000H; the start routine has run: yes
+tm_nt swf.5.4.3: NtSetInformationWorkerFactory(factory, class 5, value 3H, Length 4) -> status 00000000H; the start routine has run: yes
+tm_nt swf.loader.0: class 5 value 300H -> status 00000000H
+tm_nt swf.loader.1: class 14 value 180H -> status 00000000H
+tm_nt swf.loader.2: class 3 value 1H -> status 00000000H
+tm_nt swf.loader.runs: after the loader's three settings (2 s): the start routine ran no
+tm_nt etw.event: NtTraceControl(1BH, &(ULONG)event handle, 4, NULL, 0, &r) -> status C0000718H, ReturnLength CCCCCCCCH
+tm_nt etw.zero: NtTraceControl(1BH, &(ULONG)0, 4, NULL, 0, &r) -> status C000000DH, ReturnLength CCCCCCCCH
+tm_nt etw.event8: NtTraceControl(1BH, &event handle, 8, NULL, 0, &r) -> status C000000DH, ReturnLength CCCCCCCCH
+tm_nt etw.reg: NtTraceControl(0FH, the loader's A0H bytes (provider 1, LoggerId 1, ReplyCallback NULL), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg.fields: RegType 3, LoggerId 1, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg2: NtTraceControl(0FH, the loader's A0H bytes (provider 2, LoggerId 2, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg2.fields: RegType 3, LoggerId 2, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg2.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg2.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg3: NtTraceControl(0FH, the loader's A0H bytes (provider 3, LoggerId 3, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg3.fields: RegType 3, LoggerId 3, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg3.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg3.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg4: NtTraceControl(0FH, the loader's A0H bytes (provider 4, LoggerId 4, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg4.fields: RegType 3, LoggerId 4, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg4.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg4.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg5: NtTraceControl(0FH, the loader's A0H bytes (provider 5, LoggerId 5, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C +70 +74 +78 +87 +90 +98; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg5.fields: RegType 3, LoggerId 5, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext bytes 01 00 00 00 FF 00 00 00, EnableFilterDesc 41H, EnableCallback bytes 00 00 00 00 00 00 00 A0, EnableCallbackReserved 0H, ProviderTraits 8H, TraitsFlags 1H, HasPayload 0H
+tm_nt etw.reg5.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg5.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg6: NtTraceControl(0FH, the loader's A0H bytes (provider 6, LoggerId 6, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg6.fields: RegType 3, LoggerId 6, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg6.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg6.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg7: NtTraceControl(0FH, the loader's A0H bytes (provider 7, LoggerId 7, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg7.fields: RegType 3, LoggerId 7, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg7.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg7.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg8: NtTraceControl(0FH, the loader's A0H bytes (provider 8, LoggerId 8, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg8.fields: RegType 3, LoggerId 8, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg8.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg8.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg9: NtTraceControl(0FH, the loader's A0H bytes (provider 9, LoggerId 9, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg9.fields: RegType 3, LoggerId 9, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg9.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg9.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg10: NtTraceControl(0FH, the loader's A0H bytes (provider 10, LoggerId 10, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg10.fields: RegType 3, LoggerId 10, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg10.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg10.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg11: NtTraceControl(0FH, the loader's A0H bytes (provider 11, LoggerId 11, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg11.fields: RegType 3, LoggerId 11, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg11.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg11.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg12: NtTraceControl(0FH, the loader's A0H bytes (provider 12, LoggerId 12, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg12.fields: RegType 3, LoggerId 12, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg12.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg12.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg13: NtTraceControl(0FH, the loader's A0H bytes (provider 13, LoggerId 13, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg13.fields: RegType 3, LoggerId 13, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg13.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg13.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg14: NtTraceControl(0FH, the loader's A0H bytes (provider 14, LoggerId 14, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg14.fields: RegType 3, LoggerId 14, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg14.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg14.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg15: NtTraceControl(0FH, the loader's A0H bytes (provider 15, LoggerId 15, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg15.fields: RegType 2, LoggerId 15, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg15.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg15.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg16: NtTraceControl(0FH, the loader's A0H bytes (provider 16, LoggerId 16, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg16.fields: RegType 3, LoggerId 16, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg16.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg16.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg17: NtTraceControl(0FH, the loader's A0H bytes (provider 17, LoggerId 17, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg17.fields: RegType 3, LoggerId 17, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg17.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg17.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg18: NtTraceControl(0FH, the loader's A0H bytes (provider 18, LoggerId 18, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg18.fields: RegType 3, LoggerId 18, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg18.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg18.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg19: NtTraceControl(0FH, the loader's A0H bytes (provider 19, LoggerId 19, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg19.fields: RegType 3, LoggerId 19, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg19.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg19.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg20: NtTraceControl(0FH, the loader's A0H bytes (provider 20, LoggerId 20, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg20.fields: RegType 3, LoggerId 20, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg20.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg20.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg21: NtTraceControl(0FH, the loader's A0H bytes (provider 21, LoggerId 21, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg21.fields: RegType 3, LoggerId 21, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg21.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg21.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg22: NtTraceControl(0FH, the loader's A0H bytes (provider 22, LoggerId 22, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg22.fields: RegType 3, LoggerId 22, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg22.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg22.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg23: NtTraceControl(0FH, the loader's A0H bytes (provider 23, LoggerId 23, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg23.fields: RegType 3, LoggerId 23, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg23.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg23.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg24: NtTraceControl(0FH, the loader's A0H bytes (provider 24, LoggerId 24, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg24.fields: RegType 3, LoggerId 24, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg24.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg24.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg25: NtTraceControl(0FH, the loader's A0H bytes (provider 25, LoggerId 25, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg25.fields: RegType 3, LoggerId 25, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg25.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg25.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg26: NtTraceControl(0FH, the loader's A0H bytes (provider 26, LoggerId 26, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg26.fields: RegType 3, LoggerId 26, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg26.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg26.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg27: NtTraceControl(0FH, the loader's A0H bytes (provider 27, LoggerId 27, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg27.fields: RegType 2, LoggerId 27, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg27.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg27.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg28: NtTraceControl(0FH, the loader's A0H bytes (provider 28, LoggerId 28, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg28.fields: RegType 3, LoggerId 28, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg28.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg28.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg29: NtTraceControl(0FH, the loader's A0H bytes (provider 29, LoggerId 29, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg29.fields: RegType 3, LoggerId 29, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg29.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg29.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg30: NtTraceControl(0FH, the loader's A0H bytes (provider 30, LoggerId 30, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg30.fields: RegType 2, LoggerId 30, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg30.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg30.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg31: NtTraceControl(0FH, the loader's A0H bytes (provider 31, LoggerId 31, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg31.fields: RegType 3, LoggerId 31, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg31.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg31.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg32: NtTraceControl(0FH, the loader's A0H bytes (provider 32, LoggerId 32, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg32.fields: RegType 3, LoggerId 32, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg32.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg32.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg33: NtTraceControl(0FH, the loader's A0H bytes (provider 33, LoggerId 8, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg33.fields: RegType 2, LoggerId 8, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg33.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg33.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg34: NtTraceControl(0FH, the loader's A0H bytes (provider 34, LoggerId 9, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg34.fields: RegType 3, LoggerId 9, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg34.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg34.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg35: NtTraceControl(0FH, the loader's A0H bytes (provider 35, LoggerId 10, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg35.fields: RegType 3, LoggerId 10, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg35.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg35.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg36: NtTraceControl(0FH, the loader's A0H bytes (provider 36, LoggerId 11, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg36.fields: RegType 2, LoggerId 11, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg36.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg36.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg37: NtTraceControl(0FH, the loader's A0H bytes (provider 37, LoggerId 12, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg37.fields: RegType 3, LoggerId 12, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg37.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg37.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg38: NtTraceControl(0FH, the loader's A0H bytes (provider 38, LoggerId 33, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg38.fields: RegType 3, LoggerId 33, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg38.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg38.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg39: NtTraceControl(0FH, the loader's A0H bytes (provider 39, LoggerId 34, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg39.fields: RegType 3, LoggerId 34, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg39.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg39.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg40: NtTraceControl(0FH, the loader's A0H bytes (provider 40, LoggerId 35, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C +70 +74 +78 +87 +90 +98; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg40.fields: RegType 3, LoggerId 35, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext bytes 01 00 00 00 FF 00 00 00, EnableFilterDesc 41H, EnableCallback bytes 00 00 00 00 00 00 00 20, EnableCallbackReserved 0H, ProviderTraits 4H, TraitsFlags 1H, HasPayload 0H
+tm_nt etw.reg40.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg40.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg41: NtTraceControl(0FH, the loader's A0H bytes (provider 41, LoggerId 36, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg41.fields: RegType 3, LoggerId 36, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg41.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg41.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg42: NtTraceControl(0FH, the loader's A0H bytes (provider 42, LoggerId 37, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg42.fields: RegType 3, LoggerId 37, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg42.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg42.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg43: NtTraceControl(0FH, the loader's A0H bytes (provider 43, LoggerId 38, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C +70 +74 +78 +87 +90 +98; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg43.fields: RegType 3, LoggerId 38, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext bytes 01 00 00 00 FF 00 00 00, EnableFilterDesc 41H, EnableCallback bytes 00 00 00 00 00 00 00 40, EnableCallbackReserved 0H, ProviderTraits 8H, TraitsFlags 1H, HasPayload 0H
+tm_nt etw.reg43.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg43.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg44: NtTraceControl(0FH, the loader's A0H bytes (provider 44, LoggerId 39, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg44.fields: RegType 2, LoggerId 39, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg44.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg44.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg45: NtTraceControl(0FH, the loader's A0H bytes (provider 45, LoggerId 40, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg45.fields: RegType 2, LoggerId 40, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg45.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg45.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg46: NtTraceControl(0FH, the loader's A0H bytes (provider 46, LoggerId 41, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg46.fields: RegType 2, LoggerId 41, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg46.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg46.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg47: NtTraceControl(0FH, the loader's A0H bytes (provider 47, LoggerId 42, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg47.fields: RegType 2, LoggerId 42, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg47.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg47.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg48: NtTraceControl(0FH, the loader's A0H bytes (provider 48, LoggerId 43, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg48.fields: RegType 2, LoggerId 43, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg48.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg48.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg49: NtTraceControl(0FH, the loader's A0H bytes (provider 49, LoggerId 44, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg49.fields: RegType 2, LoggerId 44, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg49.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg49.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg50: NtTraceControl(0FH, the loader's A0H bytes (provider 50, LoggerId 45, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C +70 +74 +78 +83 +87 +90 +92 +97 +98; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg50.fields: RegType 3, LoggerId 45, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext bytes 01 00 00 00 FF 00 00 00, EnableFilterDesc 43H, EnableCallback bytes 00 00 00 06 00 00 00 78, EnableCallbackReserved 0H, ProviderTraits bytes 17 00 04 00 00 00 00 06, TraitsFlags 1H, HasPayload 0H
+tm_nt etw.reg50.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg50.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg51: NtTraceControl(0FH, the loader's A0H bytes (provider 51, LoggerId 46, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg51.fields: RegType 3, LoggerId 46, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg51.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg51.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg52: NtTraceControl(0FH, the loader's A0H bytes (provider 52, LoggerId 47, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg52.fields: RegType 3, LoggerId 47, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg52.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg52.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg53: NtTraceControl(0FH, the loader's A0H bytes (provider 53, LoggerId 48, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg53.fields: RegType 3, LoggerId 48, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg53.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg53.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg54: NtTraceControl(0FH, the loader's A0H bytes (provider 54, LoggerId 49, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C +70 +74 +78 +83 +87 +90 +92 +97 +98; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg54.fields: RegType 3, LoggerId 49, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext bytes 01 00 00 00 FF 00 00 00, EnableFilterDesc 43H, EnableCallback bytes 00 00 00 06 00 00 00 78, EnableCallbackReserved 0H, ProviderTraits bytes 17 00 04 00 00 00 00 06, TraitsFlags 1H, HasPayload 0H
+tm_nt etw.reg54.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg54.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg55: NtTraceControl(0FH, the loader's A0H bytes (provider 55, LoggerId 50, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg55.fields: RegType 2, LoggerId 50, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg55.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg55.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg56: NtTraceControl(0FH, the loader's A0H bytes (provider 56, LoggerId 51, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg56.fields: RegType 3, LoggerId 51, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg56.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg56.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg57: NtTraceControl(0FH, the loader's A0H bytes (provider 57, LoggerId 52, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg57.fields: RegType 3, LoggerId 52, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg57.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg57.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg58: NtTraceControl(0FH, the loader's A0H bytes (provider 58, LoggerId 53, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg58.fields: RegType 2, LoggerId 53, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg58.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg58.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg59: NtTraceControl(0FH, the loader's A0H bytes (provider 59, LoggerId 54, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C +70 +74 +78 +79 +80 +87 +90 +92 +94 +98; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg59.fields: RegType 3, LoggerId 54, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext bytes 01 00 00 00 FF 00 00 00, EnableFilterDesc 3C1H, EnableCallback bytes 01 00 00 00 00 00 00 0C, EnableCallbackReserved 0H, ProviderTraits bytes 07 00 04 00 01 00 00 00, TraitsFlags 1H, HasPayload 0H
+tm_nt etw.reg59.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg59.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg60: NtTraceControl(0FH, the loader's A0H bytes (provider 60, LoggerId 55, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C +70 +74 +78 +79 +85 +90 +98; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg60.fields: RegType 3, LoggerId 55, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext bytes 01 00 00 00 FF 00 00 00, EnableFilterDesc 3C1H, EnableCallback bytes 00 00 00 00 00 80 00 00, EnableCallbackReserved 0H, ProviderTraits 7H, TraitsFlags 1H, HasPayload 0H
+tm_nt etw.reg60.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg60.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etw.reg61: NtTraceControl(0FH, the loader's A0H bytes (provider 61, LoggerId 56, ReplyCallback set), in = out) -> status 00000000H, ReturnLength A0H; changed bytes: +18 +2C; ReplyHandle (+18H) <handle> (non-zero, multiple of 4)
+tm_nt etw.reg61.fields: RegType 3, LoggerId 56, Reserved0 0, ReplyCallback unchanged, ReplyBufferSize 0H, Reserved1 A0H, EnableCallbackContext 0H, EnableFilterDesc 0H, EnableCallback 0H, EnableCallbackReserved 0H, ProviderTraits 0H, TraitsFlags 0H, HasPayload 0H
+tm_nt etw.reg61.reserved2: non-zero bytes in Reserved2 [+30H, +70H): 0
+tm_nt etw.reg61.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt kd.open: NtOpenDirectoryObject(&h, 3, "\KnownDlls" OBJ_CASE_INSENSITIVE) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt kd.list: kernel32.dll:Section ucrtbase.dll:Section MSCTF.dll:Section WS2_32.dll:Section SHLWAPI.dll:Section kernelbase.dll:Section wow64.dll:Section msvcp_win.dll:Section gdiplus.dll:Section KnownDllPath:SymbolicLink user32.dll:Section bcrypt.dll:Section COMCTL32.dll:Section cfgmgr32.dll:Section IMM32.dll:Section combase.dll:Section rpcrt4.dll:Section ntdll.dll:Section bcryptPrimitives.dll:Section coml2.dll:Section win32u.dll:Section wow64cpu.dll:Section COMDLG32.dll:Section gdi32full.dll:Section IMAGEHLP.dll:Section SHELL32.dll:Section sechost.dll:Section WINTRUST.dll:Section NORMALIZ.dll:Section difxapi.dll:Section Setupapi.dll:Section CRYPT32.dll:Section gdi32.dll:Section MSVCRT.dll:Section wow64win.dll:Section advapi32.dll:Section NSI.dll:Section PSAPI.DLL:Section WLDAP32.dll:Section OLEAUT32.dll:Section SHCORE.dll:Section ole32.dll:Section clbcatq.dll:Section; 43 entries, end status 8000001AH
+tm_nt kd.section.0: NtOpenSection(&s, 0DH, root \KnownDlls, "KERNEL32.DLL" OBJ_CASE_INSENSITIVE) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt kd.section.1: NtOpenSection(&s, 0DH, root \KnownDlls, "kernelbase.dll" OBJ_CASE_INSENSITIVE) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt kd.section.2: NtOpenSection(&s, 0DH, root \KnownDlls, "TM_NT_NO_SUCH.DLL" OBJ_CASE_INSENSITIVE) -> status C0000034H, handle NULL
+tm_nt kd.map.0: NtMapViewOfSection("advapi32.dll", -1, &base (0), 0, 0, NULL, &size (0), ViewShare, 800000H, 80H) -> status 00000000H, base <va> (64K-aligned yes), ViewSize = SizeOfImage (B1000H vs B1000H), header ImageBase = the base; MBI at the base: AllocationProtect 80H, State 1000H, Protect 2H, Type 1000000H, RegionSize 1000H; NtUnmapViewOfSection -> 00000000H
+tm_nt kd.map.1: NtMapViewOfSection("WLDAP32.dll", -1, &base (0), 0, 0, NULL, &size (0), ViewShare, 800000H, 80H) -> status 00000000H, base <va> (64K-aligned yes), ViewSize = SizeOfImage (5E000H vs 5E000H), header ImageBase = the base; MBI at the base: AllocationProtect 80H, State 1000H, Protect 2H, Type 1000000H, RegionSize 1000H; NtUnmapViewOfSection -> 00000000H
+tm_nt kd.map.2: NtMapViewOfSection("KERNEL32.DLL", -1, &base (0), 0, 0, NULL, &size (0), ViewShare, 800000H, 80H) -> status 40000036H, base <va> (64K-aligned yes), ViewSize = SizeOfImage (C2000H vs C2000H), header ImageBase = the base; MBI at the base: AllocationProtect 80H, State 1000H, Protect 2H, Type 1000000H, RegionSize 1000H; NtUnmapViewOfSection -> 00000000H
+tm_nt kd.abs.1: NtOpenSection(&s, 5H, NULL root, "\KnownDlls\ntdll.dll" 0H) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt kd.abs.2: NtOpenSection(&s, 5H, NULL root, "\KnownDlls\ntdll.dll" 0H) -> status 00000000H, handle <handle> (non-zero, multiple of 4) (another than abs.1)
+tm_nt kd.abs.map: NtMapViewOfSection("\KnownDlls\ntdll.dll", -1, &base (0), 0, 0, &offset (0), &size (0), ViewShare, 0, 2H) -> status 40000003H, base <va> (64K-aligned yes, != the process' ntdll), SectionOffset 0H, ViewSize = SizeOfImage (1F9000H vs 1F9000H), header ImageBase = the loaded ntdll's base; MBI at the base: AllocationProtect 80H, State 1000H, Protect 2H, Type 1000000H, RegionSize 1000H; at the first section (+1000H, 10 sections): Protect 20H, Type 1000000H; bytes differing from the loaded ntdll (505 readable pages): headers page 0, pages not writable in the loaded ntdll non-zero, its writable (runtime data) pages non-zero (by section: .mrdata C0000040H: non-zero); NtUnmapViewOfSection -> 00000000H
+tm_nt kd.link: NtOpenSymbolicLinkObject(&h, 1, root \KnownDlls, "KnownDllPath") -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt kd.target: NtQuerySymbolicLinkObject(link, MaximumLength 400H) -> status 00000000H, Length 26H, MaximumLength 400H, ReturnedLength 28H, target <SystemRoot>\System32 (= GetSystemDirectoryW)
+tm_nt of.curdir: NtOpenFile(&h, 100020H, "\??\<current directory>\" OBJ_CASE_INSENSITIVE, &iosb, 3, 21H) -> status 00000000H, handle <handle> (non-zero, multiple of 4), IoStatus.Status 00000000H, Information 1H
+tm_nt of.fsdev: NtQueryVolumeInformationFile(the directory, &iosb, buf, 8, FileFsDeviceInformation 4) -> status 00000000H, IoStatus.Status 00000000H, Information 8H; DeviceType 7H, Characteristics 20020H, byte 8 untouched
+tm_nt of.close: NtClose -> 00000000H
+tm_nt of.missing: NtOpenFile(... a directory that does not exist ...) -> status C0000034H, handle not written, IoStatus not written
+tm_nt tls.threads: threads of this process before the call: 1
+tm_nt tls.set: NtSetInformationProcess(-1, 23H, {0, 1 ReplaceVector, 1, 0; entry {0, the current vector, CCH..}}, 28H) -> status 00000000H; header 0 1 1 0; entry Flags 2H, +14H untouched, +18H = the old vector (= the new one here), +20H = GetCurrentThreadId(); TEB ThreadLocalStoragePointer after unchanged (= the vector passed); bytes 28H.. untouched
+tm_nt tls.swap: the same call with a different new vector (a copy) -> status 00000000H; entry Flags 2H, +18H = the OLD vector, +20H = GetCurrentThreadId(); TEB ThreadLocalStoragePointer after = the new vector
+tm_nt tls.restore: back to the original vector -> status 00000000H, TEB pointer = the original
+tm_nt tls.idx0: NtSetInformationProcess(-1, 23H, {0, 0 ReplaceIndex, 1, TlsIndex 0; entry {0, the current block, CCH..}}, 28H) -> status 00000000H; header 0 0 1 0; entry Flags 2H, +18H = the block (old = new), +20H untouched; vector[0] after = the new value
+tm_nt tls.idx1: NtSetInformationProcess(-1, 23H, {0, 0 ReplaceIndex, 1, TlsIndex 0; entry {0, a copy of the block, CCH..}}, 28H) -> status 00000000H; header 0 0 1 0; entry Flags 2H, +18H = the OLD block, +20H untouched; vector[0] after = the new value
+tm_nt tls.idx2: NtSetInformationProcess(-1, 23H, {0, 0 ReplaceIndex, 1, TlsIndex 0; entry {0, the current block, CCH..}}, 28H) -> status 00000000H; header 0 0 1 0; entry Flags 2H, +18H <other>, +20H untouched; vector[0] after = the new value
+tm_nt tls.zero: NtSetInformationProcess(-1, 23H, {0, 1, 0 entries, 0}, 10H) -> status C0000004H
+tm_nt ahc.0: NtApphelpCacheControl(6 LookupCdb, Name "KERNELBASE.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.1: NtApphelpCacheControl(6 LookupCdb, Name "KERNEL32.DLL", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.2: NtApphelpCacheControl(6 LookupCdb, Name "kernel32.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.3: NtApphelpCacheControl(6 LookupCdb, Name "ntdll.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.4: NtApphelpCacheControl(6 LookupCdb, Name "tm_nt_no_such.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.5: NtApphelpCacheControl(6 LookupCdb, Name "t2_import.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.6: NtApphelpCacheControl(6 LookupCdb, Name "t3_tls.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.7: NtApphelpCacheControl(6 LookupCdb, Name "t3_tls.vmware_guest.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.8: NtApphelpCacheControl(6 LookupCdb, Name "t5_stdout.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.9: NtApphelpCacheControl(6 LookupCdb, Name "win32u.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.10: NtApphelpCacheControl(6 LookupCdb, Name "ucrtbase.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.11: NtApphelpCacheControl(6 LookupCdb, Name "msvcp_win.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.12: NtApphelpCacheControl(6 LookupCdb, Name "gdi32full.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.13: NtApphelpCacheControl(6 LookupCdb, Name "GDI32.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.14: NtApphelpCacheControl(6 LookupCdb, Name "USER32.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.15: NtApphelpCacheControl(6 LookupCdb, Name "msvcrt.dll", ParamsOut 4 bytes) -> status 00000000H, out 80H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.16: NtApphelpCacheControl(6 LookupCdb, Name "dxgi.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.17: NtApphelpCacheControl(6 LookupCdb, Name "d3d11.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.18: NtApphelpCacheControl(6 LookupCdb, Name "RPCRT4.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.19: NtApphelpCacheControl(6 LookupCdb, Name "combase.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.20: NtApphelpCacheControl(6 LookupCdb, Name "kernel.appcore.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.21: NtApphelpCacheControl(6 LookupCdb, Name "dcomp.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.22: NtApphelpCacheControl(6 LookupCdb, Name "ole32.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.23: NtApphelpCacheControl(6 LookupCdb, Name "OLEAUT32.dll", ParamsOut 4 bytes) -> status 00000000H, out 80H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.24: NtApphelpCacheControl(6 LookupCdb, Name "SHELL32.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.25: NtApphelpCacheControl(6 LookupCdb, Name "dwmapi.dll", ParamsOut 4 bytes) -> status 00000000H, out 80H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.26: NtApphelpCacheControl(6 LookupCdb, Name "WS2_32.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.27: NtApphelpCacheControl(6 LookupCdb, Name "bcrypt.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.28: NtApphelpCacheControl(6 LookupCdb, Name "sechost.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.29: NtApphelpCacheControl(6 LookupCdb, Name "ADVAPI32.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.30: NtApphelpCacheControl(6 LookupCdb, Name "cfgmgr32.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.31: NtApphelpCacheControl(6 LookupCdb, Name "SETUPAPI.dll", ParamsOut 4 bytes) -> status 00000000H, out 80H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.32: NtApphelpCacheControl(6 LookupCdb, Name "transparent_makimav2.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.33: NtApphelpCacheControl(6 LookupCdb, Name "t6_user32.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.34: NtApphelpCacheControl(6 LookupCdb, Name "IMM32.DLL", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.35: NtApphelpCacheControl(6 LookupCdb, Name "t7_vfs.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.36: NtApphelpCacheControl(6 LookupCdb, Name "t8_pii.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.37: NtApphelpCacheControl(6 LookupCdb, Name "t9_rng.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.38: NtApphelpCacheControl(6 LookupCdb, Name "bcryptprimitives.dll", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.39: NtApphelpCacheControl(6 LookupCdb, Name "tx1_seh.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.40: NtApphelpCacheControl(6 LookupCdb, Name "tx2_veh.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.41: NtApphelpCacheControl(6 LookupCdb, Name "tx3_step.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.42: NtApphelpCacheControl(6 LookupCdb, Name "tx4_xstate.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.43: NtApphelpCacheControl(6 LookupCdb, Name "tx5_peb.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.44: NtApphelpCacheControl(6 LookupCdb, Name "tx6_align.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt ahc.45: NtApphelpCacheControl(6 LookupCdb, Name "t10_cm.exe", ParamsOut 4 bytes) -> status 00000000H, out 0H, DriverStatus 00000000H, changed context bytes:
+tm_nt vmi.fresh: NtSetInformationVirtualMemory(-1, 4, 1, {a fresh image view's base, 1000H}, &1, 4) -> status C00000BBH
+tm_nt vmi.again: the same call again -> status C00000BBH
+tm_nt vmi.loaded: the same call on this process' kernelbase.dll base -> status C00000BBH
+tm_nt csr.open: NtOpenSection(&s, 4 SECTION_MAP_READ, "\Sessions\<the PEB SessionId>\Windows\SharedSection" OBJ_CASE_INSENSITIVE) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt csr.map: NtMapViewOfSection(the section, -1, &base (0), 0, 0, NULL, &size (0), ViewUnmap 2, 0, PAGE_READONLY) -> status 00000000H, ViewSize 100000H, base 64K-aligned yes; MBI AllocationProtect 2H, State 1000H, Protect 2H, Type 40000H, RegionSize 5000H (contents not read); NtUnmapViewOfSection -> 00000000H
+tm_nt sec.10000: NtCreateSection(&s, F001FH, NULL, &10000H, 4, SEC_COMMIT, NULL) -> status 00000000H, handle <handle> (non-zero, multiple of 4), MaximumSize after 10000H; map (ViewUnmap, PAGE_READWRITE) -> status 00000000H, ViewSize 10000H, 64K-aligned yes, MBI AllocationProtect 4H State 1000H Protect 4H Type 40000H RegionSize 10000H, first byte 00, last byte 00; unmap -> 00000000H
+tm_nt sec.20000: NtCreateSection(&s, F001FH, NULL, &20000H, 4, SEC_COMMIT, NULL) -> status 00000000H, handle <handle> (non-zero, multiple of 4), MaximumSize after 20000H; map (ViewUnmap, PAGE_READWRITE) -> status 00000000H, ViewSize 20000H, 64K-aligned yes, MBI AllocationProtect 4H State 1000H Protect 4H Type 40000H RegionSize 20000H, first byte 00, last byte 00; unmap -> 00000000H
+tm_nt csrc.peb: PEB ReadOnlySharedMemoryBase (88H) <va>, 64K-aligned yes, MBI AllocationBase = it yes, AllocationProtect 2H, State 1000H, Protect 2H, Type 40000H, RegionSize 5000H; SharedData (90H) NULL; ReadOnlyStaticServerData (98H) <base+750H>; CsrServerReadOnlySharedMemoryBase (380H) <va>, 64K-aligned yes, = ReadOnlySharedMemoryBase no
+tm_nt csrc.array: ReadOnlyStaticServerData[0..7] (server pointers): [0] NULL [1] <base+790H> [2] NULL [3] NULL [4] NULL [5] NULL [6] NULL [7] <outside>
+tm_nt csrc.bssd: array[1] (BASE_STATIC_SERVER_DATA) <base+790H>; its +9E8H <base+790H>, = array[1] yes; within the view yes
+tm_nt csrc.str+0: UNICODE_STRING at BSSD+0: Length 14H, MaximumLength 16H, Buffer = BSSD+9E8H-relative <base+A10H>, converted inside the view yes; = GetWindowsDirectoryW() yes, = GetSystemDirectoryW() no, = "\Sessions\<the PEB SessionId>\BaseNamedObjects" no
+tm_nt csrc.str+10H: UNICODE_STRING at BSSD+10H: Length 26H, MaximumLength 28H, Buffer = BSSD+9E8H-relative <base+A30H>, converted inside the view yes; = GetWindowsDirectoryW() no, = GetSystemDirectoryW() yes, = "\Sessions\<the PEB SessionId>\BaseNamedObjects" no
+tm_nt csrc.str+20H: UNICODE_STRING at BSSD+20H: Length 38H, MaximumLength 3AH, Buffer = BSSD+9E8H-relative <base+A60H>, converted inside the view yes; = GetWindowsDirectoryW() no, = GetSystemDirectoryW() no, = "\Sessions\<the PEB SessionId>\BaseNamedObjects" yes
+tm_nt csrc.case: BSSD+10H = BSSD+0 + 9 characters yes, tail "\system32" (case-sensitive) yes, "\System32" no; BSSD+20H case-sensitive = "\Sessions\<the PEB SessionId>\BaseNamedObjects" yes; the strings NUL-terminated (MaximumLength = Length + 2, a 0 character after) yes
+tm_nt csrc.words: BSSD +30H..+3EH (USHORT): 0000 0000 0000 0000 0000 0000 0000 0000
+tm_nt csrc.ntdll: ntdll+16CC30H <non-zero>, = CsrGetProcessId() yes, multiple of 4 yes; ntdll+16CC38H 100000H (= the view's RegionSize no); ntdll+16CC40H (client view remote delta) <non-zero>; ntdll+16CC48H (port handle) <handle> (non-zero, multiple of 4), NtQueryObject(ObjectTypeInformation) -> status 00000000H, type "ALPC Port"
+tm_nt csrc.map5: NtMapViewOfSection(the section, -1, &base (0), 0, 0, NULL, &size (0), ViewUnmap 2, 500000H, PAGE_READONLY) -> status 00000000H, ViewSize 100000H, 64K-aligned yes, above the first view no, MBI AllocationProtect 2H State 1000H Protect 2H Type 40000H RegionSize 5000H; unmap -> 00000000H
+tm_nt nls.0: NtInitializeNlsFiles(&base, &lcid, NULL) -> status 00000000H, base 64K-aligned yes, MBI AllocationBase = base yes, AllocationProtect 2H, State 1000H, Protect 2H, Type 40000H, RegionSize C9000H; locale.nls C80E8H bytes (read yes), the view's first C80E8H bytes = the file yes; lcid = GetSystemDefaultLCID() yes, = GetUserDefaultLCID() yes; unmap -> 00000000H
+tm_nt nls.1: NtInitializeNlsFiles(&base, &lcid, NULL) -> status 00000000H, base 64K-aligned yes, MBI AllocationBase = base yes, AllocationProtect 2H, State 1000H, Protect 2H, Type 40000H, RegionSize C9000H; locale.nls C80E8H bytes (read yes), the view's first C80E8H bytes = the file yes; lcid = GetSystemDefaultLCID() yes, = GetUserDefaultLCID() yes; unmap -> 00000000H
+tm_nt con.start: CreateProcessW(this image, "con.child <file>", bInheritHandles FALSE, DETACHED_PROCESS 8H, STARTUPINFOW {cb only}) -> ok, wait 0H, child exit code 0
+tm_nt con.pp: RTL_USER_PROCESS_PARAMETERS ConsoleHandle 0, ConsoleFlags = the starting process' ConsoleFlags yes, StandardInput 0, StandardOutput 0, StandardError 0, WindowFlags 0H, ShowWindowFlags 0H
+tm_nt con.chp.8: NtQueryInformationProcess(NtCurrentProcess(), 31H ProcessConsoleHostProcess, Length 8H) -> status 00000000H, ReturnLength 8H, value 1H
+tm_nt con.chp.4: NtQueryInformationProcess(NtCurrentProcess(), 31H ProcessConsoleHostProcess, Length 4H) -> status C0000004H, ReturnLength CCCCCCCCH, not written
+tm_nt con.chp.10: NtQueryInformationProcess(NtCurrentProcess(), 31H ProcessConsoleHostProcess, Length 10H) -> status C0000004H, ReturnLength CCCCCCCCH, not written
+tm_nt con.chps.8: NtSetInformationProcess(NtCurrentProcess(), 31H, value 1, Length 8H) -> status 00000000H
+tm_nt con.chps.4: NtSetInformationProcess(NtCurrentProcess(), 31H, value 1, Length 4H) -> status C0000004H
+tm_nt con.chps.10: NtSetInformationProcess(NtCurrentProcess(), 31H, value 1, Length 10H) -> status C0000004H
+tm_nt con.chp.after: NtQueryInformationProcess(NtCurrentProcess(), 31H ProcessConsoleHostProcess, Length 8H) -> status 00000000H, ReturnLength 8H, value 1H
+tm_nt con.std.0: GetStdHandle(STD_INPUT_HANDLE) -> 0, LastError 12345678H
+tm_nt con.std.1: GetStdHandle(STD_OUTPUT_HANDLE) -> 0, LastError 12345678H
+tm_nt con.std.2: GetStdHandle(STD_ERROR_HANDLE) -> 0, LastError 12345678H
+tm_nt con.api.window: GetConsoleWindow() -> NULL, LastError 6H
+tm_nt con.api.cp: GetConsoleCP() -> 0H, LastError 6H
+tm_nt con.api.ocp: GetConsoleOutputCP() -> 0H, LastError 6H
+tm_nt con.api.mode: GetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), &mode) -> 0, LastError 6H, mode not written
+tm_nt con.api.wcon: WriteConsoleW(GetStdHandle(STD_OUTPUT_HANDLE), L"tm", 2, &written, NULL) -> 0, LastError 6H, written not written
+tm_nt con.api.wfile: WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), "tm", 2, &written, NULL) -> 0, LastError 6H, written 0
+tm_nt con.api.ftype: GetFileType(GetStdHandle(STD_OUTPUT_HANDLE)) -> 0H, LastError 6H
+tm_nt con.ntwf: NtWriteFile(NULL, NULL, NULL, NULL, &iosb, "tm", 2, NULL, NULL) -> status C0000008H, IoStatusBlock not written
+tm_nt con.pp.after: ConsoleHandle 0, StandardOutput 0 (after the API calls)
+tm_nt etwt.reg: NtTraceControl(0FH, provider 4 as etw.reg4) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt.blob: kernelbase.dll+282EB6H, 33H bytes: first USHORT (the traits size) 76H, non-zero bytes 18
+tm_nt etwt.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 33H, the trace's 6 bytes}, 18H, out, 78H, &r) -> status C0000102H, ReturnLength CCCCCCCCH; output bytes changed: (0)
+tm_nt etwt.in: input after the call: handle unchanged, blob pointer unchanged, size 33H
+tm_nt etwt.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt5.reg: NtTraceControl(0FH, provider 5 as etw.reg5) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt5.blob: kernelbase.dll+282E80H, 25H bytes: first USHORT (the traits size) 30H, non-zero bytes 19
+tm_nt etwt5.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 25H, 6 zero bytes}, 18H, out, 78H, &r) -> status C0000102H, ReturnLength CCCCCCCCH; output bytes changed: (0)
+tm_nt etwt5.in: input after the call: handle unchanged, blob pointer unchanged, size 25H
+tm_nt etwt5.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt6.reg: NtTraceControl(0FH, provider 6 as etw.reg6) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt6.blob: kernelbase.dll+282DEFH, 39H bytes: first USHORT (the traits size) 7070H, non-zero bytes 55
+tm_nt etwt6.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 39H, 6 zero bytes}, 18H, out, 78H, &r) -> status C0000102H, ReturnLength CCCCCCCCH; output bytes changed: (0)
+tm_nt etwt6.in: input after the call: handle unchanged, blob pointer unchanged, size 39H
+tm_nt etwt6.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt7.reg: NtTraceControl(0FH, provider 7 as etw.reg7) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt7.blob: kernel32.dll+8C95CH, 39H bytes: first USHORT (the traits size) 366DH, non-zero bytes 38
+tm_nt etwt7.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 39H, 6 zero bytes}, 18H, out, 78H, &r) -> status C0000102H, ReturnLength CCCCCCCCH; output bytes changed: (0)
+tm_nt etwt7.in: input after the call: handle unchanged, blob pointer unchanged, size 39H
+tm_nt etwt7.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt8.reg: NtTraceControl(0FH, provider 8 as etw.reg8) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt8.blob: the traits (as bytes), 2EH bytes: first USHORT (the traits size) 2EH, non-zero bytes 43
+tm_nt etwt8.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 2EH, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt8.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt9.reg: NtTraceControl(0FH, provider 9 as etw.reg9) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt9.blob: the traits (as bytes), CH bytes: first USHORT (the traits size) CH, non-zero bytes 10
+tm_nt etwt9.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, CH, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt9.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt10.reg: NtTraceControl(0FH, provider 10 as etw.reg10) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt10.blob: the traits (as bytes), 26H bytes: first USHORT (the traits size) 26H, non-zero bytes 36
+tm_nt etwt10.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 26H, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt10.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt11.reg: NtTraceControl(0FH, provider 11 as etw.reg11) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt11.blob: the traits (as bytes), 35H bytes: first USHORT (the traits size) 35H, non-zero bytes 50
+tm_nt etwt11.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 35H, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt11.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt14.reg: NtTraceControl(0FH, provider 14 as etw.reg14) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt14.blob: the traits (as bytes), 36H bytes: first USHORT (the traits size) 36H, non-zero bytes 51
+tm_nt etwt14.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 36H, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt14.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt61.reg: NtTraceControl(0FH, provider 61 as etw.reg61) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt61.blob: the traits (as bytes), 30H bytes: first USHORT (the traits size) 30H, non-zero bytes 45
+tm_nt etwt61.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 30H, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt61.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt60.reg: NtTraceControl(0FH, provider 60 as etw.reg60) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt60.blob: the traits (as bytes), 33H bytes: first USHORT (the traits size) 33H, non-zero bytes 48
+tm_nt etwt60.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 33H, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt60.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt51.reg: NtTraceControl(0FH, provider 51 as etw.reg51) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt51.blob: the traits (as bytes), 30H bytes: first USHORT (the traits size) 30H, non-zero bytes 45
+tm_nt etwt51.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 30H, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt51.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt46.reg: NtTraceControl(0FH, provider 46 as etw.reg46) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt46.blob: the traits (as bytes), 44H bytes: first USHORT (the traits size) 44H, non-zero bytes 65
+tm_nt etwt46.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 44H, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt46.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt45.reg: NtTraceControl(0FH, provider 45 as etw.reg45) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt45.blob: the traits (as bytes), 16H bytes: first USHORT (the traits size) 16H, non-zero bytes 19
+tm_nt etwt45.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 16H, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt45.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt37.reg: NtTraceControl(0FH, provider 37 as etw.reg37) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt37.blob: the traits (as bytes), 39H bytes: first USHORT (the traits size) 39H, non-zero bytes 54
+tm_nt etwt37.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 39H, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt37.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt36.reg: NtTraceControl(0FH, provider 36 as etw.reg36) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt36.blob: the traits (as bytes), 24H bytes: first USHORT (the traits size) 24H, non-zero bytes 33
+tm_nt etwt36.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 24H, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt36.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt34.reg: NtTraceControl(0FH, provider 34 as etw.reg34) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt34.blob: the traits (as bytes), 3DH bytes: first USHORT (the traits size) 3DH, non-zero bytes 58
+tm_nt etwt34.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 3DH, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt34.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt33.reg: NtTraceControl(0FH, provider 33 as etw.reg33) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt33.blob: the traits (as bytes), 41H bytes: first USHORT (the traits size) 41H, non-zero bytes 62
+tm_nt etwt33.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 41H, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt33.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt32.reg: NtTraceControl(0FH, provider 32 as etw.reg32) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt32.blob: the traits (as bytes), 37H bytes: first USHORT (the traits size) 37H, non-zero bytes 52
+tm_nt etwt32.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 37H, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt32.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt26.reg: NtTraceControl(0FH, provider 26 as etw.reg26) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt26.blob: the traits (as bytes), 31H bytes: first USHORT (the traits size) 31H, non-zero bytes 46
+tm_nt etwt26.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 31H, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt26.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt24.reg: NtTraceControl(0FH, provider 24 as etw.reg24) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt24.blob: the traits (as bytes), 3CH bytes: first USHORT (the traits size) 3CH, non-zero bytes 57
+tm_nt etwt24.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 3CH, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt24.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt23.reg: NtTraceControl(0FH, provider 23 as etw.reg23) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt23.blob: the traits (as bytes), 38H bytes: first USHORT (the traits size) 38H, non-zero bytes 53
+tm_nt etwt23.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 38H, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt23.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt17.reg: NtTraceControl(0FH, provider 17 as etw.reg17) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt17.blob: the traits (as bytes), 3CH bytes: first USHORT (the traits size) 3CH, non-zero bytes 57
+tm_nt etwt17.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 3CH, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt17.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt etwt16.reg: NtTraceControl(0FH, provider 16 as etw.reg16) -> status 00000000H, ReplyHandle <handle> (non-zero, multiple of 4)
+tm_nt etwt16.blob: the traits (as bytes), 31H bytes: first USHORT (the traits size) 31H, non-zero bytes 46
+tm_nt etwt16.set: NtTraceControl(1EH, {ReplyHandle, the traits blob, 31H, the trace's 6 bytes}, 18H, out, 78H, &r) -> status 00000000H, ReturnLength 0H; output bytes changed: (0)
+tm_nt etwt16.close: NtClose(ReplyHandle) -> 00000000H
+tm_nt tok.pt.1d: NtQueryInformationToken(NtCurrentProcessToken(), 1DH, Length 4H) -> status 00000000H, ReturnLength 4H, written 4H; value 0H
+tm_nt tok.pt.1d.0: NtQueryInformationToken(NtCurrentProcessToken(), 1DH, Length 0H) -> status C0000023H, ReturnLength 4H, written 0H
+tm_nt tok.pt.1d.8: NtQueryInformationToken(NtCurrentProcessToken(), 1DH, Length 8H) -> status 00000000H, ReturnLength 4H, written 4H; value 0H
+tm_nt tok.open: NtOpenProcessToken(NtCurrentProcess(), 8 TOKEN_QUERY, &h) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt tok.h.c: NtQueryInformationToken(the token handle, CH, Length 4H) -> status 00000000H, ReturnLength 4H, written 4H; value = the PEB SessionId yes
+tm_nt tok.h.1d: NtQueryInformationToken(the token handle, 1DH, Length 4H) -> status 00000000H, ReturnLength 4H, written 4H; value 0H
+tm_nt tok.h.2a: NtQueryInformationToken(the token handle, 2AH, Length 4H) -> status 00000000H, ReturnLength 4H, written 4H; value 0H
+tm_nt tok.h.c.0: NtQueryInformationToken(the token handle, CH, Length 0H) -> status C0000023H, ReturnLength 4H, written 0H
+tm_nt tok.h.2a.0: NtQueryInformationToken(the token handle, 2AH, Length 0H) -> status C0000023H, ReturnLength 4H, written 0H
+tm_nt tok.h.2a.8: NtQueryInformationToken(the token handle, 2AH, Length 8H) -> status 00000000H, ReturnLength 4H, written 4H; value 0H
+tm_nt tok.pt.c: NtQueryInformationToken(NtCurrentProcessToken(), CH, Length 4H) -> status 00000000H, ReturnLength 4H, written 4H; value = the PEB SessionId yes
+tm_nt tok.eff.1: NtQueryInformationToken(NtCurrentThreadEffectiveToken(), 1H, Length 58H) -> status 00000000H, ReturnLength 2CH, written 2CH; Sid <ptr:+10H>, Attributes 0H, SID Revision 1, SubAuthorityCount 5, IdentifierAuthority 5, SubAuthority[0] 21, the RID (last) >= 1000 yes, the S-1-5-21 + domain + RID shape yes
+tm_nt tok.eff.1.0: NtQueryInformationToken(NtCurrentThreadEffectiveToken(), 1H, Length 0H) -> status C0000023H, ReturnLength 2CH, written 0H
+tm_nt tok.pt.2a: NtQueryInformationToken(NtCurrentProcessToken(), 2AH, Length 4H) -> status 00000000H, ReturnLength 4H, written 4H; value 0H
+tm_nt tok.thr: NtOpenThreadToken(NtCurrentThread(), 4H, OpenAsSelf 1, &h) -> status C000007CH, handle not written
+tm_nt tok.thr.noself: NtOpenThreadToken(NtCurrentThread(), 4H, OpenAsSelf 0, &h) -> status C000007CH, handle not written
+tm_nt tok.thr.query: NtOpenThreadToken(NtCurrentThread(), 8H, OpenAsSelf 1, &h) -> status C000007CH, handle not written
+tm_nt tok.pt.14: NtQueryInformationToken(NtCurrentProcessToken(), 14H, Length 4H) -> status 00000000H, ReturnLength 4H, written 4H; value 0H
+tm_nt tok.pt.14.0: NtQueryInformationToken(NtCurrentProcessToken(), 14H, Length 0H) -> status C0000004H, ReturnLength 4H, written 0H
+tm_nt tok.pt.14.8: NtQueryInformationToken(NtCurrentProcessToken(), 14H, Length 8H) -> status C0000004H, ReturnLength 4H, written 0H
+tm_nt tok.pt.1a: NtQueryInformationToken(NtCurrentProcessToken(), 1AH, Length 4H) -> status 00000000H, ReturnLength 4H, written 4H; value 0H
+tm_nt tok.pt.1a.0: NtQueryInformationToken(NtCurrentProcessToken(), 1AH, Length 0H) -> status C0000023H, ReturnLength 4H, written 0H
+tm_nt tok.pt.1a.8: NtQueryInformationToken(NtCurrentProcessToken(), 1AH, Length 8H) -> status 00000000H, ReturnLength 4H, written 4H; value 0H
+tm_nt tok.pt.12: NtQueryInformationToken(NtCurrentProcessToken(), 12H, Length 4H) -> status 00000000H, ReturnLength 4H, written 4H; value 3H
+tm_nt tok.pt.12.0: NtQueryInformationToken(NtCurrentProcessToken(), 12H, Length 0H) -> status C0000023H, ReturnLength 4H, written 0H
+tm_nt tok.pt.12.8: NtQueryInformationToken(NtCurrentProcessToken(), 12H, Length 8H) -> status 00000000H, ReturnLength 4H, written 4H; value 3H
+tm_nt tok.pt.17: NtQueryInformationToken(NtCurrentProcessToken(), 17H, Length 4H) -> status 00000000H, ReturnLength 4H, written 4H; value 1H
+tm_nt tok.pt.17.0: NtQueryInformationToken(NtCurrentProcessToken(), 17H, Length 0H) -> status C0000023H, ReturnLength 4H, written 0H
+tm_nt tok.pt.17.8: NtQueryInformationToken(NtCurrentProcessToken(), 17H, Length 8H) -> status 00000000H, ReturnLength 4H, written 4H; value 1H
+tm_nt tok.pt.18: NtQueryInformationToken(NtCurrentProcessToken(), 18H, Length 4H) -> status 00000000H, ReturnLength 4H, written 4H; value 0H
+tm_nt tok.pt.18.0: NtQueryInformationToken(NtCurrentProcessToken(), 18H, Length 0H) -> status C0000023H, ReturnLength 4H, written 0H
+tm_nt tok.pt.18.8: NtQueryInformationToken(NtCurrentProcessToken(), 18H, Length 8H) -> status 00000000H, ReturnLength 4H, written 4H; value 0H
+tm_nt tok.pt.1b: NtQueryInformationToken(NtCurrentProcessToken(), 1BH, Length 4H) -> status 00000000H, ReturnLength 4H, written 4H; value 3H
+tm_nt tok.pt.1b.0: NtQueryInformationToken(NtCurrentProcessToken(), 1BH, Length 0H) -> status C0000023H, ReturnLength 4H, written 0H
+tm_nt tok.pt.1b.8: NtQueryInformationToken(NtCurrentProcessToken(), 1BH, Length 8H) -> status 00000000H, ReturnLength 4H, written 4H; value 3H
+tm_nt tok.h.2c: NtQueryInformationToken(the token handle, 2CH, Length 120H) -> status 00000000H, ReturnLength 10H, written 9H; IsolationPrefix NULL, IsolationEnabled 0, bytes +9..+FH not written
+tm_nt tok.h.2c.10: NtQueryInformationToken(the token handle, 2CH, Length 10H) -> status 00000000H, ReturnLength 10H, written 9H; IsolationPrefix NULL, IsolationEnabled 0, bytes +9..+FH not written
+tm_nt tok.h.2c.0: NtQueryInformationToken(the token handle, 2CH, Length 0H) -> status C0000023H, ReturnLength 10H, written 0H
+tm_nt tok.h.2c.8: NtQueryInformationToken(the token handle, 2CH, Length 8H) -> status C0000023H, ReturnLength 10H, written 0H
+tm_nt tok.close: NtClose(the token handle) -> 00000000H
+tm_nt tok.open.read: NtOpenProcessToken(NtCurrentProcess(), 20008H, &h) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt acc.1: NtAccessCheck(the loader's absolute SD (SID 1), NtCurrentProcessToken(), 1, ntdll's mapping, PrivilegeSet 38H) -> status 00000000H, GrantedAccess 0H, AccessStatus C0000022H, PrivilegeSetLength 38H, PrivilegeSet bytes written 8H; PrivilegeCount 0, Control 0H
+tm_nt acc.2: NtAccessCheck(the loader's absolute SD (SID 2), NtCurrentProcessToken(), 1, ntdll's mapping, PrivilegeSet 38H) -> status 00000000H, GrantedAccess 0H, AccessStatus C0000022H, PrivilegeSetLength 38H, PrivilegeSet bytes written 8H; PrivilegeCount 0, Control 0H
+tm_nt bno.f: NtOpenDirectoryObject(&h, FH, "\Sessions\<the PEB SessionId>\BaseNamedObjects" OBJ_CASE_INSENSITIVE) -> status 00000000H, handle <handle> (non-zero, multiple of 4), object type "Directory"; NtClose -> 00000000H
+tm_nt bno.3: NtOpenDirectoryObject(&h, 3H, "\Sessions\<the PEB SessionId>\BaseNamedObjects" OBJ_CASE_INSENSITIVE) -> status 00000000H, handle <handle> (non-zero, multiple of 4), object type "Directory"; NtClose -> 00000000H
+tm_nt bno.other: NtOpenDirectoryObject(&h, FH, "\Sessions\<another session number>\BaseNamedObjects" OBJ_CASE_INSENSITIVE) -> status C000003AH, handle NULL
+tm_nt bno.hookev: NtOpenEvent(&h, 100000H, {the BaseNamedObjects handle, "HookSwitchHookEnabledEvent", attributes 0}) -> status C0000034H, handle not written
+tm_nt mut.loader: NtCreateMutant(&h, 1F0001H, {the BaseNamedObjects handle, "Local\SM0:<the process id>:304:WilStaging_02", OBJ_OPENIF}, FALSE) -> status 40000000H, handle <handle> (non-zero, multiple of 4); NtClose -> 00000000H
+tm_nt mut.fresh: NtCreateMutant(&h, 1F0001H, {the BaseNamedObjects handle, "Local\SM0:<the process id>:304:WilStaging_tm", OBJ_OPENIF}, FALSE) -> status 00000000H, handle <handle> (non-zero, multiple of 4); NtClose -> 00000000H
+tm_nt mut.fresh2: NtCreateMutant(&h, 1F0001H, {the BaseNamedObjects handle, "Local\SM0:<the process id>:304:WilStaging_tm", OBJ_OPENIF}, FALSE) -> status 00000000H, handle <handle> (non-zero, multiple of 4); NtClose -> 00000000H
+tm_nt mut.wcreate: a fresh mutant of the loader's shape -> status 00000000H
+tm_nt mut.wait0: NtWaitForSingleObject(the mutant, FALSE, NULL) -> status 00000000H
+tm_nt mut.wait1: NtWaitForSingleObject(the mutant, FALSE, NULL) -> status 00000000H
+tm_nt mut.rel0: NtReleaseMutant(the mutant, &PreviousCount) -> status 00000000H, PreviousCount FFFFFFFFH
+tm_nt mut.rel1: NtReleaseMutant(the mutant, &PreviousCount) -> status 00000000H, PreviousCount 0H
+tm_nt mut.rel2: NtReleaseMutant(the mutant, &PreviousCount) -> status C0000046H, PreviousCount not written CCCCCCCCH
+tm_nt mut.anon0: NtCreateMutant(&h, 1F0001H, NULL, FALSE) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt mut.anon1: NtCreateMutant(&h, 1F0001H, NULL, FALSE) -> status 00000000H, handle <handle> (non-zero, multiple of 4) (another than anon0)
+tm_nt mut.anon.wait: NtWaitForSingleObject(anon0, FALSE, NULL) -> status 00000000H
+tm_nt mut.anon.rel0: NtReleaseMutant(anon0, &PreviousCount) -> status 00000000H, PreviousCount 0H
+tm_nt mut.anon.rel1: NtReleaseMutant(anon0, &PreviousCount) -> status C0000046H, PreviousCount not written CCCCCCCCH
+tm_nt mut.anon.close: NtClose -> 00000000H, 00000000H
+tm_nt wil.anon: NtCreateSemaphore(&h, 100003H, NULL, 0, 7FFFFFFFH) -> status 00000000H, handle <handle> (non-zero, multiple of 4); a 0 ms wait: time-out (count 0); NtClose -> 00000000H
+tm_nt wil.open.loader: NtOpenSemaphore(&h, 1F0003H, {the BaseNamedObjects handle, "Local\SM0:<the process id>:304:WilStaging_02_p0", attributes 0H}) -> status 00000000H, handle <handle> (non-zero, multiple of 4); NtClose -> 00000000H
+tm_nt wil.open.fresh: NtOpenSemaphore(&h, 1F0003H, {the BaseNamedObjects handle, "Local\SM0:<the process id>:304:WilStaging_tm_p0", attributes 0H}) -> status C0000034H, handle not written
+tm_nt wil.create: NtCreateSemaphore(&h, 1F0003H, {the BaseNamedObjects handle, a fresh "...WilStaging_tm_p0", OBJ_OPENIF}, 28CF0H, 28CF0H) -> status 00000000H, handle <handle> (non-zero, multiple of 4); again while open -> status 40000000H, handle <handle> (non-zero, multiple of 4); the loader's "...WilStaging_02_p0" -> status 40000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt wnf.1000: NtQueryWnfStateData(&0280032EA3BC0875H, &the loader's TypeId, NULL, &stamp, buffer, &BufferLength = 1000H) -> status 00000000H, ChangeStamp non-zero, BufferLength 8H, written 8H, non-zero data bytes 1
+tm_nt wnf.1000.data: 01 00 00 00 00 00 00 00
+tm_nt wnf.0: NtQueryWnfStateData(&0280032EA3BC0875H, &the loader's TypeId, NULL, &stamp, NULL, &BufferLength = 0H) -> status C0000023H, ChangeStamp non-zero, BufferLength 8H, written 0H, non-zero data bytes 0
+tm_nt wnf.notype: NtQueryWnfStateData(&0280032EA3BC0875H, NULL, NULL, &stamp, buffer, &BufferLength = 1000H) -> status C000000DH, ChangeStamp not written, BufferLength 1000H, written 0H, non-zero data bytes 0
+tm_nt wnf2.0: NtQueryWnfStateData(&418A073AA3BC7C75H, NULL, NULL, &stamp, NULL, &BufferLength = 0H) -> status 00000000H, ChangeStamp 0, BufferLength 0H, written 0H, non-zero data bytes 0
+tm_nt wnf2.0.data:
+tm_nt wnf2.1000: NtQueryWnfStateData(&418A073AA3BC7C75H, NULL, NULL, &stamp, buffer, &BufferLength = 1000H) -> status 00000000H, ChangeStamp 0, BufferLength 0H, written 0H, non-zero data bytes 0
+tm_nt wnf2.1000.data:
+tm_nt wnf2.c8: NtQueryWnfStateData(&418A073AA3BC7C75H, NULL, NULL, &stamp, buffer, &BufferLength = C8H) -> status 00000000H, ChangeStamp 0, BufferLength 0H, written 0H, non-zero data bytes 0
+tm_nt wnf2.c8.data:
+tm_nt wnf3.0: NtQueryWnfStateData(&418A073AA3BC88F5H, NULL, NULL, &stamp, NULL, &BufferLength = 0H) -> status 00000000H, ChangeStamp 0, BufferLength 0H, written 0H, non-zero data bytes 0
+tm_nt wnf3.0.data:
+tm_nt wnf3.c8: NtQueryWnfStateData(&418A073AA3BC88F5H, NULL, NULL, &stamp, buffer, &BufferLength = C8H) -> status 00000000H, ChangeStamp 0, BufferLength 0H, written 0H, non-zero data bytes 0
+tm_nt wnf3.c8.data:
+tm_nt wnf3.1000: NtQueryWnfStateData(&418A073AA3BC88F5H, NULL, NULL, &stamp, buffer, &BufferLength = 1000H) -> status 00000000H, ChangeStamp 0, BufferLength 0H, written 0H, non-zero data bytes 0
+tm_nt wnf3.1000.data:
+tm_nt wnf4.1000: NtQueryWnfStateData(&418A073AA3BC1C75H, NULL, NULL, &stamp, buffer, &BufferLength = 1000H) -> status 00000000H, ChangeStamp non-zero, BufferLength 1..1000H yes, written = BufferLength yes; header 00 00 00 00 04 00 04 00 01 00 <count non-zero> 01 01 00 00
+tm_nt wnf4.0: NtQueryWnfStateData(&418A073AA3BC1C75H, NULL, NULL, &stamp, NULL, &BufferLength = 0H) -> status C0000023H, ChangeStamp non-zero, BufferLength 1..1000H yes, written = BufferLength yes
+tm_nt wnfe.set: NtSetWnfProcessNotificationEvent(a new synchronization event) -> status C0000718H
+tm_nt wnfe.again: NtSetWnfProcessNotificationEvent(the same event) -> status C0000718H
+tm_nt wnfe.null: NtSetWnfProcessNotificationEvent(NULL) -> status C0000008H
+tm_nt wnfs.stamp: NtSubscribeWnfStateChange(&0280032EA3BC0875H, the current ChangeStamp, 11H, &id) -> status 00000000H, SubscriptionId non-zero
+tm_nt wnfs.one: NtSubscribeWnfStateChange(&0280032EA3BC0875H, 1, 11H, &id) -> status 00000000H, SubscriptionId non-zero, = the first yes
+tm_nt wnfs.two: NtSubscribeWnfStateChange(&418A073AA3BC7C75H, 0, 11H, &id) -> status 00000000H, SubscriptionId non-zero, = the first state's no
+tm_nt wnfs.three: NtSubscribeWnfStateChange(&418A073AA3BC88F5H, 0, 11H, &id) -> status 00000000H, SubscriptionId non-zero, = the first / second state's no / no
+tm_nt t2s.create: NtCreateTimer2(&h, NULL, NULL, 8, 100002H) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt t2s.set: NtSetTimer2(the timer, &(relative 300 s), NULL, &{0, 00 00 FB 7F, 75 s}) -> status 00000000H, DueTime unchanged
+tm_nt t2s.again: NtSetTimer2(the same, again) -> status 00000000H
+tm_nt t2s.close: NtClose -> 00000000H
+tm_nt hku.root: NtOpenKey(&h, 20119H, "\REGISTRY\USER\<the user SID>" OBJ_CASE_INSENSITIVE) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt hku.locset: NtOpenKey(&h, 20119H, "\REGISTRY\USER\<the user SID>\Software\Classes\Local Settings" OBJ_CASE_INSENSITIVE) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt hku.locset.ms: NtOpenKey(&h, 20019H, "\REGISTRY\USER\<the user SID>\Software\Classes\Local Settings\Software\Microsoft" OBJ_CASE_INSENSITIVE) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt hku.locset.ole: NtOpenKey(&h, 20019H, "\REGISTRY\USER\<the user SID>\Software\Classes\Local Settings\Software\Microsoft\Ole" OBJ_CASE_INSENSITIVE) -> status C0000034H, handle NULL
+tm_nt hku.locset.ole.fdp: NtOpenKey(&h, 20019H, "\REGISTRY\USER\<the user SID>\Software\Classes\Local Settings\Software\Microsoft\Ole\FeatureDevelopmentProperties" OBJ_CASE_INSENSITIVE) -> status C0000034H, handle NULL
+tm_nt hku.safer: NtOpenKey(&h, 1H, "\REGISTRY\USER\<the user SID>\Software\Policies\Microsoft\Windows\Safer\CodeIdentifiers" OBJ_CASE_INSENSITIVE) -> status C0000034H, handle NULL
+tm_nt alert: NtTestAlert() -> status 00000000H; again -> status 00000000H
+tm_nt term.null: NtTerminateProcess(NULL, 2BH) -> status 00000000H; the calling thread continues: yes
+tm_nt time.qpf: QueryPerformanceFrequency -> TRUE, frequency 989680H; KUSER QpcFrequency 989680H; equal yes
+tm_nt time.nqpc: NtQueryPerformanceCounter(&c, &f) -> status 00000000H, frequency 989680H, counter non-zero yes
+tm_nt time.nqpc.nofreq: NtQueryPerformanceCounter(&c, NULL) -> status 00000000H
+tm_nt time.nqpc.null: NtQueryPerformanceCounter(NULL, &f) -> status C0000005H
+tm_nt time.res: NtQueryTimerResolution -> status 00000000H, MaximumTime 2625AH, MinimumTime 1388H, CurrentTime in [MinimumTime, MaximumTime] yes; KUSER TickCountMultiplier 0FA00000H = (MaximumTime << 24) / 10000 yes
+tm_nt time.kuser: TickCountLowDeprecated 0, TimeZoneBias non-zero, QpcData 0083H, QpcShift 00H
+tm_nt time.tick: GetTickCount64() = (TickCountQuad * TickCountMultiplier) >> 24 yes; TickCountQuad = InterruptTime / MaximumTime (within 1) yes
+tm_nt time.qpc.it: QueryPerformanceCounter - KUSER InterruptTime (10 MHz both), read at an InterruptTime update (the least of 3): positive yes, constant within 1 ms over 5 reads 20 ms apart yes
+tm_nt time.qpc.sys: QueryPerformanceCounter <= NtQueryPerformanceCounter <= QueryPerformanceCounter (5 times) yes
+tm_nt time.st: NtQuerySystemTime(&t) -> status 00000000H, t in [KUSER SystemTime before, after] yes; GetSystemTimeAsFileTime >= that yes; SystemTime - InterruptTime constant within 1 ms over 50 ms yes
+tm_nt time.st.null: NtQuerySystemTime(NULL) -> status C0000005H
+tm_nt time.delay: NtDelayExecution(FALSE, relative 10 ms) -> status 00000000H, InterruptTime advanced >= 10 ms yes
+tm_nt time.delay.zero: NtDelayExecution(FALSE, 0) -> status 00000000H or 40000024H (STATUS_NO_YIELD_PERFORMED: no other thread ready) yes
+tm_nt time.delay.alert: NtDelayExecution(TRUE, relative 100 ns), no APC queued -> status 00000000H
+tm_nt time.delay.past: NtDelayExecution(FALSE, absolute 1) -> status 00000000H
+tm_nt time.delay.abs: NtDelayExecution(FALSE, absolute SystemTime + 10 ms) -> status 00000000H, InterruptTime advanced >= 9 ms yes
+tm_nt time.delay.null: NtDelayExecution(FALSE, NULL) -> status C0000005H
+tm_nt time.wait: NtWaitForSingleObject(a non-signaled notification event, FALSE, relative 10 ms) -> status 00000102H, InterruptTime advanced >= 10 ms yes
+tm_nt time.wait.past: NtWaitForSingleObject(the event, FALSE, absolute 1) -> status 00000102H
+tm_nt time.tsc: hypervisor page QpcMultiplier non-zero, QpcBias 0; TSC frequency = QpcFrequency * 2^64 / QpcMultiplier = 3494.4 MHz (to 0.1 MHz); RDTSC / QPC over 100 ms agrees within 0.1% yes
+tm_nt time.tscaux: RDTSCP ECX (IA32_TSC_AUX) = GetCurrentProcessorNumber() yes, bits 31:12 0
+tm_nt sp.0.app: NtQueryAttributesFile("\??\<the image's directory>\d3d11.dll" 840H, buf) -> status C0000034H, bytes written 0
+tm_nt sp.0.sys: NtQueryAttributesFile("\??\<SystemRoot>\SYSTEM32\d3d11.dll" 840H, buf) -> status 00000000H, bytes written 40; CreationTime non-zero, LastAccessTime non-zero, LastWriteTime non-zero, ChangeTime non-zero, FileAttributes 20H, bytes 24H..27H 00 00 00 00
+tm_nt sp.0.open: NtOpenFile(&h, 100021H, that path 840H, &iosb, 5, 60H) -> status 00000000H, handle <handle> (non-zero, multiple of 4), IoStatus.Status 00000000H, Information 1H
+tm_nt sp.0.sec: NtCreateSection(&s, 0DH, NULL, NULL, 10H, 1000000H, the file) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt sp.0.map: NtMapViewOfSection(the section, -1, &base (0), 0, 0, NULL, &size (0), ViewShare, 800000H, 80H) -> status 00000000H, base <va> (64K-aligned yes), ViewSize = SizeOfImage (264000H vs 264000H), header ImageBase = the base; MBI at the base: AllocationProtect 80H, State 1000H, Protect 2H, Type 1000000H, RegionSize 1000H; NtUnmapViewOfSection -> 00000000H
+tm_nt sp.0.close: NtClose(the section) -> 00000000H, NtClose(the file) -> 00000000H
+tm_nt sp.1.app: NtQueryAttributesFile("\??\<the image's directory>\dxgi.dll" 840H, buf) -> status C0000034H, bytes written 0
+tm_nt sp.1.sys: NtQueryAttributesFile("\??\<SystemRoot>\SYSTEM32\dxgi.dll" 840H, buf) -> status 00000000H, bytes written 40; CreationTime non-zero, LastAccessTime non-zero, LastWriteTime non-zero, ChangeTime non-zero, FileAttributes 20H, bytes 24H..27H 00 00 00 00
+tm_nt sp.1.open: NtOpenFile(&h, 100021H, that path 840H, &iosb, 5, 60H) -> status 00000000H, handle <handle> (non-zero, multiple of 4), IoStatus.Status 00000000H, Information 1H
+tm_nt sp.1.sec: NtCreateSection(&s, 0DH, NULL, NULL, 10H, 1000000H, the file) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt sp.1.map: NtMapViewOfSection(the section, -1, &base (0), 0, 0, NULL, &size (0), ViewShare, 800000H, 80H) -> status 00000000H, base <va> (64K-aligned yes), ViewSize = SizeOfImage (F6000H vs F6000H), header ImageBase = the base; MBI at the base: AllocationProtect 80H, State 1000H, Protect 2H, Type 1000000H, RegionSize 1000H; NtUnmapViewOfSection -> 00000000H
+tm_nt sp.1.close: NtClose(the section) -> 00000000H, NtClose(the file) -> 00000000H
+tm_nt sp.2.app: NtQueryAttributesFile("\??\<the image's directory>\dcomp.dll" 840H, buf) -> status C0000034H, bytes written 0
+tm_nt sp.2.sys: NtQueryAttributesFile("\??\<SystemRoot>\SYSTEM32\dcomp.dll" 840H, buf) -> status 00000000H, bytes written 40; CreationTime non-zero, LastAccessTime non-zero, LastWriteTime non-zero, ChangeTime non-zero, FileAttributes 20H, bytes 24H..27H 00 00 00 00
+tm_nt sp.2.open: NtOpenFile(&h, 100021H, that path 840H, &iosb, 5, 60H) -> status 00000000H, handle <handle> (non-zero, multiple of 4), IoStatus.Status 00000000H, Information 1H
+tm_nt sp.2.sec: NtCreateSection(&s, 0DH, NULL, NULL, 10H, 1000000H, the file) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt sp.2.map: NtMapViewOfSection(the section, -1, &base (0), 0, 0, NULL, &size (0), ViewShare, 800000H, 80H) -> status 00000000H, base <va> (64K-aligned yes), ViewSize = SizeOfImage (1E4000H vs 1E4000H), header ImageBase = the base; MBI at the base: AllocationProtect 80H, State 1000H, Protect 2H, Type 1000000H, RegionSize 1000H; NtUnmapViewOfSection -> 00000000H
+tm_nt sp.2.close: NtClose(the section) -> 00000000H, NtClose(the file) -> 00000000H
+tm_nt sp.3.app: NtQueryAttributesFile("\??\<the image's directory>\dwmapi.dll" 840H, buf) -> status C0000034H, bytes written 0
+tm_nt sp.3.sys: NtQueryAttributesFile("\??\<SystemRoot>\SYSTEM32\dwmapi.dll" 840H, buf) -> status 00000000H, bytes written 40; CreationTime non-zero, LastAccessTime non-zero, LastWriteTime non-zero, ChangeTime non-zero, FileAttributes 20H, bytes 24H..27H 00 00 00 00
+tm_nt sp.3.open: NtOpenFile(&h, 100021H, that path 840H, &iosb, 5, 60H) -> status 00000000H, handle <handle> (non-zero, multiple of 4), IoStatus.Status 00000000H, Information 1H
+tm_nt sp.3.sec: NtCreateSection(&s, 0DH, NULL, NULL, 10H, 1000000H, the file) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt sp.3.map: NtMapViewOfSection(the section, -1, &base (0), 0, 0, NULL, &size (0), ViewShare, 800000H, 80H) -> status 00000000H, base <va> (64K-aligned yes), ViewSize = SizeOfImage (2E000H vs 2E000H), header ImageBase = the base; MBI at the base: AllocationProtect 80H, State 1000H, Protect 2H, Type 1000000H, RegionSize 1000H; NtUnmapViewOfSection -> 00000000H
+tm_nt sp.3.close: NtClose(the section) -> 00000000H, NtClose(the file) -> 00000000H
+tm_nt sp.4.app: NtQueryAttributesFile("\??\<the image's directory>\kernel.appcore.dll" 840H, buf) -> status C0000034H, bytes written 0
+tm_nt sp.4.sys: NtQueryAttributesFile("\??\<SystemRoot>\SYSTEM32\kernel.appcore.dll" 840H, buf) -> status 00000000H, bytes written 40; CreationTime non-zero, LastAccessTime non-zero, LastWriteTime non-zero, ChangeTime non-zero, FileAttributes 20H, bytes 24H..27H 00 00 00 00
+tm_nt sp.4.open: NtOpenFile(&h, 100021H, that path 840H, &iosb, 5, 60H) -> status 00000000H, handle <handle> (non-zero, multiple of 4), IoStatus.Status 00000000H, Information 1H
+tm_nt sp.4.sec: NtCreateSection(&s, 0DH, NULL, NULL, 10H, 1000000H, the file) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt sp.4.map: NtMapViewOfSection(the section, -1, &base (0), 0, 0, NULL, &size (0), ViewShare, 800000H, 80H) -> status 00000000H, base <va> (64K-aligned yes), ViewSize = SizeOfImage (12000H vs 12000H), header ImageBase = the base; MBI at the base: AllocationProtect 80H, State 1000H, Protect 2H, Type 1000000H, RegionSize 1000H; NtUnmapViewOfSection -> 00000000H
+tm_nt sp.4.close: NtClose(the section) -> 00000000H, NtClose(the file) -> 00000000H
+tm_nt mit.b: NtQueryInformationProcess(-1, 34H, {0BH ProcessSystemCallFilterPolicy, CCH}, 8, NULL) -> status 00000000H, Policy after BH, Flags 0H, bytes 8.. untouched
+tm_nt mit.b.rl: the same with ReturnLength -> status 00000000H, Flags 0H, ReturnLength CCCCCCCCH
+tm_nt mit.b.4: Length 4 -> status C0000004H, Flags not written
+tm_nt mit.6: NtQueryInformationProcess(-1, 34H, {6 ProcessExtensionPointDisablePolicy, CCH}, 8, NULL) -> status 00000000H, Policy after 6H, Flags 0H, bytes 8.. untouched
+tm_nt u32.start: CreateProcessW(tm_u32.exe, "tm_u32.exe <file>", bInheritHandles FALSE, creation flags 0, STARTUPINFOW {cb only}) -> ok, wait 0H, exit code non-zero
+tm_nt u32.mod: user32.dll SizeOfImage 19D000H, TimeDateStamp CD1AFCBDH, CheckSum 001A1300H; CharUpperW(L"tm") -> L"TM"
+tm_nt u32.refused: another user32 build - the offsets of this program are those of 10.0.19044.7807
+tm_nt u32k.sat.eff.2: NtQuerySecurityAttributesToken(NtCurrentThreadEffectiveToken(), 2 name(s), Length 330H) -> status C0000225H, ReturnLength 0H, written 0H
+tm_nt u32k.sat.eff.1: NtQuerySecurityAttributesToken(NtCurrentThreadEffectiveToken(), 1 name(s), Length 330H) -> status C0000225H, ReturnLength 0H, written 0H
+tm_nt u32k.svc.open: NtOpenProcessToken(NtCurrentProcess(), 0AH TOKEN_DUPLICATE | TOKEN_QUERY, &h) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt u32k.svc.dup: DuplicateToken(the token, SecurityImpersonation, &d) -> TRUE, LastError 0H, handle <handle> (non-zero, multiple of 4)
+tm_nt u32k.svc.acc: NtAccessCheck(the service-SID SD (5 ACEs), the duplicate, 1, {20001H, 20000H, 20000H, 1F0001H}, ps, &38H, ...) -> status 00000000H, GrantedAccess 0H, AccessStatus C0000022H, PrivilegeSet bytes written 8 (PrivilegeCount 0H, Control 0H), PrivilegeSetLength 38H
+tm_nt u32k.svc.close: NtClose(the duplicate) -> 00000000H, NtClose(the token) -> 00000000H
+tm_nt u32k.hklm.open: NtOpenKeyEx(&h, 2000000H MAXIMUM_ALLOWED, "\REGISTRY\MACHINE" attributes 40H, 0) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt u32k.hklm.tags: NtQueryKey(it, 7 KeyHandleTagsInformation, 4) -> status 00000000H, HandleTags 0H, ResultLength 4H
+tm_nt u32k.hklm.tags.0: NtQueryKey(it, 7, Length 0) -> status C0000023H, HandleTags not written, ResultLength 4H
+tm_nt u32k.hklm.close: NtClose -> 00000000H
+tm_nt u32k.tls: NtSetInformationThread(NtCurrentThread(), 0AH ThreadZeroTlsCell, &index (< 64 yes), 4) -> status 00000000H, the cell set -> 0
+tm_nt u32k.tls.8: the same with Length 8 -> status C0000004H
+tm_nt u32k.fl.open: NtOpenFile(&h, 100001H, "\??\<SystemRoot>\system32\IMM32.DLL" 840H, iosb, 5, 60H) -> status 00000000H, handle <handle> (non-zero, multiple of 4), IoStatus 00000000H / 1H
+tm_nt u32k.fl.sec: NtCreateSection(&s, 4, NULL, NULL, PAGE_READONLY, SEC_COMMIT, the file) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt u32k.fl.map: NtMapViewOfSection(it, -1, &base (0), 0, 0, NULL, &size (0), ViewShare, 0, PAGE_READONLY) -> status 00000000H, base 64K-aligned yes, ViewSize = the file size rounded up to pages yes (2E000H), the bytes = the file's start yes (MZ); MBI AllocationProtect 2H, State 1000H, Protect 2H, Type 40000H, RegionSize 2E000H; NtUnmapViewOfSection -> 00000000H
+tm_nt u32k.fl.close: NtClose(the section) -> 00000000H, NtClose(the file) -> 00000000H
+tm_nt fs.dir.of1: NtOpenFile(&h, 100001H, "\??\<the image's directory>\<a missing name>" 40H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.dir.of2: NtOpenFile(&h, 100021H, "\??\<the image's directory>\<a missing name>" 840H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.dir.of3: NtOpenFile(&h, 100001H, "\??\<the image's directory>\<a missing name>" 840H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.dir.of4: NtOpenFile(&h, 100020H, "\??\<the image's directory>\<a missing name>" 40H, &iosb, 3, 21H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.dir.cf1: NtCreateFile(&h, 80100080H, "\??\<the image's directory>\<a missing name>" 40H, &iosb, NULL, 80H, 1, FILE_OPEN 1, 60H, NULL, 0) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.dir.cf2: NtCreateFile(&h, 80100080H, "\??\<the image's directory>\<a missing name>" 40H, &iosb, NULL, 80H, 7, FILE_OPEN 1, 60H, NULL, 0) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.dir.qa1: NtQueryAttributesFile("\??\<the image's directory>\<a missing name>" 40H, buf) -> status C0000034H, written 0
+tm_nt fs.dir.qa2: NtQueryAttributesFile("\??\<the image's directory>\<a missing name>" 840H, buf) -> status C0000034H, written 0
+tm_nt fs.dir.qf1: NtQueryFullAttributesFile("\??\<the image's directory>\<a missing name>" 40H, buf) -> status C0000034H, written 0
+tm_nt fs.dir.qf2: NtQueryFullAttributesFile("\??\<the image's directory>\<a missing name>" 840H, buf) -> status C0000034H, written 0
+tm_nt fs.sub.of1: NtOpenFile(&h, 100001H, "\??\<the image's directory>\SystemResources\tm_nt.exe.mun" 40H, &iosb, 5, 60H) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.sub.of2: NtOpenFile(&h, 100021H, "\??\<the image's directory>\SystemResources\tm_nt.exe.mun" 840H, &iosb, 5, 60H) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.sub.of3: NtOpenFile(&h, 100001H, "\??\<the image's directory>\SystemResources\tm_nt.exe.mun" 840H, &iosb, 5, 60H) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.sub.of4: NtOpenFile(&h, 100020H, "\??\<the image's directory>\SystemResources\tm_nt.exe.mun" 40H, &iosb, 3, 21H) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.sub.cf1: NtCreateFile(&h, 80100080H, "\??\<the image's directory>\SystemResources\tm_nt.exe.mun" 40H, &iosb, NULL, 80H, 1, FILE_OPEN 1, 60H, NULL, 0) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.sub.cf2: NtCreateFile(&h, 80100080H, "\??\<the image's directory>\SystemResources\tm_nt.exe.mun" 40H, &iosb, NULL, 80H, 7, FILE_OPEN 1, 60H, NULL, 0) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.sub.qa1: NtQueryAttributesFile("\??\<the image's directory>\SystemResources\tm_nt.exe.mun" 40H, buf) -> status C000003AH, written 0
+tm_nt fs.sub.qa2: NtQueryAttributesFile("\??\<the image's directory>\SystemResources\tm_nt.exe.mun" 840H, buf) -> status C000003AH, written 0
+tm_nt fs.sub.qf1: NtQueryFullAttributesFile("\??\<the image's directory>\SystemResources\tm_nt.exe.mun" 40H, buf) -> status C000003AH, written 0
+tm_nt fs.sub.qf2: NtQueryFullAttributesFile("\??\<the image's directory>\SystemResources\tm_nt.exe.mun" 840H, buf) -> status C000003AH, written 0
+tm_nt fs.sys.of1: NtOpenFile(&h, 100001H, "\??\<SystemRoot>\System32\<a missing name>" 40H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.sys.of2: NtOpenFile(&h, 100021H, "\??\<SystemRoot>\System32\<a missing name>" 840H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.sys.of3: NtOpenFile(&h, 100001H, "\??\<SystemRoot>\System32\<a missing name>" 840H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.sys.of4: NtOpenFile(&h, 100020H, "\??\<SystemRoot>\System32\<a missing name>" 40H, &iosb, 3, 21H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.sys.cf1: NtCreateFile(&h, 80100080H, "\??\<SystemRoot>\System32\<a missing name>" 40H, &iosb, NULL, 80H, 1, FILE_OPEN 1, 60H, NULL, 0) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.sys.cf2: NtCreateFile(&h, 80100080H, "\??\<SystemRoot>\System32\<a missing name>" 40H, &iosb, NULL, 80H, 7, FILE_OPEN 1, 60H, NULL, 0) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.sys.qa1: NtQueryAttributesFile("\??\<SystemRoot>\System32\<a missing name>" 40H, buf) -> status C0000034H, written 0
+tm_nt fs.sys.qa2: NtQueryAttributesFile("\??\<SystemRoot>\System32\<a missing name>" 840H, buf) -> status C0000034H, written 0
+tm_nt fs.sys.qf1: NtQueryFullAttributesFile("\??\<SystemRoot>\System32\<a missing name>" 40H, buf) -> status C0000034H, written 0
+tm_nt fs.sys.qf2: NtQueryFullAttributesFile("\??\<SystemRoot>\System32\<a missing name>" 840H, buf) -> status C0000034H, written 0
+tm_nt fs.syssub.of1: NtOpenFile(&h, 100001H, "\??\<SystemRoot>\System32\<a missing name>\<a missing name>" 40H, &iosb, 5, 60H) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.syssub.of2: NtOpenFile(&h, 100021H, "\??\<SystemRoot>\System32\<a missing name>\<a missing name>" 840H, &iosb, 5, 60H) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.syssub.of3: NtOpenFile(&h, 100001H, "\??\<SystemRoot>\System32\<a missing name>\<a missing name>" 840H, &iosb, 5, 60H) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.syssub.of4: NtOpenFile(&h, 100020H, "\??\<SystemRoot>\System32\<a missing name>\<a missing name>" 40H, &iosb, 3, 21H) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.syssub.cf1: NtCreateFile(&h, 80100080H, "\??\<SystemRoot>\System32\<a missing name>\<a missing name>" 40H, &iosb, NULL, 80H, 1, FILE_OPEN 1, 60H, NULL, 0) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.syssub.cf2: NtCreateFile(&h, 80100080H, "\??\<SystemRoot>\System32\<a missing name>\<a missing name>" 40H, &iosb, NULL, 80H, 7, FILE_OPEN 1, 60H, NULL, 0) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.syssub.qa1: NtQueryAttributesFile("\??\<SystemRoot>\System32\<a missing name>\<a missing name>" 40H, buf) -> status C000003AH, written 0
+tm_nt fs.syssub.qa2: NtQueryAttributesFile("\??\<SystemRoot>\System32\<a missing name>\<a missing name>" 840H, buf) -> status C000003AH, written 0
+tm_nt fs.syssub.qf1: NtQueryFullAttributesFile("\??\<SystemRoot>\System32\<a missing name>\<a missing name>" 40H, buf) -> status C000003AH, written 0
+tm_nt fs.syssub.qf2: NtQueryFullAttributesFile("\??\<SystemRoot>\System32\<a missing name>\<a missing name>" 840H, buf) -> status C000003AH, written 0
+tm_nt fs.ads.of1: NtOpenFile(&h, 100001H, "\??\<the image's directory>\<a missing name>:s" 40H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.ads.of2: NtOpenFile(&h, 100021H, "\??\<the image's directory>\<a missing name>:s" 840H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.ads.of3: NtOpenFile(&h, 100001H, "\??\<the image's directory>\<a missing name>:s" 840H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.ads.of4: NtOpenFile(&h, 100020H, "\??\<the image's directory>\<a missing name>:s" 40H, &iosb, 3, 21H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.ads.cf1: NtCreateFile(&h, 80100080H, "\??\<the image's directory>\<a missing name>:s" 40H, &iosb, NULL, 80H, 1, FILE_OPEN 1, 60H, NULL, 0) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.ads.cf2: NtCreateFile(&h, 80100080H, "\??\<the image's directory>\<a missing name>:s" 40H, &iosb, NULL, 80H, 7, FILE_OPEN 1, 60H, NULL, 0) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.ads.qa1: NtQueryAttributesFile("\??\<the image's directory>\<a missing name>:s" 40H, buf) -> status C0000034H, written 0
+tm_nt fs.ads.qa2: NtQueryAttributesFile("\??\<the image's directory>\<a missing name>:s" 840H, buf) -> status C0000034H, written 0
+tm_nt fs.ads.qf1: NtQueryFullAttributesFile("\??\<the image's directory>\<a missing name>:s" 40H, buf) -> status C0000034H, written 0
+tm_nt fs.ads.qf2: NtQueryFullAttributesFile("\??\<the image's directory>\<a missing name>:s" 840H, buf) -> status C0000034H, written 0
+tm_nt fs.adsimg.of1: NtOpenFile(&h, 100001H, "\??\<the image's directory>\tm_nt.exe:<a missing name>" 40H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.adsimg.of2: NtOpenFile(&h, 100021H, "\??\<the image's directory>\tm_nt.exe:<a missing name>" 840H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.adsimg.of3: NtOpenFile(&h, 100001H, "\??\<the image's directory>\tm_nt.exe:<a missing name>" 840H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.adsimg.of4: NtOpenFile(&h, 100020H, "\??\<the image's directory>\tm_nt.exe:<a missing name>" 40H, &iosb, 3, 21H) -> status C0000103H, handle not written, IoStatus not written
+tm_nt fs.adsimg.cf1: NtCreateFile(&h, 80100080H, "\??\<the image's directory>\tm_nt.exe:<a missing name>" 40H, &iosb, NULL, 80H, 1, FILE_OPEN 1, 60H, NULL, 0) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.adsimg.cf2: NtCreateFile(&h, 80100080H, "\??\<the image's directory>\tm_nt.exe:<a missing name>" 40H, &iosb, NULL, 80H, 7, FILE_OPEN 1, 60H, NULL, 0) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.adsimg.qa1: NtQueryAttributesFile("\??\<the image's directory>\tm_nt.exe:<a missing name>" 40H, buf) -> status C0000034H, written 0
+tm_nt fs.adsimg.qa2: NtQueryAttributesFile("\??\<the image's directory>\tm_nt.exe:<a missing name>" 840H, buf) -> status C0000034H, written 0
+tm_nt fs.adsimg.qf1: NtQueryFullAttributesFile("\??\<the image's directory>\tm_nt.exe:<a missing name>" 40H, buf) -> status C0000034H, written 0
+tm_nt fs.adsimg.qf2: NtQueryFullAttributesFile("\??\<the image's directory>\tm_nt.exe:<a missing name>" 840H, buf) -> status C0000034H, written 0
+tm_nt fs.dev.of1: NtOpenFile(&h, 100001H, "\Device\<a missing name>" 40H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.dev.of2: NtOpenFile(&h, 100021H, "\Device\<a missing name>" 840H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.dev.of3: NtOpenFile(&h, 100001H, "\Device\<a missing name>" 840H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.dev.of4: NtOpenFile(&h, 100020H, "\Device\<a missing name>" 40H, &iosb, 3, 21H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.dev.cf1: NtCreateFile(&h, 80100080H, "\Device\<a missing name>" 40H, &iosb, NULL, 80H, 1, FILE_OPEN 1, 60H, NULL, 0) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.dev.cf2: NtCreateFile(&h, 80100080H, "\Device\<a missing name>" 40H, &iosb, NULL, 80H, 7, FILE_OPEN 1, 60H, NULL, 0) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.dev.qa1: NtQueryAttributesFile("\Device\<a missing name>" 40H, buf) -> status C0000034H, written 0
+tm_nt fs.dev.qa2: NtQueryAttributesFile("\Device\<a missing name>" 840H, buf) -> status C0000034H, written 0
+tm_nt fs.dev.qf1: NtQueryFullAttributesFile("\Device\<a missing name>" 40H, buf) -> status C0000034H, written 0
+tm_nt fs.dev.qf2: NtQueryFullAttributesFile("\Device\<a missing name>" 840H, buf) -> status C0000034H, written 0
+tm_nt fs.win.of1: NtOpenFile(&h, 100001H, "\??\<SystemRoot>\<a missing name>" 40H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.win.of2: NtOpenFile(&h, 100021H, "\??\<SystemRoot>\<a missing name>" 840H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.win.of3: NtOpenFile(&h, 100001H, "\??\<SystemRoot>\<a missing name>" 840H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.win.of4: NtOpenFile(&h, 100020H, "\??\<SystemRoot>\<a missing name>" 40H, &iosb, 3, 21H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.win.cf1: NtCreateFile(&h, 80100080H, "\??\<SystemRoot>\<a missing name>" 40H, &iosb, NULL, 80H, 1, FILE_OPEN 1, 60H, NULL, 0) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.win.cf2: NtCreateFile(&h, 80100080H, "\??\<SystemRoot>\<a missing name>" 40H, &iosb, NULL, 80H, 7, FILE_OPEN 1, 60H, NULL, 0) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.win.qa1: NtQueryAttributesFile("\??\<SystemRoot>\<a missing name>" 40H, buf) -> status C0000034H, written 0
+tm_nt fs.win.qa2: NtQueryAttributesFile("\??\<SystemRoot>\<a missing name>" 840H, buf) -> status C0000034H, written 0
+tm_nt fs.win.qf1: NtQueryFullAttributesFile("\??\<SystemRoot>\<a missing name>" 40H, buf) -> status C0000034H, written 0
+tm_nt fs.win.qf2: NtQueryFullAttributesFile("\??\<SystemRoot>\<a missing name>" 840H, buf) -> status C0000034H, written 0
+tm_nt fs.winsub.of1: NtOpenFile(&h, 100001H, "\??\<SystemRoot>\<a missing name>\<a missing name>.mun" 40H, &iosb, 5, 60H) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.winsub.of2: NtOpenFile(&h, 100021H, "\??\<SystemRoot>\<a missing name>\<a missing name>.mun" 840H, &iosb, 5, 60H) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.winsub.of3: NtOpenFile(&h, 100001H, "\??\<SystemRoot>\<a missing name>\<a missing name>.mun" 840H, &iosb, 5, 60H) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.winsub.of4: NtOpenFile(&h, 100020H, "\??\<SystemRoot>\<a missing name>\<a missing name>.mun" 40H, &iosb, 3, 21H) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.winsub.cf1: NtCreateFile(&h, 80100080H, "\??\<SystemRoot>\<a missing name>\<a missing name>.mun" 40H, &iosb, NULL, 80H, 1, FILE_OPEN 1, 60H, NULL, 0) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.winsub.cf2: NtCreateFile(&h, 80100080H, "\??\<SystemRoot>\<a missing name>\<a missing name>.mun" 40H, &iosb, NULL, 80H, 7, FILE_OPEN 1, 60H, NULL, 0) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.winsub.qa1: NtQueryAttributesFile("\??\<SystemRoot>\<a missing name>\<a missing name>.mun" 40H, buf) -> status C000003AH, written 0
+tm_nt fs.winsub.qa2: NtQueryAttributesFile("\??\<SystemRoot>\<a missing name>\<a missing name>.mun" 840H, buf) -> status C000003AH, written 0
+tm_nt fs.winsub.qf1: NtQueryFullAttributesFile("\??\<SystemRoot>\<a missing name>\<a missing name>.mun" 40H, buf) -> status C000003AH, written 0
+tm_nt fs.winsub.qf2: NtQueryFullAttributesFile("\??\<SystemRoot>\<a missing name>\<a missing name>.mun" 840H, buf) -> status C000003AH, written 0
+tm_nt fs.par.of1: NtOpenFile(&h, 100001H, "\??\<the parent of the image's directory>\<a missing name>" 40H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.par.of2: NtOpenFile(&h, 100021H, "\??\<the parent of the image's directory>\<a missing name>" 840H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.par.of3: NtOpenFile(&h, 100001H, "\??\<the parent of the image's directory>\<a missing name>" 840H, &iosb, 5, 60H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.par.of4: NtOpenFile(&h, 100020H, "\??\<the parent of the image's directory>\<a missing name>" 40H, &iosb, 3, 21H) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.par.cf1: NtCreateFile(&h, 80100080H, "\??\<the parent of the image's directory>\<a missing name>" 40H, &iosb, NULL, 80H, 1, FILE_OPEN 1, 60H, NULL, 0) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.par.cf2: NtCreateFile(&h, 80100080H, "\??\<the parent of the image's directory>\<a missing name>" 40H, &iosb, NULL, 80H, 7, FILE_OPEN 1, 60H, NULL, 0) -> status C0000034H, handle not written, IoStatus not written
+tm_nt fs.par.qa1: NtQueryAttributesFile("\??\<the parent of the image's directory>\<a missing name>" 40H, buf) -> status C0000034H, written 0
+tm_nt fs.par.qa2: NtQueryAttributesFile("\??\<the parent of the image's directory>\<a missing name>" 840H, buf) -> status C0000034H, written 0
+tm_nt fs.par.qf1: NtQueryFullAttributesFile("\??\<the parent of the image's directory>\<a missing name>" 40H, buf) -> status C0000034H, written 0
+tm_nt fs.par.qf2: NtQueryFullAttributesFile("\??\<the parent of the image's directory>\<a missing name>" 840H, buf) -> status C0000034H, written 0
+tm_nt fs.parsub.of1: NtOpenFile(&h, 100001H, "\??\<the parent of the image's directory>\SystemResources\tm_nt.exe.mun" 40H, &iosb, 5, 60H) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.parsub.of2: NtOpenFile(&h, 100021H, "\??\<the parent of the image's directory>\SystemResources\tm_nt.exe.mun" 840H, &iosb, 5, 60H) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.parsub.of3: NtOpenFile(&h, 100001H, "\??\<the parent of the image's directory>\SystemResources\tm_nt.exe.mun" 840H, &iosb, 5, 60H) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.parsub.of4: NtOpenFile(&h, 100020H, "\??\<the parent of the image's directory>\SystemResources\tm_nt.exe.mun" 40H, &iosb, 3, 21H) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.parsub.cf1: NtCreateFile(&h, 80100080H, "\??\<the parent of the image's directory>\SystemResources\tm_nt.exe.mun" 40H, &iosb, NULL, 80H, 1, FILE_OPEN 1, 60H, NULL, 0) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.parsub.cf2: NtCreateFile(&h, 80100080H, "\??\<the parent of the image's directory>\SystemResources\tm_nt.exe.mun" 40H, &iosb, NULL, 80H, 7, FILE_OPEN 1, 60H, NULL, 0) -> status C000003AH, handle not written, IoStatus not written
+tm_nt fs.parsub.qa1: NtQueryAttributesFile("\??\<the parent of the image's directory>\SystemResources\tm_nt.exe.mun" 40H, buf) -> status C000003AH, written 0
+tm_nt fs.parsub.qa2: NtQueryAttributesFile("\??\<the parent of the image's directory>\SystemResources\tm_nt.exe.mun" 840H, buf) -> status C000003AH, written 0
+tm_nt fs.parsub.qf1: NtQueryFullAttributesFile("\??\<the parent of the image's directory>\SystemResources\tm_nt.exe.mun" 40H, buf) -> status C000003AH, written 0
+tm_nt fs.parsub.qf2: NtQueryFullAttributesFile("\??\<the parent of the image's directory>\SystemResources\tm_nt.exe.mun" 840H, buf) -> status C000003AH, written 0
+tm_nt fs.dq.open: NtOpenFile(&h, 100001H, "\??\<the image's directory>\" 40H, &iosb, 7, 4021H) -> status 00000000H, handle <handle> (non-zero, multiple of 4), IoStatus 00000000H / 1H (upper half not written)
+tm_nt fs.dq.c1: NtQueryDirectoryFile(the directory, NULL, NULL, NULL, &iosb, buf, 1000H, class 1, TRUE, "<a missing name>", TRUE) -> status C000000FH, IoStatus not written, written 0
+tm_nt fs.dq.c2: NtQueryDirectoryFile(the directory, NULL, NULL, NULL, &iosb, buf, 1000H, class 2, TRUE, "<a missing name>", TRUE) -> status C000000FH, IoStatus not written, written 0
+tm_nt fs.dq.c3: NtQueryDirectoryFile(the directory, NULL, NULL, NULL, &iosb, buf, 1000H, class 3, TRUE, "<a missing name>", TRUE) -> status C000000FH, IoStatus not written, written 0
+tm_nt fs.dq.c12: NtQueryDirectoryFile(the directory, NULL, NULL, NULL, &iosb, buf, 1000H, class 12, TRUE, "<a missing name>", TRUE) -> status C000000FH, IoStatus C000000FH / 0H (upper half not written), written 0
+tm_nt fs.dq.c37: NtQueryDirectoryFile(the directory, NULL, NULL, NULL, &iosb, buf, 1000H, class 37, TRUE, "<a missing name>", TRUE) -> status C000000FH, IoStatus not written, written 0
+tm_nt fs.dq.c38: NtQueryDirectoryFile(the directory, NULL, NULL, NULL, &iosb, buf, 1000H, class 38, TRUE, "<a missing name>", TRUE) -> status C000000FH, IoStatus not written, written 0
+tm_nt fs.dq.x1: NtQueryDirectoryFileEx(the directory, NULL, NULL, NULL, &iosb, buf, 1000H, class 1, SL_RESTART_SCAN | SL_RETURN_SINGLE_ENTRY 3, "<a missing name>") -> status C000000FH, IoStatus not written, written 0
+tm_nt fs.dq.x2: NtQueryDirectoryFileEx(the directory, NULL, NULL, NULL, &iosb, buf, 1000H, class 2, SL_RESTART_SCAN | SL_RETURN_SINGLE_ENTRY 3, "<a missing name>") -> status C000000FH, IoStatus not written, written 0
+tm_nt fs.dq.x3: NtQueryDirectoryFileEx(the directory, NULL, NULL, NULL, &iosb, buf, 1000H, class 3, SL_RESTART_SCAN | SL_RETURN_SINGLE_ENTRY 3, "<a missing name>") -> status C000000FH, IoStatus not written, written 0
+tm_nt fs.dq.x12: NtQueryDirectoryFileEx(the directory, NULL, NULL, NULL, &iosb, buf, 1000H, class 12, SL_RESTART_SCAN | SL_RETURN_SINGLE_ENTRY 3, "<a missing name>") -> status C000000FH, IoStatus C000000FH / 0H (upper half not written), written 0
+tm_nt fs.dq.x37: NtQueryDirectoryFileEx(the directory, NULL, NULL, NULL, &iosb, buf, 1000H, class 37, SL_RESTART_SCAN | SL_RETURN_SINGLE_ENTRY 3, "<a missing name>") -> status C000000FH, IoStatus not written, written 0
+tm_nt fs.dq.x38: NtQueryDirectoryFileEx(the directory, NULL, NULL, NULL, &iosb, buf, 1000H, class 38, SL_RESTART_SCAN | SL_RETURN_SINGLE_ENTRY 3, "<a missing name>") -> status C000000FH, IoStatus not written, written 0
+tm_nt rvm.ldr: NtReadVirtualMemory(NtCurrentProcess(), PEB + 18H (Ldr), buf, 8H, &read) -> status 00000000H, NumberOfBytesRead written (the .count line), destination bytes changed 8, equal to the source
+tm_nt rvm.ldr.count: 8H
+tm_nt rvm.ldr.nocount: NtReadVirtualMemory(NtCurrentProcess(), PEB + 18H (Ldr), buf, 8H, NULL) -> status 00000000H, NumberOfBytesRead -, destination bytes changed 8, equal to the source
+tm_nt rvm.reserved: NtReadVirtualMemory(NtCurrentProcess(), a reserved page, buf, 8H, &read) -> status 8000000DH, NumberOfBytesRead written (the .count line), destination bytes changed 0
+tm_nt rvm.reserved.count: 0H
+tm_nt rvm.edge: NtReadVirtualMemory(NtCurrentProcess(), the last 4 bytes of a committed page + 4 of the reserved page after it, buf, 8H, &read) -> status 8000000DH, NumberOfBytesRead written (the .count line), destination bytes changed 0
+tm_nt rvm.edge.count: 0H
+tm_nt rvm.noaccess: NtReadVirtualMemory(NtCurrentProcess(), a PAGE_NOACCESS page, buf, 8H, &read) -> status 8000000DH, NumberOfBytesRead written (the .count line), destination bytes changed 0
+tm_nt rvm.noaccess.count: 0H
+tm_nt rvm.rodst: NtReadVirtualMemory(NtCurrentProcess(), PEB + 18H into a PAGE_READONLY destination, buf, 8H, &read) -> status 8000000DH, NumberOfBytesRead written (the .count line), destination bytes changed 0
+tm_nt rvm.rodst.count: 0H
+tm_nt rvm.zero: NtReadVirtualMemory(NtCurrentProcess(), PEB + 18H, 0 bytes, buf, 0H, &read) -> status 00000000H, NumberOfBytesRead written (the .count line), destination bytes changed 0
+tm_nt rvm.zero.count: 0H
+tm_nt atom.nouser32: NtAddAtomEx("<a name of its own>", Flags 0) before user32 is loaded -> status C0000022H, atom not written
+tm_nt atom.user32: LoadLibraryW("user32.dll") -> loaded
+tm_nt atom.add1: NtAddAtomEx("<a name of its own>", 2 x characters bytes, &atom, Flags 0) -> status 00000000H, atom in C000H..FFFFH
+tm_nt atom.add2: the same name again -> status 00000000H, atom the same
+tm_nt atom.add3: the same name, Atom NULL -> status 00000000H
+tm_nt atom.query: NtQueryInformationAtom(atom, AtomBasicInformation 0, buf, 100H, &ret) -> status 00000000H, ReturnLength = 6 + NameLength + 2: yes, UsageCount 3, Flags 0, NameLength = 2 x characters: yes, the name equal, the NUL after it written
+tm_nt atom.find: NtFindAtom(the name) -> status 00000000H, atom the same
+tm_nt atom.del1: NtDeleteAtom(atom) -> status 00000000H
+tm_nt atom.del2: NtDeleteAtom(atom) -> status 00000000H
+tm_nt atom.del3: NtDeleteAtom(atom) -> status 00000000H
+tm_nt atom.gone: NtFindAtom(the name) after the deletes -> status C0000034H, atom not written
+tm_nt pii: NtQueryInformationProcess(NtCurrentProcess(), 25H, buf, 40H, NULL) -> status 00000000H, ReturnLength CCCCCCCCH, written 40H
+tm_nt pii.fields: TransferAddress = the mapped base + AddressOfEntryPoint, ZeroBits 0, bytes +0CH..+0FH 00 00 00 00, MaximumStackSize = SizeOfStackReserve, CommittedStackSize = SizeOfStackCommit, SubSystemType = Subsystem, SubSystemVersion = MajorSubsystemVersion << 16 | MinorSubsystemVersion, OperatingSystemVersion = MinorOperatingSystemVersion << 16 | MajorOperatingSystemVersion, ImageCharacteristics = FileHeader.Characteristics, DllCharacteristics = DllCharacteristics, Machine = FileHeader.Machine, ImageContainsCode 1, ImageFlags 04H, LoaderFlags = LoaderFlags, ImageFileSize = the file's size, CheckSum = CheckSum
+tm_nt pii.image: this image mapped at its header ImageBase yes, mapped base below 4 GB no, its DllCharacteristics DYNAMIC_BASE yes
+tm_nt pii.r: NtQueryInformationProcess(NtCurrentProcess(), 25H, buf, 40H, &ret) -> status 00000000H, ReturnLength 40H, written 40H
+tm_nt pii.r.fields: TransferAddress = the mapped base + AddressOfEntryPoint, ZeroBits 0, bytes +0CH..+0FH 00 00 00 00, MaximumStackSize = SizeOfStackReserve, CommittedStackSize = SizeOfStackCommit, SubSystemType = Subsystem, SubSystemVersion = MajorSubsystemVersion << 16 | MinorSubsystemVersion, OperatingSystemVersion = MinorOperatingSystemVersion << 16 | MajorOperatingSystemVersion, ImageCharacteristics = FileHeader.Characteristics, DllCharacteristics = DllCharacteristics, Machine = FileHeader.Machine, ImageContainsCode 1, ImageFlags 04H, LoaderFlags = LoaderFlags, ImageFileSize = the file's size, CheckSum = CheckSum
+tm_nt pii.r.image: this image mapped at its header ImageBase yes, mapped base below 4 GB no, its DllCharacteristics DYNAMIC_BASE yes
+tm_nt pii.0: NtQueryInformationProcess(NtCurrentProcess(), 25H, buf, 0H, &ret) -> status C0000004H, ReturnLength CCCCCCCCH, written 0H
+tm_nt pii.3f: NtQueryInformationProcess(NtCurrentProcess(), 25H, buf, 3FH, &ret) -> status C0000004H, ReturnLength CCCCCCCCH, written 0H
+tm_nt pii.48: NtQueryInformationProcess(NtCurrentProcess(), 25H, buf, 48H, &ret) -> status C0000004H, ReturnLength CCCCCCCCH, written 0H
+tm_nt reg.hklm.open: NtOpenKeyEx(&h, 20119H, "\REGISTRY\MACHINE\" attributes 40H, 0) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt reg.hklm.tags0: NtQueryKey(it, 7 KeyHandleTagsInformation, 4) -> status 00000000H, HandleTags 0H, ResultLength 4H
+tm_nt reg.hklm.set: NtSetInformationKey(it, 5 KeySetHandleTagsInformation, &100H, 4) -> status 00000000H, the input 100H
+tm_nt reg.hklm.tags1: NtQueryKey(it, 7 KeyHandleTagsInformation, 4) -> status 00000000H, HandleTags 100H, ResultLength 4H
+tm_nt reg.hklm.set.0: NtSetInformationKey(it, 5, &200H, Length 0) -> status C0000004H
+tm_nt reg.hklm.set.8: NtSetInformationKey(it, 5, &200H, Length 8) -> status C0000004H
+tm_nt reg.hklm.tags2: NtQueryKey(it, 7 KeyHandleTagsInformation, 4) -> status 00000000H, HandleTags 100H, ResultLength 4H
+tm_nt reg.hklm.set.zero: NtSetInformationKey(it, 5, &0, 4) -> status 00000000H
+tm_nt reg.hklm.tags3: NtQueryKey(it, 7 KeyHandleTagsInformation, 4) -> status 00000000H, HandleTags 0H, ResultLength 4H
+tm_nt reg.hklm.rel: NtOpenKeyEx(&k, 20019H, RootDirectory = it, "Software\Microsoft\Ole" attributes 40H, 0) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt reg.hklm.rel.close: NtClose -> 00000000H
+tm_nt reg.hklm.close: NtClose -> 00000000H
+tm_nt reg.hkcu.open: NtOpenKey(&u, 20119H, "\REGISTRY\USER\<the user SID>") -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt reg.hkcu.tags.0: NtQueryKey(it, 7, Length 0) -> status C0000023H, HandleTags not written, ResultLength 4H
+tm_nt reg.hkcu.tags0: NtQueryKey(it, 7 KeyHandleTagsInformation, 4) -> status 00000000H, HandleTags 0H, ResultLength 4H
+tm_nt reg.hkcu.set: NtSetInformationKey(it, 5 KeySetHandleTagsInformation, &100H, 4) -> status 00000000H
+tm_nt reg.hkcu.tags1: NtQueryKey(it, 7 KeyHandleTagsInformation, 4) -> status 00000000H, HandleTags 100H, ResultLength 4H
+tm_nt reg.hkcu.close: NtClose -> 00000000H
+tm_nt reg.hkcu.sub.open: NtOpenKeyEx(&s, 20119H, "\REGISTRY\USER\<the user SID>\Software\Classes\Local Settings", 0) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt reg.hkcu.sub.tags0: NtQueryKey(it, 7 KeyHandleTagsInformation, 4) -> status 00000000H, HandleTags 0H, ResultLength 4H
+tm_nt reg.hkcu.sub.set: NtSetInformationKey(it, 5, &100H, 4) -> status 00000000H
+tm_nt reg.hkcu.sub.tags1: NtQueryKey(it, 7 KeyHandleTagsInformation, 4) -> status 00000000H, HandleTags 100H, ResultLength 4H
+tm_nt reg.hkcu.sub.close: NtClose -> 00000000H
+tm_nt reg.notify.open: NtOpenKeyEx(&k, 20019H, "\REGISTRY\MACHINE\Software\Microsoft\Ole", 0) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt reg.notify.event: NtCreateEvent(&e, 1F0003H, NULL, NotificationEvent, FALSE) -> status 00000000H
+tm_nt reg.notify: NtNotifyChangeKey(k, e, NULL, NULL, &iosb, 10000001H, FALSE, NULL, 0, TRUE) -> status 00000103H; IoStatusBlock not written (Status CCCCCCCCH, Information CCCCCCCCCCCCCCCCH); the event not signaled
+tm_nt reg.notify.later: after 200 ms - IoStatusBlock not written (Status CCCCCCCCH), the event not signaled
+tm_nt reg.notify.close: NtClose(the key) -> 00000000H
+tm_nt reg.notify.closed: after the key's close - IoStatusBlock not written (Status CCCCCCCCH, Information CCCCCCCCCCCCCCCCH), the event signaled
+tm_nt reg.notify.end: NtClose(the event) -> 00000000H
+tm_nt reg.notify.tree.open: NtOpenKeyEx(&k, 20019H, "\REGISTRY\USER\<the user SID>\Software\Classes\Local Settings\Software\Microsoft", 0) -> status 00000000H, handle <handle> (non-zero, multiple of 4)
+tm_nt reg.notify.tree: NtNotifyChangeKey(k, e, NULL, NULL, &iosb, 10000001H, TRUE, NULL, 0, TRUE) -> status 00000103H; IoStatusBlock not written; the event not signaled
+tm_nt reg.notify.tree.close: NtClose(the key) -> 00000000H
+tm_nt reg.notify.tree.closed: after the key's close - IoStatusBlock not written, the event signaled
+tm_nt ksec.open: NtOpenFile(&h, 100003H, "\Device\KsecDD" attributes 0, &iosb, share 7H, options 20H) -> status 00000000H, handle <handle> (non-zero, multiple of 4), IoStatus written (Status 00000000H, upper half not written, Information 0H)
+tm_nt ksec.ev: NtCreateEvent(&e, 1F0003H, NULL, SynchronizationEvent, FALSE) -> status 00000000H
+tm_nt ksec.cfg: NtDeviceIoControlFile(h, NULL, NULL, NULL, &iosb, 390400H, <the 68H-byte input, own event at +60H>, 68H, out, 8H) -> status 00000000H, IoStatus written (Status 00000000H, upper half not written, Information 0H), written 0H, output not written; the event not signaled; input bytes changed no
+tm_nt ksec.cfg.later: after 200 ms the event not signaled
+tm_nt ksec.res.1: NtDeviceIoControlFile(h, NULL, NULL, NULL, &iosb, 390400H, <the 30H-byte input>, 30H, out, 180H) -> status 00000000H, IoStatus written (Status 00000000H, upper half not written, Information D8H), written D8H, the input unchanged
+tm_nt ksec.res.2: NtDeviceIoControlFile(h, NULL, NULL, NULL, &iosb, 390400H, <the 30H-byte input>, 30H, out, 180H) -> status 00000000H, IoStatus written (Status 00000000H, upper half not written, Information D8H), written D8H, the input unchanged
+tm_nt ksec.res.3: NtDeviceIoControlFile(h, NULL, NULL, NULL, &iosb, 390400H, <the 30H-byte input>, 30H, out, 180H) -> status 00000000H, IoStatus written (Status 00000000H, upper half not written, Information D8H), written D8H, the input unchanged
+tm_nt ksec.res.shape: bytes equal in all three outputs: [+0H, +180H) 01 00 00 00 00 00 02 00 10 00 00 00 00 00 00 00 ...; 384 bytes equal (runs of 2 or more), 0 bytes differ (random - not printed)
+tm_nt ksec.res.+000: 01 00 00 00 00 00 02 00 10 00 00 00 00 00 00 00  |................|
+tm_nt ksec.res.+010: 18 00 00 00 00 00 00 00 06 00 00 00 FF FF FF FF  |................|
+tm_nt ksec.res.+020: 50 00 00 00 00 00 00 00 58 00 00 00 00 00 00 00  |P.......X.......|
+tm_nt ksec.res.+030: 00 00 00 00 00 00 00 00 FF FF FF FF FF FF FF FF  |................|
+tm_nt ksec.res.+040: 98 00 00 00 00 00 00 00 FF FF FF FF FF FF FF FF  |................|
+tm_nt ksec.res.+050: 52 00 4E 00 47 00 00 00 4D 00 69 00 63 00 72 00  |R.N.G...M.i.c.r.|
+tm_nt ksec.res.+060: 6F 00 73 00 6F 00 66 00 74 00 20 00 50 00 72 00  |o.s.o.f.t. .P.r.|
+tm_nt ksec.res.+070: 69 00 6D 00 69 00 74 00 69 00 76 00 65 00 20 00  |i.m.i.t.i.v.e. .|
+tm_nt ksec.res.+080: 50 00 72 00 6F 00 76 00 69 00 64 00 65 00 72 00  |P.r.o.v.i.d.e.r.|
+tm_nt ksec.res.+090: 00 00 00 00 00 00 00 00 A8 00 00 00 00 00 00 00  |................|
+tm_nt ksec.res.+0A0: 01 00 00 00 00 00 00 00 62 00 63 00 72 00 79 00  |........b.c.r.y.|
+tm_nt ksec.res.+0B0: 70 00 74 00 70 00 72 00 69 00 6D 00 69 00 74 00  |p.t.p.r.i.m.i.t.|
+tm_nt ksec.res.+0C0: 69 00 76 00 65 00 73 00 2E 00 64 00 6C 00 6C 00  |i.v.e.s...d.l.l.|
+tm_nt ksec.res.+0D0: 00 00 00 00 00 00 00 00  |........|
+tm_nt ksec.q2.1: NtDeviceIoControlFile(h, NULL, NULL, NULL, &iosb, 390400H, <the 38H-byte input>, 38H, out, 180H) -> status 00000000H, IoStatus written (Status 00000000H, upper half not written, Information D8H), written D8H, the input unchanged
+tm_nt ksec.q2.2: NtDeviceIoControlFile(h, NULL, NULL, NULL, &iosb, 390400H, <the 38H-byte input>, 38H, out, 180H) -> status 00000000H, IoStatus written (Status 00000000H, upper half not written, Information D8H), written D8H, the input unchanged
+tm_nt ksec.q2.3: NtDeviceIoControlFile(h, NULL, NULL, NULL, &iosb, 390400H, <the 38H-byte input>, 38H, out, 180H) -> status 00000000H, IoStatus written (Status 00000000H, upper half not written, Information D8H), written D8H, the input unchanged
+tm_nt ksec.q2.shape: bytes equal in all three outputs: [+0H, +180H) 01 00 00 00 00 00 02 00 10 00 00 00 00 00 00 00 ...; 384 bytes equal (runs of 2 or more), 0 bytes differ (random - not printed)
+tm_nt ksec.q2.+000: 01 00 00 00 00 00 02 00 10 00 00 00 00 00 00 00  |................|
+tm_nt ksec.q2.+010: 18 00 00 00 00 00 00 00 06 00 00 00 00 00 00 00  |................|
+tm_nt ksec.q2.+020: 50 00 00 00 00 00 00 00 58 00 00 00 00 00 00 00  |P.......X.......|
+tm_nt ksec.q2.+030: 00 00 00 00 47 00 00 00 FF FF FF FF FF FF FF FF  |....G...........|
+tm_nt ksec.q2.+040: 98 00 00 00 00 00 00 00 FF FF FF FF FF FF FF FF  |................|
+tm_nt ksec.q2.+050: 52 00 4E 00 47 00 00 00 4D 00 69 00 63 00 72 00  |R.N.G...M.i.c.r.|
+tm_nt ksec.q2.+060: 6F 00 73 00 6F 00 66 00 74 00 20 00 50 00 72 00  |o.s.o.f.t. .P.r.|
+tm_nt ksec.q2.+070: 69 00 6D 00 69 00 74 00 69 00 76 00 65 00 20 00  |i.m.i.t.i.v.e. .|
+tm_nt ksec.q2.+080: 50 00 72 00 6F 00 76 00 69 00 64 00 65 00 72 00  |P.r.o.v.i.d.e.r.|
+tm_nt ksec.q2.+090: 00 00 00 00 00 00 00 00 A8 00 00 00 00 00 00 00  |................|
+tm_nt ksec.q2.+0A0: 01 00 00 00 00 00 00 00 62 00 63 00 72 00 79 00  |........b.c.r.y.|
+tm_nt ksec.q2.+0B0: 70 00 74 00 70 00 72 00 69 00 6D 00 69 00 74 00  |p.t.p.r.i.m.i.t.|
+tm_nt ksec.q2.+0C0: 69 00 76 00 65 00 73 00 2E 00 64 00 6C 00 6C 00  |i.v.e.s...d.l.l.|
+tm_nt ksec.q2.+0D0: 00 00 00 00 00 00 00 00  |........|
+tm_nt ksec.close: NtClose -> 00000000H
+tm_nt ksec.cng.open: NtOpenFile(&h, 100001H, "\Device\CNG" attributes 40H, &iosb, share 7H, options 20H) -> status 00000000H, handle <handle> (non-zero, multiple of 4), IoStatus written (Status 00000000H, upper half not written, Information 0H)
+tm_nt ksec.cng.rekey.1: NtDeviceIoControlFile(h, NULL, NULL, NULL, &iosb, 390008H, NULL, 0H, out, 30H) -> status 00000000H, IoStatus written (Status 00000000H, upper half not written, Information 30H), written 30H, the input unchanged
+tm_nt ksec.cng.rekey.2: NtDeviceIoControlFile(h, NULL, NULL, NULL, &iosb, 390008H, NULL, 0H, out, 30H) -> status 00000000H, IoStatus written (Status 00000000H, upper half not written, Information 30H), written 30H, the input unchanged
+tm_nt ksec.cng.rekey.3: NtDeviceIoControlFile(h, NULL, NULL, NULL, &iosb, 390008H, NULL, 0H, out, 30H) -> status 00000000H, IoStatus written (Status 00000000H, upper half not written, Information 30H), written 30H, the input unchanged
+tm_nt ksec.cng.rekey.shape: bytes equal in all three outputs:; 0 bytes equal (runs of 2 or more), 48 bytes differ (random - not printed)
+tm_nt ksec.cng.close: NtClose -> 00000000H
+tm_nt ksec.closed: after the device handle's close the event not signaled; NtClose(the event) -> 00000000H
+tm_nt cm.open.1: NtCreateFile(&h, 80000000H, "\Device\DeviceApi\CMApi" 0H, &iosb, NULL, 0H, 0, FILE_OPEN 1, 0H, NULL, 0) -> status 00000000H, handle <handle> (non-zero, multiple of 4), IoStatus 00000000H / 0H (upper half not written)
+tm_nt cm.open.2: NtCreateFile(&h, 80000000H, "\Device\DeviceApi\CMApi" 0H, &iosb, NULL, 0H, 0, FILE_OPEN 1, 0H, NULL, 0) -> status 00000000H, handle <handle> (non-zero, multiple of 4), IoStatus 00000000H / 0H (upper half not written)
+tm_nt cm.close.2: NtClose -> 00000000H
+tm_nt cm.close.1: NtClose -> 00000000H
+tm_nt lic.tsas.4: NtQueryLicenseValue("TerminalServices-RemoteConnectionManager-AllowAppServerMode", &type, data, 4H, &ret) -> status 00000000H, Type 4H, ResultDataSize 4H, data written 4H, value 0H
+tm_nt lic.tsas.4b: NtQueryLicenseValue("TerminalServices-RemoteConnectionManager-AllowAppServerMode", &type, data, 4H, &ret) -> status 00000000H, Type 4H, ResultDataSize 4H, data written 4H, value 0H

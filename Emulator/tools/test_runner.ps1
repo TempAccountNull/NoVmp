@@ -771,6 +771,12 @@ Add-Suite 'win_env_exceptions' 'emulator win_env' 'py' ( Join-Path $Root 'Emulat
 # (SetThreadAffinityMask) reads that processor's CPUID 01H / 04H / 06H / 0BH / 1AH / 1FH under --guest --Sys --loader = the recorded native
 # reference Emulator\data\t11_cpulp_vmware_guest.txt (+ the live native reference of decision 3.0.7 when the ntdll is the capture's).
 Add-Suite 'win_env_cpulp' 'emulator win_env' 'py' ( Join-Path $Root 'Emulator\tools\win_env_cpulp.py' ) @( $Root, $T )
+# U2382 (P57 queued task 2, the coordinator 2026-10-30): the --host variants - the same suites under --host with the bare-host capture
+# (capture\sysdlls\bare_host + its registry subset, local) against the bare host's native references (Emulator\data\hostref_bare_host.txt,
+# nt_measured_bare_host.txt; host_reg_ref_v2, imported by hostref_import.py).
+Add-Suite 'win_env_sys_loader_host' 'emulator win_env' 'py' ( Join-Path $Root 'Emulator\tools\win_env_sys_loader.py' ) @( $Root, $T, '--env', 'bare_host' )
+Add-Suite 'win_env_exceptions_host' 'emulator win_env' 'py' ( Join-Path $Root 'Emulator\tools\win_env_exceptions.py' ) @( $Root, $T, '--env', 'bare_host' )
+Add-Suite 'nt_measured_host' 'emulator win_env' 'py' ( Join-Path $Root 'Emulator\tools\nt_measured.py' ) @( $Root, $T, '--env', 'bare_host' )
 # U2051 (coordinator p3sys, plan 3.M5 --Sys, notes\eread\P39_sys_loader.md): the native measurements of the undocumented services of
 # the --Sys loader (Emulator\data\nt_measured_vmware_guest.txt, our own test PE tm_nt; USER DECISION 2026-10-25: phnt prototypes,
 # behaviour measured natively in the VMware guest, decision 3.0.7): the file's shape and identifier screen, and - when the live ntdll is

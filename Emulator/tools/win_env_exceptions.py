@@ -18,8 +18,12 @@ What the six PEs cover (P49): TX1 SEH through the x64 unwind data and 35 CPU eve
 privileged / non-canonical / INT n, #PF read / write / execute, INT 4, ICEBP, INT 2CH, INT 2DH services, ...); TX2 vectored handlers, their
 order against the frame handler and the continue handlers; TX3 single-step over REP string instructions (a #DB per iteration, RF);
 TX4 CONTEXT / CONTEXT_EX / XSTATE (AVX), the frame layout, KUSER XState, a changed YMM state restored; TX5 the anti-debug surface and
-PEB / TEB relations; TX6 the alignment check. Exit 0 = PASS, 1 = FAIL, 2 = usage.
-usage: python -I win_env_exceptions.py REPO_ROOT TESTS_DIR
+PEB / TEB relations; TX6 the alignment check.
+P57 queued task 2 (ledger U2382): --env bare_host runs the same checks under --host against the BARE-HOST references (the host capture
+capture\sysdlls\bare_host with its registry subset; Emulator/data/hostref_bare_host.txt: the exit statuses and the printed lines of the
+host's native run on a pipe - compared with the emulated text line by line); the native reference applies only on the bare host (its ntdll).
+Exit 0 = PASS, 1 = FAIL, 2 = usage.
+usage: python -I win_env_exceptions.py REPO_ROOT TESTS_DIR [--env vmware_guest|bare_host]
 """
 import hashlib
 import importlib.util
@@ -76,10 +80,23 @@ def captured_text(path):
 
 
 def main(argv):
-    if len(argv) != 2:
+    env = 'vmware_guest'
+    if len(argv) == 4 and argv[2] == '--env' and argv[3] in ('vmware_guest', 'bare_host'):
+        env = argv[3]
+    elif len(argv) != 2:
         print(__doc__.strip().splitlines()[-1])
         return 2
     root, tests = os.path.abspath(argv[0]), os.path.abspath(argv[1])
+    flag = '--guest' if env == 'vmware_guest' else '--host'
+    tx_status = {t: st for t, _, st, _, _ in TX}
+    host_text = {}
+    if env == 'bare_host':   # P57 (U2382): the bare host's statuses and printed lines (hostref_bare_host.txt)
+        for l in open(os.path.join(root, 'Emulator', 'data', 'hostref_bare_host.txt'), encoding='ascii'):
+            f = l.rstrip('\r\n').split(' ', 2)
+            if f[0] == 'tx':
+                tx_status[f[1]] = int(f[2], 16)
+            elif f[0] == 'text':
+                host_text.setdefault(f[1], []).append(f[2])
     oep = os.path.join(tests, 'emu-oep.exe')
     pe_dir = os.path.join(tests, 'test_pe')
     tm = os.path.join(pe_dir, 'tm_nt.exe')
@@ -95,22 +112,23 @@ def main(argv):
         if not os.path.isfile(p):
             say('FAIL %s missing (build.cmd first)' % p)
             return 1
-    cap = T1H.capture_dir(root, 'vmware_guest')
+    cap = T1H.capture_dir(root, env)
     reg = open(os.path.join(cap, 'registry.txt'), encoding='ascii').read().lower().splitlines() if cap and os.path.isfile(os.path.join(cap, 'registry.txt')) else []
     check(cap and all(('key' + chr(9) + 'absent' + chr(9) + IFEO + n + '.exe') in reg for _, n, _, _, _ in TX),
           'the capture holds the registry items of the TX images\' starts (IFEO' + B + 'txN.exe absent; capture_sysdlls.py --reg)')
     outdir = os.path.join(tests, 'exceptions_out')
     text = {}
-    for tag, name, status, n_exc, n_silent in TX:
+    for tag, name, _, n_exc, n_silent in TX:
+        status = tx_status[tag]
         path = os.path.join(pe_dir, name + '.exe')
         res = {}
         for mode, args in (('sys', ['--Sys', '--loader']), ('hle', ['--HLE'])):
-            od = os.path.join(outdir, name + '_' + mode)
+            od = os.path.join(outdir, name + '_' + mode + ('' if env == 'vmware_guest' else '_' + env))
             os.makedirs(od, exist_ok=True)
             for f in ('console_capture.txt', 'fs_access.txt'):
                 if os.path.isfile(os.path.join(od, f)):
                     os.remove(os.path.join(od, f))   # this suite's own output of an earlier run (one file each)
-            rc, out = T1H.run([oep, '--guest'] + args + ['--out-dir', od, path])
+            rc, out = T1H.run([oep, flag] + args + ['--out-dir', od, path])
             obs = T1H.observable(out)
             st = [l for l in obs if l.startswith('[emu-oep] observable: exit status: ')]
             got = int(st[0].split(': ', 2)[2].split()[0], 16) if len(st) == 1 else None
@@ -139,11 +157,16 @@ def main(argv):
                             'parameters; first difference: %s)' % (tag, next((i for i, (a, b) in enumerate(zip(s[2], h[2])) if a != b), None)))
         check(s[3] == h[3] and len(s[3]) > 0, '%s: --Sys and --HLE print the same %d lines (the observations of the test PE)' % (tag, len(s[3])))
         text[tag] = s[3]
+        if env == 'bare_host':
+            first = next((i for i, (a, b) in enumerate(zip(s[3], host_text.get(tag, []))) if a != b), None)
+            check(s[3] == host_text.get(tag), '%s --host: the emulated lines = the %d lines of the bare host\'s native run (hostref_bare_host.txt; first difference at line %s)'
+                  % (tag, len(host_text.get(tag, [])), first))
     # the native reference: started detached (tm_nt run.detached) and with the standard output on a pipe
     live = os.path.join(os.environ.get('SystemRoot', r'C:' + B + 'Windows'), 'System32', 'ntdll.dll')
     cap_sha = hashlib.sha256(open(os.path.join(cap, 'ntdll.dll'), 'rb').read()).hexdigest() if cap else ''
     if os.path.isfile(live) and hashlib.sha256(open(live, 'rb').read()).hexdigest() == cap_sha:
-        for tag, name, status, _, _ in TX:
+        for tag, name, _, _, _ in TX:
+            status = tx_status[tag]
             path = os.path.join(pe_dir, name + '.exe')
             r = subprocess.run([tm, 'run.detached', path], capture_output=True, text=True, timeout=120)
             m = [re.search(r'exit code ([0-9A-F]+)H', l) for l in r.stdout.splitlines() if l.startswith('tm_nt run.detached: ')]
@@ -157,7 +180,7 @@ def main(argv):
                   'NATIVE REFERENCE (labelled): %s with its standard output on a pipe exits %08XH and prints the %d emulated lines exactly (got exit %08XH, %d lines, first '
                   'difference at line %s)' % (tag, status, len(text.get(tag, [])), r.returncode & 0xFFFFFFFF, len(nat), first))
     else:
-        say('native reference: not applicable here (the live ntdll.dll is not the VMware-guest capture)')
+        say('native reference: not applicable here (the live ntdll.dll is not the %s capture)' % env)
     if fails:
         say('FAIL (%d problem(s))' % len(fails))
         return 1

@@ -357,8 +357,10 @@ namespace emu::win
 		// measured): EnabledFeatures / EnabledVolatileFeatures = XCR0; Size = CPUID.(0DH, 0).EBX (the size for XCR0); ControlFlags
 		// OptimizedSave = XSAVEOPT (sub-leaf 1 EAX[0]), CompactionEnabled = XSAVEC (EAX[1]); Features[0] {0, A0H}, [1] {A0H, 100H}, [i >= 2]
 		// {EBX, EAX} of every user component the CPU supports (CPUID.(0DH, 0) EDX:EAX - measured: PKRU listed although XCR0 lacks it);
-		// EnabledSupervisorFeatures = EnabledUserVisibleSupervisorFeatures = CET_U (bit 11) when the CPU supports it (sub-leaf 1 EDX:ECX;
-		// Windows 10 19044's choice, measured); AllFeatures[i] = the size of every supported user or supervisor component; AllFeatureSize = the
+		// EnabledSupervisorFeatures = the supported ones of PT (bit 8) and CET_U (bit 11), EnabledUserVisibleSupervisorFeatures = CET_U only (sub-leaf 1
+		// EDX:ECX; Windows 10's choice, MEASURED in both environments by TX4 kuser.xstate: the VMware guest - sub-leaf 1 ECX 1800H, no PT -
+		// "supervisor=800"; the bare host - ECX 19900H: PT, CET_U, CET_S, bits 15 / 16 - "supervisor=900", host_reg_ref_v2 2026-10-30;
+		// P57 queued task, U2380); AllFeatures[i] = the size of every supported user or supervisor component; AllFeatureSize = the
 		// compacted size of the enabled user + supervisor components; AlignedFeatures = the enabled ones with sub-leaf ECX[1]
 		uint32_t s0[ 4 ] = {};
 		if ( e_->has_profile() && leaf( 0, s0 ) && leaf( 1, s1 ) && kuser_page_ )
@@ -367,7 +369,7 @@ namespace emu::win
 			auto p32 = [ & ]( size_t o, uint32_t v ) { std::memcpy( x + o, &v, 4 ); };
 			auto p64 = [ & ]( size_t o, uint64_t v ) { std::memcpy( x + o, &v, 8 ); };
 			const uint64_t user_sup = uint64_t( s0[ 3 ] ) << 32 | s0[ 0 ], super_sup = uint64_t( s1[ 3 ] ) << 32 | s1[ 2 ];
-			const uint64_t super_en = super_sup & 0x800;
+			const uint64_t super_en = super_sup & 0x900;   // PT | CET_U (measured: TX4 guest 800H, bare host 900H)
 			p64( 0x0, xcr0 );
 			p64( 0x8, xcr0 );
 			p32( 0x10, s0[ 1 ] );
@@ -403,7 +405,7 @@ namespace emu::win
 			p64( 0x218, super_en );
 			p64( 0x220, aligned );
 			p32( 0x228, uint32_t( all ) );
-			p64( 0x330, super_en );
+			p64( 0x330, super_sup & 0x800 );   // EnabledUserVisibleSupervisorFeatures: CET_U only (measured: TX4 kuser.xstate.all, bare host 800H with 900H enabled)
 			std::memcpy( kuser_page_.get() + 0x3D8, x, sizeof( x ) );
 			env_lines_.push_back( "KUSER XState (3D8H, P49): EnabledFeatures " + hx( xcr0 ) + ", Size " + hx( s0[ 1 ] ) + ", ControlFlags " + hx( ( s1[ 0 ] & 3 ) ) +
 								  ", EnabledSupervisorFeatures " + hx( super_en ) + ", AllFeatureSize " + hx( all ) + " (from the profile's leaf 0DH; TX4 kuser.xstate.all)" );

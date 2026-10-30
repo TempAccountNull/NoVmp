@@ -1,0 +1,177 @@
+# BARE-HOST native references of the test PEs (environment bare_host; host_reg_ref_v2 run 2026-10-30T16:20:28, Windows build 19045.7417): "status Tn X" = the
+# exit status of Tn started DETACHED by tm_nt run.detached (T6 normally: run.normal), "tx TXn X" = TXn's exit status with its standard
+# output on a pipe, "text TXn <line>" = its printed lines in order. Imported by Emulator/tools/hostref_import.py (P57, ledger U2381);
+# checked by win_env_sys_loader.py / win_env_exceptions.py --env bare_host.
+status T2 2B
+status T3 2E
+status T5 2F
+status T6 36
+status T7 1F343A34
+status T8 1C007FFF
+status T9 3900007F
+status T10 3A000100
+tx TX1 61EDBFE4
+tx TX2 62E99E3A
+tx TX3 637C7537
+tx TX4 645D0D6B
+tx TX5 65EDD72C
+tx TX6 66901B83
+text TX1 TX1 start
+text TX1 TX1 e01 code=80000003 fl=0 nest=0 addr=10000000000017C7 np=1 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=10000000000017C7 efl=246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=A1 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 est-at=0 dc.pc=10000000000017C7 dc.ib=1000000000000000 dc.est-est=0 dc.fe=1000000000005054 dc.ctx-ctx=FFFFFFFFFFFFF930 dc.lh=1000000000001572
+text TX1 after rsp-before=0 rbx=5A5A0001
+text TX1 TX1 e02 code=80000003 fl=0 nest=0 addr=1000000000001806 np=1 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001806 efl=246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=A2 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 est-at=0 dc.pc=1000000000001806 dc.ib=1000000000000000 dc.est-est=0 dc.fe=1000000000005054 dc.ctx-ctx=FFFFFFFFFFFFF930 dc.lh=1000000000001572
+text TX1 after rsp-before=0 rbx=5A5A0002
+text TX1 TX1 e03 code=C000001D fl=0 nest=0 addr=1000000000001845 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001845 efl=10246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=A3 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 est-at=0 dc.pc=1000000000001845 dc.ib=1000000000000000 dc.est-est=0 dc.fe=1000000000005054 dc.ctx-ctx=FFFFFFFFFFFFF930 dc.lh=1000000000001572
+text TX1 after rsp-before=0 rbx=5A5A0003
+text TX1 TX1 e04 code=C0000094 fl=0 nest=0 addr=1000000000001888 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001888 efl=10246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=1 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 est-at=0 dc.pc=1000000000001888 dc.ib=1000000000000000 dc.est-est=0 dc.fe=1000000000005054 dc.ctx-ctx=FFFFFFFFFFFFF930 dc.lh=1000000000001572
+text TX1 after rsp-before=0 rbx=5A5A0004
+text TX1 TX1 e05 code=C0000095 fl=0 nest=0 addr=10000000000018CD np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=10000000000018CD efl=10246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=80000000 rcx=FFFFFFFF rdx=FFFFFFFF at-ctx-lo6=700 ctx&3F=0 est-at=0 dc.pc=10000000000018CD dc.ib=1000000000000000 dc.est-est=0 dc.fe=1000000000005054 dc.ctx-ctx=FFFFFFFFFFFFF930 dc.lh=1000000000001572
+text TX1 after rsp-before=0 rbx=5A5A0005
+text TX1 TX1 e06 code=C0000096 fl=0 nest=0 addr=100000000000190C np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=100000000000190C efl=10246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=A6 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 est-at=0 dc.pc=100000000000190C dc.ib=1000000000000000 dc.est-est=0 dc.fe=1000000000005054 dc.ctx-ctx=FFFFFFFFFFFFF930 dc.lh=1000000000001572
+text TX1 after rsp-before=0 rbx=5A5A0006
+text TX1 TX1 e07 code=C0000005 fl=0 nest=0 addr=100000000000194C np=2 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=100000000000194C efl=10246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=A7 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 est-at=0 dc.pc=100000000000194C dc.ib=1000000000000000 dc.est-est=0 dc.fe=1000000000005054 dc.ctx-ctx=FFFFFFFFFFFFF930 dc.lh=1000000000001572
+text TX1 after rsp-before=0 rbx=5A5A0007
+text TX1 TX1 e08 code=C0000005 fl=0 nest=0 addr=1000000000001993 np=2 i0=1 i1=1000000000003020 rec-ctx=4F0 cf=10005F rip=1000000000001993 efl=10246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=A8 rcx=1000000000003020 rdx=0 at-ctx-lo6=700 ctx&3F=0 est-at=0 dc.pc=1000000000001993 dc.ib=1000000000000000 dc.est-est=0 dc.fe=1000000000005054 dc.ctx-ctx=FFFFFFFFFFFFF930 dc.lh=1000000000001572
+text TX1 after rsp-before=0 rbx=5A5A0008
+text TX1 TX1 e09 code=C0000005 fl=0 nest=0 addr=1000000000004238 np=2 i0=8 i1=1000000000004238 rec-ctx=4F0 cf=10005F rip=1000000000004238 efl=10246 rsp-at=FFFFFFFFFFFFFFF8 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=A9 rcx=1000000000004238 rdx=0 at-ctx-lo6=700 ctx&3F=0 est-at=0 dc.pc=10000000000019DC dc.ib=1000000000000000 dc.est-est=0 dc.fe=1000000000005054 dc.ctx-ctx=FFFFFFFFFFFFF930 dc.lh=1000000000001572
+text TX1 after rsp-before=0 rbx=5A5A0009
+text TX1 TX1 e10 code=C0000005 fl=0 nest=0 addr=1000000000001A23 np=2 i0=0 i1=FFFFFFFFFFFFFFFF rec-ctx=4F0 cf=10005F rip=1000000000001A23 efl=10246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=AA rcx=8000000000000000 rdx=0 at-ctx-lo6=700 ctx&3F=0 est-at=0 dc.pc=1000000000001A23 dc.ib=1000000000000000 dc.est-est=0 dc.fe=1000000000005054 dc.ctx-ctx=FFFFFFFFFFFFF930 dc.lh=1000000000001572
+text TX1 after rsp-before=0 rbx=5A5A000A
+text TX1 TX1 e11 code=C0000095 fl=0 nest=0 addr=1000000000001A64 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001A65 efl=246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=AB rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 est-at=0 dc.pc=1000000000001A65 dc.ib=1000000000000000 dc.est-est=0 dc.fe=1000000000005054 dc.ctx-ctx=FFFFFFFFFFFFF930 dc.lh=1000000000001572
+text TX1 after rsp-before=0 rbx=5A5A000B
+text TX1 TX1 e12 code=80000004 fl=0 nest=0 addr=1000000000001AA4 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001AA4 efl=246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=AC rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 est-at=0 dc.pc=1000000000001AA4 dc.ib=1000000000000000 dc.est-est=0 dc.fe=1000000000005054 dc.ctx-ctx=FFFFFFFFFFFFF930 dc.lh=1000000000001572
+text TX1 after rsp-before=0 rbx=5A5A000C
+text TX1 TX1 e13 code=C0000420 fl=0 nest=0 addr=1000000000001AE2 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001AE2 efl=246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=AD rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 est-at=0 dc.pc=1000000000001AE2 dc.ib=1000000000000000 dc.est-est=0 dc.fe=1000000000005054 dc.ctx-ctx=FFFFFFFFFFFFF930 dc.lh=1000000000001572
+text TX1 after rsp-before=0 rbx=5A5A000D
+text TX1 TX1 e14 code=C0000005 fl=0 nest=0 addr=1000000000001B22 np=2 i0=0 i1=FFFFFFFFFFFFFFFF rec-ctx=4F0 cf=10005F rip=1000000000001B22 efl=10246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=AE rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 est-at=0 dc.pc=1000000000001B22 dc.ib=1000000000000000 dc.est-est=0 dc.fe=1000000000005054 dc.ctx-ctx=FFFFFFFFFFFFF930 dc.lh=1000000000001572
+text TX1 after rsp-before=0 rbx=5A5A000E
+text TX1 TX1 e15 code=C0000096 fl=0 nest=0 addr=1000000000001B67 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001B67 efl=10246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=AF rcx=0 rdx=80 at-ctx-lo6=700 ctx&3F=0 est-at=0 dc.pc=1000000000001B67 dc.ib=1000000000000000 dc.est-est=0 dc.fe=1000000000005054 dc.ctx-ctx=FFFFFFFFFFFFF930 dc.lh=1000000000001572
+text TX1 after rsp-before=0 rbx=5A5A000F
+text TX1 TX1 e16 code=C0000096 fl=0 nest=0 addr=1000000000001BA5 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001BA5 efl=10246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=B0 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 est-at=0 dc.pc=1000000000001BA5 dc.ib=1000000000000000 dc.est-est=0 dc.fe=1000000000005054 dc.ctx-ctx=FFFFFFFFFFFFF930 dc.lh=1000000000001572
+text TX1 after rsp-before=0 rbx=5A5A0010
+text TX1 TX1 e17 code=C0000096 fl=0 nest=0 addr=1000000000001BE5 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001BE5 efl=10246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=B1 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 est-at=0 dc.pc=1000000000001BE5 dc.ib=1000000000000000 dc.est-est=0 dc.fe=1000000000005054 dc.ctx-ctx=FFFFFFFFFFFFF930 dc.lh=1000000000001572
+text TX1 after rsp-before=0 rbx=5A5A0011
+text TX1 TX1 e18 regs rax=1 rcx=0 rdx=0 cf=0
+text TX1 TX1 e18 none
+text TX1 after rsp-before=0 rbx=5A5A0012
+text TX1 TX1 e19 code=C0000096 fl=0 nest=0 addr=1000000000001C70 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001C70 efl=10246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=C3 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 est-at=0 dc.pc=1000000000001C70 dc.ib=1000000000000000 dc.est-est=0 dc.fe=1000000000005054 dc.ctx-ctx=FFFFFFFFFFFFF930 dc.lh=1000000000001572
+text TX1 after rsp-before=0 rbx=5A5A0013
+text TX1 TX1 e20 code=C0000096 fl=0 nest=0 addr=1000000000001CB3 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001CB3 efl=10246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=C4 rcx=0 rdx=80 at-ctx-lo6=700 ctx&3F=0 est-at=0 dc.pc=1000000000001CB3 dc.ib=1000000000000000 dc.est-est=0 dc.fe=1000000000005054 dc.ctx-ctx=FFFFFFFFFFFFF930 dc.lh=1000000000001572
+text TX1 after rsp-before=0 rbx=5A5A0014
+text TX1 TX1 e21 code=C0000096 fl=0 nest=0 addr=1000000000001CF6 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001CF6 efl=10246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=C5 rcx=10 rdx=0 at-ctx-lo6=700 ctx&3F=0 est-at=0 dc.pc=1000000000001CF6 dc.ib=1000000000000000 dc.est-est=0 dc.fe=1000000000005054 dc.ctx-ctx=FFFFFFFFFFFFF930 dc.lh=1000000000001572
+text TX1 after rsp-before=0 rbx=5A5A0015
+text TX1 TX1 e22 code=C0000096 fl=0 nest=0 addr=1000000000001D35 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001D35 efl=10246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=C6 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 est-at=0 dc.pc=1000000000001D35 dc.ib=1000000000000000 dc.est-est=0 dc.fe=1000000000005054 dc.ctx-ctx=FFFFFFFFFFFFF930 dc.lh=1000000000001572
+text TX1 after rsp-before=0 rbx=5A5A0016
+text TX1 TX1 e23 code=C0000096 fl=0 nest=0 addr=1000000000001D76 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001D76 efl=10246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=C7 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 est-at=0 dc.pc=1000000000001D76 dc.ib=1000000000000000 dc.est-est=0 dc.fe=1000000000005054 dc.ctx-ctx=FFFFFFFFFFFFF930 dc.lh=1000000000001572
+text TX1 after rsp-before=0 rbx=5A5A0017
+text TX1 TX1 e24 code=C0000096 fl=0 nest=0 addr=1000000000001DBD np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001DBD efl=10246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=C8 rcx=1000000000003020 rdx=0 at-ctx-lo6=700 ctx&3F=0 est-at=0 dc.pc=1000000000001DBD dc.ib=1000000000000000 dc.est-est=0 dc.fe=1000000000005054 dc.ctx-ctx=FFFFFFFFFFFFF930 dc.lh=1000000000001572
+text TX1 after rsp-before=0 rbx=5A5A0018
+text TX1 TX1 e25 code=C0000096 fl=0 nest=0 addr=1000000000001E04 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001E04 efl=10246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=C9 rcx=1000000000003020 rdx=0 at-ctx-lo6=700 ctx&3F=0 est-at=0 dc.pc=1000000000001E04 dc.ib=1000000000000000 dc.est-est=0 dc.fe=1000000000005054 dc.ctx-ctx=FFFFFFFFFFFFF930 dc.lh=1000000000001572
+text TX1 after rsp-before=0 rbx=5A5A0019
+text TX1 TX1 e26 code=C0000096 fl=0 nest=0 addr=1000000000001E44 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001E44 efl=10246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=CA rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 est-at=0 dc.pc=1000000000001E44 dc.ib=1000000000000000 dc.est-est=0 dc.fe=1000000000005054 dc.ctx-ctx=FFFFFFFFFFFFF930 dc.lh=1000000000001572
+text TX1 after rsp-before=0 rbx=5A5A001A
+text TX1 TX1 e27 code=C0000096 fl=0 nest=0 addr=1000000000001E86 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001E86 efl=10246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=CB rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 est-at=0 dc.pc=1000000000001E86 dc.ib=1000000000000000 dc.est-est=0 dc.fe=1000000000005054 dc.ctx-ctx=FFFFFFFFFFFFF930 dc.lh=1000000000001572
+text TX1 after rsp-before=0 rbx=5A5A001B
+text TX1 TX1 e28 code=C0000096 fl=0 nest=0 addr=1000000000001ED1 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001ED1 efl=10246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=CC rcx=0 rdx=80 at-ctx-lo6=700 ctx&3F=0 est-at=0 dc.pc=1000000000001ED1 dc.ib=1000000000000000 dc.est-est=0 dc.fe=1000000000005054 dc.ctx-ctx=FFFFFFFFFFFFF930 dc.lh=1000000000001572
+text TX1 after rsp-before=0 rbx=5A5A001C
+text TX1 TX1 e29 code=C0000005 fl=0 nest=0 addr=1000000000001F0F np=2 i0=0 i1=FFFFFFFFFFFFFFFF rec-ctx=4F0 cf=10005F rip=1000000000001F0F efl=10246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=CD rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 est-at=0 dc.pc=1000000000001F0F dc.ib=1000000000000000 dc.est-est=0 dc.fe=1000000000005054 dc.ctx-ctx=FFFFFFFFFFFFF930 dc.lh=1000000000001572
+text TX1 after rsp-before=0 rbx=5A5A001D
+text TX1 TX1 e30 code=80000003 fl=0 nest=0 addr=1000000000001F57 np=1 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001F56 efl=246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=0 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 est-at=0 dc.pc=1000000000001F56 dc.ib=1000000000000000 dc.est-est=0 dc.fe=1000000000005054 dc.ctx-ctx=FFFFFFFFFFFFF930 dc.lh=1000000000001572
+text TX1 after rsp-before=0 rbx=5A5A001E
+text TX1 TX1 e31 regs rax=3 rcx=0 rdx=0 cf=0
+text TX1 TX1 e31 none
+text TX1 after rsp-before=0 rbx=5A5A001F
+text TX1 TX1 e32 code=80000003 fl=0 nest=0 addr=1000000000001FF1 np=1 i0=12345 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001FF0 efl=246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=12345 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 est-at=0 dc.pc=1000000000001FF0 dc.ib=1000000000000000 dc.est-est=0 dc.fe=1000000000005054 dc.ctx-ctx=FFFFFFFFFFFFF930 dc.lh=1000000000001572
+text TX1 after rsp-before=0 rbx=5A5A0020
+text TX1 TX1 e33 code=80000003 fl=0 nest=0 addr=100000000000203E np=1 i0=2 i1=0 rec-ctx=4F0 cf=10005F rip=100000000000203D efl=246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=2 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 est-at=0 dc.pc=100000000000203D dc.ib=1000000000000000 dc.est-est=0 dc.fe=1000000000005054 dc.ctx-ctx=FFFFFFFFFFFFF930 dc.lh=1000000000001572
+text TX1 after rsp-before=0 rbx=5A5A0021
+text TX1 TX1 e34 regs rax=4 rcx=0 rdx=0 cf=0
+text TX1 TX1 e34 none
+text TX1 after rsp-before=0 rbx=5A5A0022
+text TX1 TX1 e35 regs rax=5 rcx=0 rdx=0 cf=0
+text TX1 TX1 e35 none
+text TX1 after rsp-before=0 rbx=5A5A0023
+text TX1 TX1 end events=1F
+text TX2 TX2 start
+text TX2 TX2 registered handles-nonzero=1
+text TX2 TX2 E1 code=C000001D fl=0 nest=0 addr=1000000000001656 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001656 efl=10246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=E2 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 order=78626163 same=0 rax=5A5A0E00
+text TX2 TX2 E2 code=C000001D fl=0 nest=0 addr=1000000000001656 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001656 efl=10246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=E2 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 order=7873626163 same=0 rax=5A5A0E00
+text TX2 TX2 removed rm.c=1
+text TX2 TX2 E3 code=C000001D fl=0 nest=0 addr=1000000000001656 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001656 efl=10246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=E2 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 order=786261 same=0 rax=5A5A0E00
+text TX2 TX2 removed rm.a=1 rm.b=1 rm.x=1 rm.a-again=0
+text TX2 TX2 E4 code=C000001D fl=0 nest=0 addr=1000000000001656 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001656 efl=10246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=E2 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 order=73 same=0 rax=5A5A0E00
+text TX3 TX3 start
+text TX3 TX3 step code=80000004 fl=0 nest=0 addr=1000000000001543 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001543 efl=246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=0 rcx=3 rdx=0 at-ctx-lo6=700 ctx&3F=0 n=1 rsi=1000000000003240 rdi=1000000000003250
+text TX3 TX3 step code=80000004 fl=0 nest=0 addr=1000000000001543 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001543 efl=10246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=0 rcx=2 rdx=0 at-ctx-lo6=700 ctx&3F=0 n=2 rsi=1000000000003241 rdi=1000000000003251
+text TX3 TX3 step code=80000004 fl=0 nest=0 addr=1000000000001543 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001543 efl=10246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=0 rcx=1 rdx=0 at-ctx-lo6=700 ctx&3F=0 n=3 rsi=1000000000003242 rdi=1000000000003252
+text TX3 TX3 step code=80000004 fl=0 nest=0 addr=1000000000001545 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001545 efl=246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=0 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 n=4 rsi=1000000000003243 rdi=1000000000003253
+text TX3 TX3 step code=80000004 fl=0 nest=0 addr=1000000000001547 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001547 efl=246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=0 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 n=5 rsi=1000000000003243 rdi=1000000000003253
+text TX3 TX3 step code=80000004 fl=0 nest=0 addr=1000000000001549 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001549 efl=246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=0 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 n=6 rsi=1000000000003243 rdi=1000000000003253
+text TX3 TX3 step code=80000004 fl=0 nest=0 addr=100000000000154E np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=100000000000154E efl=246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=0 rcx=4 rdx=0 at-ctx-lo6=700 ctx&3F=0 n=7 rsi=1000000000003243 rdi=1000000000003253
+text TX3 TX3 step code=80000004 fl=0 nest=0 addr=1000000000001555 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001555 efl=246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=0 rcx=4 rdx=0 at-ctx-lo6=700 ctx&3F=0 n=8 rsi=1000000000003260 rdi=1000000000003253
+text TX3 TX3 step code=80000004 fl=0 nest=0 addr=100000000000155C np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=100000000000155C efl=246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=0 rcx=4 rdx=0 at-ctx-lo6=700 ctx&3F=0 n=9 rsi=1000000000003260 rdi=1000000000003264
+text TX3 TX3 step code=80000004 fl=0 nest=0 addr=100000000000155C np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=100000000000155C efl=10246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=0 rcx=3 rdx=0 at-ctx-lo6=700 ctx&3F=0 n=A rsi=1000000000003261 rdi=1000000000003265
+text TX3 TX3 step code=80000004 fl=0 nest=0 addr=100000000000155E np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=100000000000155E efl=202 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=0 rcx=2 rdx=0 at-ctx-lo6=700 ctx&3F=0 n=B rsi=1000000000003262 rdi=1000000000003266
+text TX3 TX3 step code=80000004 fl=0 nest=0 addr=100000000000155F np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=100000000000155F efl=202 rsp-at=FFFFFFFFFFFFFFF8 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=0 rcx=2 rdx=0 at-ctx-lo6=700 ctx&3F=0 n=C rsi=1000000000003262 rdi=1000000000003266
+text TX3 TX3 step code=80000004 fl=0 nest=0 addr=1000000000001560 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001560 efl=202 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=302 rcx=2 rdx=0 at-ctx-lo6=700 ctx&3F=0 n=D rsi=1000000000003262 rdi=1000000000003266
+text TX3 TX3 step code=80000004 fl=0 nest=0 addr=1000000000001567 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001567 efl=202 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=302 rcx=2 rdx=0 at-ctx-lo6=700 ctx&3F=0 n=E rsi=1000000000003262 rdi=1000000000003266
+text TX3 TX3 step code=80000004 fl=0 nest=0 addr=100000000000156C np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=100000000000156C efl=202 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=302 rcx=2 rdx=0 at-ctx-lo6=700 ctx&3F=0 n=F rsi=1000000000003262 rdi=1000000000003266
+text TX3 TX3 step code=80000004 fl=0 nest=0 addr=1000000000001573 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001573 efl=202 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=302 rcx=2 rdx=0 at-ctx-lo6=700 ctx&3F=0 n=10 rsi=1000000000003262 rdi=1000000000003268
+text TX3 TX3 step code=80000004 fl=0 nest=0 addr=100000000000157D np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=100000000000157D efl=202 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=1111111111111111 rcx=2 rdx=0 at-ctx-lo6=700 ctx&3F=0 n=11 rsi=1000000000003262 rdi=1000000000003268
+text TX3 TX3 step code=80000004 fl=0 nest=0 addr=100000000000157D np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=100000000000157D efl=10202 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=1111111111111111 rcx=1 rdx=0 at-ctx-lo6=700 ctx&3F=0 n=12 rsi=1000000000003262 rdi=1000000000003270
+text TX3 TX3 step code=80000004 fl=0 nest=0 addr=1000000000001580 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001580 efl=202 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=1111111111111111 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 n=13 rsi=1000000000003262 rdi=1000000000003278
+text TX3 TX3 step code=80000004 fl=0 nest=0 addr=1000000000001581 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001581 efl=202 rsp-at=FFFFFFFFFFFFFFF8 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=1111111111111111 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 n=14 rsi=1000000000003262 rdi=1000000000003278
+text TX3 TX3 step code=80000004 fl=0 nest=0 addr=1000000000001582 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001582 efl=202 rsp-at=FFFFFFFFFFFFFFF0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=1111111111111111 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 n=15 rsi=1000000000003262 rdi=1000000000003278
+text TX3 TX3 step code=80000004 fl=0 nest=0 addr=1000000000001583 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001583 efl=202 rsp-at=FFFFFFFFFFFFFFE8 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=1111111111111111 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 n=16 rsi=1000000000003262 rdi=1000000000003278
+text TX3 TX3 step code=80000004 fl=0 nest=0 addr=1000000000001584 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001584 efl=202 rsp-at=FFFFFFFFFFFFFFE0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=1111111111111111 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 n=17 rsi=1000000000003262 rdi=1000000000003278
+text TX3 TX3 step code=80000004 fl=0 nest=0 addr=1000000000001585 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001585 efl=202 rsp-at=FFFFFFFFFFFFFFD8 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=1111111111111111 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 n=18 rsi=1000000000003262 rdi=1000000000003278
+text TX3 TX3 step code=80000004 fl=0 nest=0 addr=1000000000001586 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001586 efl=202 rsp-at=FFFFFFFFFFFFFFD0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=1111111111111111 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 n=19 rsi=1000000000003262 rdi=1000000000003278
+text TX3 TX3 step code=80000004 fl=0 nest=0 addr=1000000000001587 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001587 efl=202 rsp-at=FFFFFFFFFFFFFFC8 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=1111111111111111 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 n=1A rsi=1000000000003262 rdi=1000000000003278
+text TX3 TX3 step code=80000004 fl=0 nest=0 addr=1000000000001588 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001588 efl=202 rsp-at=FFFFFFFFFFFFFFC0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=1111111111111111 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 n=1B rsi=1000000000003262 rdi=1000000000003278
+text TX3 TX3 step code=80000004 fl=0 nest=0 addr=100000000000158D np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=100000000000158D efl=202 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=1111111111111111 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 n=1C rsi=1000000000003262 rdi=1000000000003278
+text TX3 TX3 step code=80000004 fl=0 nest=0 addr=1000000000001598 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001598 efl=202 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=1111111111111111 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 n=1D rsi=1000000000003262 rdi=1000000000003278
+text TX3 TX3 end rcx=0 pushfq-image=302 dst=434241 q=0 n=1D
+text TX4 TX4 start
+text TX4 TX4 kuser.xstate xcr0=7 enabled=7 volatile=7 size=340 control=3 avx.off=240 avx.size=100 supervisor=900 aligned=0 allsize=3D0
+text TX4 TX4 kuser.xstate.all q=7 q=7 q=300000340 q=A000000000 q=100000000A0 q=10000000240 q=0 q=0 q=0 q=0 q=0 q=0
+text TX4 TX4 kuser.xstate.all q=800000A80 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0
+text TX4 TX4 kuser.xstate.all q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0
+text TX4 TX4 kuser.xstate.all q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0
+text TX4 TX4 kuser.xstate.all q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0
+text TX4 TX4 kuser.xstate.all q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=900 q=0 q=A0000003D0 q=10000000100 q=0
+text TX4 TX4 kuser.xstate.all q=0 q=8000000000 q=8 q=1800000010 q=0 q=800000328 q=0 q=0 q=0 q=0 q=0 q=0
+text TX4 TX4 kuser.xstate.all q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0
+text TX4 TX4 kuser.xstate.all q=0 q=0 q=0 q=0 q=0 q=0 q=800
+text TX4 TX4 E1 code=C000001D fl=0 nest=0 addr=1000000000001B8D np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001B8D efl=10246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=1000000000003220 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 ex.all-lo6=700FFFFFB30 ex.legacy=4D0FFFFFB30 ex.xstate-lo6=140000000F0 ex.+18=CCCCCCCCCCCCCCCC
+text TX4 TX4 E1 frame+4F0 q=C000001D q=0 q=1000000000001B8D q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=CCCCCCCCCCCCCCCC q=1000000000001B8D q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=2000000000000000 q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC
+text TX4 TX4 E1 ctx-other q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=0 q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC
+text TX4 TX4 E1 ctx-other q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC
+text TX4 TX4 E1 ctx-other q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC
+text TX4 TX4 E1 ctx-other q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC
+text TX4 TX4 E1 ctx-other q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC
+text TX4 TX4 E1 ctx-other q=0 q=0 q=0 q=0
+text TX4 TX4 E1 fltsave q=27F q=0 q=0 q=FFFF00001F80 q=0 q=0
+text TX4 TX4 E1 fltsave+1A0 q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC
+text TX4 TX4 E1 xs.mask=4 xs.compaction=8000000000000004 q=0 q=0 q=0 q=0 q=0 q=0 ymmh=pat=FFFF xmm=pat=FFFF
+text TX4 TX4 after ymm0=807060504030201 ymm0=100F0E0D0C0B0A09 ymm0=1817161514131211 ymm0=201F1E1D1C1B1A19 ymm1=5555555555555555 ymm1=6666666666666666 ymm1=7777777777777777 ymm1=8888888888888888 ymm2=4847464544434241 ymm2=504F4E4D4C4B4A49 ymm2=5857565554535251 ymm2=605F5E5D5C5B5A59
+text TX4 TX4 E2 code=C000001D fl=0 nest=0 addr=1000000000001C57 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=1000000000001C57 efl=10246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=1000000000003220 rcx=0 rdx=0 at-ctx-lo6=700 ctx&3F=0 ex.all-lo6=700FFFFFB30 ex.legacy=4D0FFFFFB30 ex.xstate-lo6=140000000F0 ex.+18=CCCCCCCCCCCCCCCC
+text TX4 TX4 E2 frame+4F0 q=C000001D q=0 q=1000000000001C57 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=0 q=CCCCCCCCCCCCCCCC q=1000000000001C57 q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=2000000000000000 q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC
+text TX4 TX4 E2 ctx-other q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=0 q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC
+text TX4 TX4 E2 ctx-other q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC
+text TX4 TX4 E2 ctx-other q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC
+text TX4 TX4 E2 ctx-other q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC
+text TX4 TX4 E2 ctx-other q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC
+text TX4 TX4 E2 ctx-other q=0 q=0 q=0 q=0
+text TX4 TX4 E2 fltsave q=27F q=0 q=0 q=FFFF00001F80 q=0 q=0
+text TX4 TX4 E2 fltsave+1A0 q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC q=CCCCCCCCCCCCCCCC
+text TX4 TX4 E2 xs.mask=0 xs.compaction=8000000000000004 q=0 q=0 q=0 q=0 q=0 q=0 ymmh=pat=0 xmm=pat=FFFF
+text TX4 TX4 after ymm0=807060504030201 ymm0=100F0E0D0C0B0A09 ymm0=0 ymm0=0 ymm1=2827262524232221 ymm1=302F2E2D2C2B2A29 ymm1=0 ymm1=0 ymm2=4847464544434241 ymm2=504F4E4D4C4B4A49 ymm2=0 ymm2=0
+text TX4 TX4 E3 rsp-ctx by rsp&38 q=700 q=708 q=710 q=718 q=720 q=728 q=730 q=738
+text TX5 TX5 start
+text TX5 TX5 debug peb.beingdebugged=0 peb.ntglobalflag=0 heap.flags=2 heap.forceflags=0 isdebuggerpresent=0 checkremote.ret=1 checkremote.b=0 kuser.kddebuggerenabled=0
+text TX5 TX5 nt qip7.status=0 qip7.port=0 qip7.rl=CCCCCCCC00000008 qip1e.status=C0000353 qip1e.handle=0 qip1e.rl=CCCCCCCC00000008 qip1f.status=0 qip1f.flags=CCCCCCCC00000001 qip1f.rl=CCCCCCCC00000004 qsi23.status=0 qsi23.info=CCCCCCCCCCCC0100 qsi23.rl=CCCCCCCC00000002
+text TX5 TX5 dr getthreadcontext=1 cf=100010 dr0=0 dr1=0 dr2=0 dr3=0 dr6=0 dr7=0
+text TX5 TX5 layout relations=7FFFF tls.index<64=1 teb.exceptionlist=0 peb.osbuildnumber=4A65
+text TX6 TX6 start
+text TX6 TX6 E1 code=80000002 fl=0 nest=0 addr=10000000000014B9 np=0 i0=0 i1=0 rec-ctx=4F0 cf=10005F rip=10000000000014B9 efl=50246 rsp-at=0 cs.ds.es.fs=53002B002B0033 gs.ss=2B002B mxcsr=1F80 fcw=27F dr0|1|2|3=0 dr6=0 dr7=0 rax=10000000000014BC rcx=1000000000003230 rdx=0 at-ctx-lo6=700 ctx&3F=0
+text TX6 TX6 end loaded=0

@@ -36,8 +36,14 @@ Checked:
      RDTSC / QPC pairs preempted - now each QPC read bracketed by two RDTSC within 10 us; time.st / time.tick - InterruptTime read in the
      same consistent window as SystemTime / TickCountQuad).
 The emulator side (the answers implemented from these lines) is checked by emu-selftest nt_measured_services / nt_measured_pool /
-nt_measured_loader / nt_measured_csr (P40) / nt_measured_console (P41) and by suite win_env_sys_loader. Exit 0 = PASS, 1 = FAIL, 2 = usage.
-usage: python -I nt_measured.py REPO_ROOT TESTS_DIR
+nt_measured_loader / nt_measured_csr (P40) / nt_measured_console (P41) and by suite win_env_sys_loader.
+P57 queued task 2 (ledger U2382): --env bare_host checks Emulator/data/nt_measured_bare_host.txt (the bare host's native measurements, host_reg_ref_v2;
+hostref_import.py) the same way - format, identifier screen, VOLATILE shapes, the file-system table; the cases newer than the host package
+(HOST_NOT_MEASURED) are listed, not required - and compares it with the guest file: every item whose line differs (VOLATILE items by shape) or
+exists on one side only must match a row of HOST_DIFFS, which says what the emulator answers for it under --host (the host value from the
+environment's capture / profile, a loud stop, or a measurement artifact of tm_nt) - an unlisted difference fails. The native reference applies
+only on the bare host (its ntdll). Exit 0 = PASS, 1 = FAIL, 2 = usage.
+usage: python -I nt_measured.py REPO_ROOT TESTS_DIR [--env vmware_guest|bare_host]
 """
 import hashlib
 import importlib.util
@@ -357,6 +363,48 @@ def system_volume_copy(tm, sysroot):
     return tmp, dst
 
 
+# P57 (U2382): the cases the bare-host package (host_reg_ref_v2, tm_nt of 07ff9ec8) did not have - a newer host run measures them
+HOST_NOT_MEASURED = ['nqit', 'nsit', 'nhfd']
+# P57 (U2382): the bare host vs the VMware guest - every differing item and what the emulator answers for it under --host (code: the P57 review)
+HOST_DIFFS = [
+    (r'qsi\.37(r|\.18|\.410)?', 'host value: the node / group mask = the environment\'s active processor mask (data\\platform\\bare_host views\\environment.txt; nt_kernel_measured.cpp query_system_measured)'),
+    (r'qsi\.1(r|\.10)?', 'LOUD STOP under --host: SystemProcessorInformation (1) holds the guest\'s measured bytes and stops for a processor count other than 8 (nt_kernel_measured.cpp) - a host model needs these host lines'),
+    (r'qsix\.6b\.1\.(50|2000)', 'host value: relationship 1 (RelationProcessorCore) from the profile / processor mask (svc_query_system_information_ex)'),
+    (r'qsix\.6b\.(0|2|3|4|ffff)\.(50|2000|0)', 'LOUD STOP: measured, relationship not modelled (svc_query_system_information_ex "measured ... but not modelled yet")'),
+    (r'etw\.reg(40|50|54|60)(\.fields)?', 'VOLATILE by shape on each side: the enable state of the running trace sessions differs between the machines'),
+    (r'kd\.list', 'LOUD STOP: NtQueryDirectoryObject of \\KnownDlls is not modelled (only the set of names is used, nt_kernel_measured.cpp known_dll_sections); the host order differs'),
+    (r'kd\.map\.(0|1)', 'host value: SizeOfImage / the view from the capture\'s DLL file (svc_map_view_of_section)'),
+    (r'etwt\d*\.blob', 'measurement artifact: tm_nt reads the traits blob at the GUEST kernelbase build\'s fixed RVA; the emulator maps the capture\'s own kernelbase bytes'),
+    (r'etwt\d*\.set', 'GUEST answer keyed by (provider GUID, traits size) of the guest kernelbase (nt_kernel_measured.cpp): the host build registers other traits - a (GUID, size) pair that is not listed stops loudly'),
+    (r'sp\.2\.map', 'host value: SizeOfImage of dcomp.dll from the capture\'s file (svc_map_view_of_section)'),
+    (r'u32\..*', 'MEASUREMENT GAP: tm_u32 refused on the host (another user32 build, 10.0.19041.6926 - the offsets of 10.0.19044.7807 only); queued task 3 makes tm_u32 run on both builds'),
+    (r'(nqit|nsit|nhfd)\..*', 'not in the host package (newer cases: HOST_NOT_MEASURED)'),
+    (r'ahc\.46', 'not in the host package (newer: the LookupCdb name of test PE T11, U2375)'),
+]
+
+
+def host_diff_check(root, host_body):
+    """P57 (U2382): the items that differ between the guest and the host file (VOLATILE items compared by shape) and the ones on one side only;
+    returns (rows, unlisted) - rows = (item, kind, classification)"""
+    g = {l.split(':', 1)[0]: l for l in open(os.path.join(root, 'Emulator', 'data', 'nt_measured_vmware_guest.txt'), encoding='ascii').read().replace('\r\n', '\n').split('\n')
+         if l.startswith('tm_nt ')}
+    h = {l.split(':', 1)[0]: l for l in host_body}
+    rows, unlisted = [], []
+    for k in list(g) + [x for x in h if x not in g]:
+        if k in g and k in h:
+            if g[k] == h[k] or same_line(h[k], g[k]):
+                continue
+            kind = 'differs'
+        else:
+            kind = 'guest only' if k in g else 'host only'
+        cls = next((c for rx, c in HOST_DIFFS if re.fullmatch(rx, k[6:])), None)
+        if cls is None:
+            unlisted.append('%s (%s)' % (k[6:], kind))
+        else:
+            rows.append((k[6:], kind, cls))
+    return rows, unlisted
+
+
 def load(name):
     spec = importlib.util.spec_from_file_location(name, os.path.join(HERE, name + '.py'))
     m = importlib.util.module_from_spec(spec)
@@ -369,11 +417,15 @@ def say(msg):
 
 
 def main(argv):
-    if len(argv) != 2:
+    env = 'vmware_guest'
+    if len(argv) == 4 and argv[2] == '--env' and argv[3] in ('vmware_guest', 'bare_host'):
+        env = argv[3]
+    elif len(argv) != 2:
         print(__doc__.strip().splitlines()[-1])
         return 2
     root, tests = os.path.abspath(argv[0]), os.path.abspath(argv[1])
-    data = os.path.join(root, 'Emulator', 'data', 'nt_measured_vmware_guest.txt')
+    data = os.path.join(root, 'Emulator', 'data', 'nt_measured_%s.txt' % env)
+    cases = CASES if env == 'vmware_guest' else [c for c in CASES if c not in HOST_NOT_MEASURED]   # P57 (U2382)
     tm = os.path.join(tests, 'test_pe', 'tm_nt.exe')
     fails = []
 
@@ -393,8 +445,9 @@ def main(argv):
     check(all(l.startswith('tm_nt ') for l in body), 'every data line is a tm_nt output line (%d lines)' % len(body))
     keys = [l.split(':', 1)[0] for l in body]
     check(len(keys) == len(set(keys)), 'no item twice')
-    by_case = {c: [l for l in body if re.match(r'tm_nt %s\d*(\.|:)' % re.escape(c), l)] for c in CASES}   # P41: + a digit suffix (etwt5, wnf2 ...)
-    check(all(by_case[c] for c in CASES) and sum(len(v) for v in by_case.values()) == len(body), 'every tm_nt case recorded (%s), no other line' % ', '.join(CASES))
+    by_case = {c: [l for l in body if re.match(r'tm_nt %s\d*(\.|:)' % re.escape(c), l)] for c in cases}   # P41: + a digit suffix (etwt5, wnf2 ...)
+    check(all(by_case[c] for c in cases) and sum(len(v) for v in by_case.values()) == len(body), 'every tm_nt case recorded (%s), no other line%s' % (
+        ', '.join(cases), '' if env == 'vmware_guest' else '; not in the host package: ' + ', '.join(HOST_NOT_MEASURED)))
     bad = []
     for l in body:
         if re.search(r'S-1-5-21-|DESKTOP-[A-Z0-9]{4}|\\Users\\|[A-Za-z]:\\', l):
@@ -410,16 +463,27 @@ def main(argv):
     # P44 (U2113): the VOLATILE rules - every recorded line of a volatile item has a valid shape, and the RED / GREEN self-check
     vol = [l for l in body if volatile_shape(l) != '']
     check(all(volatile_shape(l) for l in vol), 'VOLATILE items: %d recorded lines (%s), each of a valid shape' % (len(vol), ' '.join(l.split(':', 1)[0][6:] for l in vol)))
-    rg, nred, ngreen = red_green_selfcheck(by_case)
+    if env != 'vmware_guest':
+        # P57 (U2382): the RED / GREEN self-check tests the RULES on the guest's recorded lines (it needs items the host lacks: u32 / nqit)
+        gl = open(os.path.join(root, 'Emulator', 'data', 'nt_measured_vmware_guest.txt'), encoding='ascii').read().replace('\r\n', '\n').split('\n')
+        gb = [l for l in gl if l.startswith('tm_nt ')]
+        rg, nred, ngreen = red_green_selfcheck({c: [l for l in gb if re.match(r'tm_nt %s\d*(\.|:)' % re.escape(c), l)] for c in CASES})
+        rows, unlisted = host_diff_check(root, body)
+        for k, kind, cls in rows:
+            say('  host vs guest: %-22s %-10s %s' % (k, kind, cls))
+        check(not unlisted, 'host vs guest: %d differing / one-sided items, each with what the emulator answers under --host (HOST_DIFFS)%s' % (
+            len(rows) + len(unlisted), ('; UNLISTED: ' + ', '.join(unlisted[:8])) if unlisted else ''))
+    else:
+        rg, nred, ngreen = red_green_selfcheck(by_case)
     check(not rg, 'VOLATILE rules RED / GREEN self-check: %d shape-breaking mutations rejected, %d legitimate variations accepted%s' % (nred - sum('RED' in x for x in rg), ngreen - sum('GREEN' in x for x in rg), ('; ' + '; '.join(rg)) if rg else ''))
     # 2. the native reference
     t1 = load('win_env_t1')
-    cap = t1.capture_dir(root, 'vmware_guest')
+    cap = t1.capture_dir(root, env)
     cap_sha = hashlib.sha256(open(os.path.join(cap, 'ntdll.dll'), 'rb').read()).hexdigest() if cap else ''
     live = os.path.join(os.environ.get('SystemRoot', r'C:\Windows'), 'System32', 'ntdll.dll')
     live_sha = hashlib.sha256(open(live, 'rb').read()).hexdigest() if os.path.isfile(live) else ''
     if cap_sha and live_sha == cap_sha:
-        say('the live ntdll.dll equals the VMware-guest capture: the native reference applies')
+        say('the live ntdll.dll equals the %s capture: the native reference applies' % env)
         diffs = []
         # P40 (U2062): every case runs with the current directory on the system volume (<SystemRoot>) - case 'of' measures the
         # current directory's VOLUME (FileFsDeviceInformation Characteristics), and the emulated image directory lies on the system
@@ -431,7 +495,7 @@ def main(argv):
             check(False, 'a copy of tm_nt.exe on the system volume (%s)' % image)
             image = None
         loose = []
-        for c in CASES if image else []:
+        for c in cases if image else []:
             r = subprocess.run([image, c], capture_output=True, timeout=300, cwd=sysroot)
             got = [l for l in r.stdout.decode('ascii', 'replace').replace('\r\n', '\n').split('\n') if l.startswith('tm_nt ')]
             ok = r.returncode == EXIT_CODE.get(c, 0) and len(got) == len(by_case[c]) and all(same_line(g, w) for g, w in zip(got, by_case[c]))
@@ -464,14 +528,14 @@ def main(argv):
                         say('note: the copy could not be removed (%s)' % e.__class__.__name__)
                     time.sleep(0.5)
         say('volatile items equal by shape only (the value differs from the recording): %s' % (', '.join(loose) if loose else 'none'))
-        check(not diffs, 'NATIVE REFERENCE (labelled, decision 3.0.7: our own test PE in the VMware guest): tm_nt, one process per case, equals the recorded lines '
-              '(%d cases%s)' % (len(CASES), ('; differing: ' + ', '.join(diffs)) if diffs else ''))
+        check(not diffs, 'NATIVE REFERENCE (labelled, decision 3.0.7: our own test PE in the %s): tm_nt, one process per case, equals the recorded lines '
+              '(%d cases%s)' % (env, len(cases), ('; differing: ' + ', '.join(diffs)) if diffs else ''))
     else:
-        say('native reference: not applicable here (the live ntdll.dll is not the VMware-guest capture) - the recorded lines are those of the guest')
+        say('native reference: not applicable here (the live ntdll.dll is not the %s capture) - the recorded lines are those of that environment' % env)
     if fails:
         say('FAIL (%d problem(s))' % len(fails))
         return 1
-    say('PASS: %d measured lines of %d cases, identifier screen clean, %d VOLATILE rule(s) (RED / GREEN self-check ok)%s' % (len(body), len(CASES), len(VOLATILE), ', native reference equal (from the system volume)' if cap_sha and live_sha == cap_sha else ''))
+    say('PASS: %d measured lines of %d cases (%s), identifier screen clean, %d VOLATILE rule(s) (RED / GREEN self-check ok)%s' % (len(body), len(cases), env, len(VOLATILE), ', native reference equal (from the system volume)' if cap_sha and live_sha == cap_sha else ''))
     return 0
 
 
