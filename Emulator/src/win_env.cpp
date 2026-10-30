@@ -111,6 +111,7 @@ namespace emu::win
 			case stop_kind::count: return "instruction bound";
 			case stop_kind::returned: return "returned from the entry point";
 			case stop_kind::error: return "error";
+			case stop_kind::oep_stop: return "OEP stop";   // P57 (U2373)
 			default: return "none";
 		}
 	}
@@ -497,11 +498,136 @@ namespace emu::win
 			con_record( c, w.a );
 		}
 
+		// P57 (U2373): a guest write (the CPU's, the hook runs before it is done; the emulator kernel's own writes are not hooked): the pages it
+		// touches are "written" (first write: instruction count + RIP; a write into the page now executing makes the next instruction check it
+		// again); an 8-byte write into the image whose value lies in the module area (7FF000000000H .. 7FFFFFFFFFFFH: the system DLL slots
+		// and views) is kept per address (the last one) for the dump's import map. Observation only.
+		void on_track_write( uc_engine*, uc_mem_type, uint64_t address, int size, int64_t value, void* user )
+		{
+			auto& c = *static_cast<process::hook_ctx*>( user );
+			const uint64_t last = size > 0 ? address + uint64_t( size - 1 ) : address;
+			for ( uint64_t pg = address >> 12; pg <= ( last >> 12 ); pg++ )
+			{
+				auto& w = c.written[ pg ];
+				if ( !w.count )
+				{
+					w.first_insn = c.r->insns;
+					w.first_rip = c.last_insn;
+				}
+				w.count++;
+				if ( pg == c.last_exec_page ) c.last_exec_page = ~0ull;
+			}
+			if ( size == 8 && address >= c.img_lo && address < c.img_hi && uint64_t( value ) >= 0x7FF000000000ull && uint64_t( value ) < 0x800000000000ull )
+			{
+				auto& p = c.image_ptr_writes[ address ];
+				p.value = uint64_t( value );
+				p.insn = c.r->insns;
+				p.rip = c.last_insn;
+				p.count++;
+			}
+		}
+
+		// P57 (U2373): the OEP stop - BEFORE the instruction at ADDRESS executes (the code hook runs first; uc_emu_stop ends the run there):
+		// --stop-at ADDR, or (--stop-at-written-exec) the first instruction on a page the guest wrote. True = stopped.
+		bool oep_check( uc_engine* uc, uint64_t address, process::hook_ctx& c )
+		{
+			const bool at = c.stop_at_on && address == c.stop_at;
+			bool wx = false;
+			const uint64_t pg = address >> 12;
+			if ( c.stop_written_exec && pg != c.last_exec_page )
+			{
+				c.last_exec_page = pg;
+				wx = c.written.count( pg ) != 0;
+			}
+			if ( !at && !wx ) return false;
+			// both conditions are reported (a run with both options cross-checks the heuristic against the address)
+			const auto it = c.written.find( pg );
+			if ( it != c.written.end() )
+			{
+				c.r->oep_page_first_insn = it->second.first_insn;
+				c.r->oep_page_first_rip = it->second.first_rip;
+				c.r->oep_page_writes = it->second.count;
+			}
+			const std::string how = at && wx ? "both --stop-at " + hex( address ) + " and --stop-at-written-exec (the first instruction on a page the guest wrote)"
+									: at ? "--stop-at " + hex( address ) + ( it != c.written.end() ? " (the page was written by the guest)" : " (the page was not written by the guest)" )
+										 : "--stop-at-written-exec: the first instruction on a page the guest wrote";
+			c.r->oep_insn = c.r->insns;
+			c.r->oep_rip = address;
+			c.r->oep_how = how;
+			c.stop( stop_kind::oep_stop, how + ": rip " + hex( address ) + " " + c.p->where( address ) + ", instruction " + std::to_string( c.r->insns ) +
+											 " (not executed; " + std::to_string( c.r->insns - 1 ) + " executed before it)" +
+											 ( c.r->oep_page_writes ? "; the page's first guest write at instruction " + std::to_string( c.r->oep_page_first_insn ) + " (rip " +
+																		  hex( c.r->oep_page_first_rip ) + " " + c.p->where( c.r->oep_page_first_rip ) + "), " +
+																		  std::to_string( c.r->oep_page_writes ) + " writes"
+																	: std::string() ) );
+			uc_emu_stop( uc );
+			return true;
+		}
+
+		// P57 (U2373): the loader look-ups for the dump's import map (--Sys --loader with --dump-dir; observation only). Strings: ANSI_STRING /
+		// UNICODE_STRING (winternl.h: Length +0, Buffer +8), at most 256 characters, printable ASCII (others as '?').
+		std::string guest_string( uc_engine* uc, uint64_t s, bool wide )
+		{
+			uint16_t len = 0;
+			uint64_t buf = 0;
+			if ( !s || uc_mem_read( uc, s, &len, 2 ) != UC_ERR_OK || uc_mem_read( uc, s + 8, &buf, 8 ) != UC_ERR_OK ) return "<unreadable>";
+			const size_t n = std::min<size_t>( wide ? len / 2 : len, 256 );
+			std::string out;
+			for ( size_t i = 0; i < n; i++ )
+			{
+				uint16_t ch = 0;
+				if ( uc_mem_read( uc, buf + ( wide ? 2 * i : i ), &ch, wide ? 2 : 1 ) != UC_ERR_OK ) return out + "<unreadable>";
+				out += ch >= 0x20 && ch < 0x7F ? char( ch ) : '?';
+			}
+			return out;
+		}
+		void on_res_api( uc_engine* uc, uint64_t address, uint32_t, void* user )
+		{
+			auto& c = *static_cast<process::hook_ctx*>( user );
+			const auto it = c.res_hooks.find( address );
+			if ( c.stopped || it == c.res_hooks.end() ) return;
+			process::hook_ctx::res_wait w;
+			w.rsp = read_reg( uc, UC_X86_REG_RSP );
+			if ( uc_mem_read( uc, w.rsp, &w.ret, 8 ) != UC_ERR_OK ) return;
+			w.caller = w.ret;
+			w.insn = c.r->insns;
+			w.api = it->second;
+			const uint64_t rcx = read_reg( uc, UC_X86_REG_RCX ), rdx = read_reg( uc, UC_X86_REG_RDX ), r8 = read_reg( uc, UC_X86_REG_R8 ), r9 = read_reg( uc, UC_X86_REG_R9 );
+			if ( w.api == "LdrGetProcedureAddressForCaller" )   // (DllHandle, ProcedureName, ProcedureNumber, *ProcedureAddress, Flags, *Callback) - phnt ntldr.h
+			{
+				w.arg = "DllHandle " + hex( rcx ) + " " + c.p->where( rcx ) + ", " + ( rdx ? "\"" + guest_string( uc, rdx, false ) + "\"" : "ordinal " + std::to_string( uint32_t( r8 ) ) );
+				w.out = r9;
+			}
+			else if ( w.api == "LdrGetDllHandleEx" )   // (Flags, DllPath, DllCharacteristics, DllName, *DllHandle) - phnt ntldr.h
+			{
+				w.arg = "Flags " + hex( rcx ) + ", \"" + guest_string( uc, r9, true ) + "\"";
+				if ( uc_mem_read( uc, w.rsp + 0x28, &w.out, 8 ) != UC_ERR_OK ) w.out = 0;
+			}
+			else   // LdrLoadDll (DllPath, DllCharacteristics, DllName, *DllHandle) - phnt ntldr.h
+			{
+				w.arg = "\"" + guest_string( uc, r8, true ) + "\"";
+				w.out = r9;
+			}
+			c.res_waits.push_back( std::move( w ) );
+		}
+		void res_return( uc_engine* uc, process::hook_ctx& c )
+		{
+			const auto w = c.res_waits.back();
+			c.res_waits.pop_back();
+			uint64_t v = 0;
+			if ( !w.out || uc_mem_read( uc, w.out, &v, 8 ) != UC_ERR_OK ) v = 0;
+			if ( c.res_records.size() < 200000 )
+				c.res_records.push_back( "insn " + std::to_string( w.insn ) + " " + w.api + "( " + w.arg + " ) from " + hex( w.caller ) + " " + c.p->where( w.caller ) + " -> status " +
+										 hex( uint32_t( read_reg( uc, UC_X86_REG_RAX ) ) ) + ", result " + hex( v ) + ( v ? " " + c.p->where( v ) : std::string() ) );
+		}
+
 		void on_code( uc_engine* uc, uint64_t address, uint32_t size, void* user )
 		{
 			auto& c = *static_cast<process::hook_ctx*>( user );
 			c.r->insns++;
 			c.last_insn = address;
+			if ( ( c.stop_written_exec || c.stop_at_on ) && !c.stopped && oep_check( uc, address, c ) ) return;   // P57 (U2373)
+			if ( !c.res_waits.empty() && address == c.res_waits.back().ret && read_reg( uc, UC_X86_REG_RSP ) == c.res_waits.back().rsp + 8 ) res_return( uc, c );   // P57
 			if ( !c.con_waits.empty() && address == c.con_waits.back().ret && read_reg( uc, UC_X86_REG_RSP ) == c.con_waits.back().rsp + 8 ) con_return( uc, c );   // P41 (U2084)
 			if ( size == 2 )
 			{
@@ -1608,6 +1734,54 @@ namespace emu::win
 			log_.push_back( "console capture: " + std::to_string( hc_->con_hooks.size() ) + " output exports of kernelbase.dll hooked (WriteFile on a standard handle, WriteConsoleA / W, "
 							"OutputDebugStringA / W) + NtWriteFile on a standard handle; observation only" );
 		}
+		// P57 (U2373): the OEP stop and the dump's records (observation only: a write hook, code hooks on three ntdll exports)
+		hc_->stop_written_exec = po_.stop_written_exec;
+		hc_->stop_at_on = po_.stop_at_given;
+		hc_->stop_at = po_.stop_at;
+		hc_->track_writes = po_.stop_written_exec || !po_.dump_dir.empty();
+		hc_->written.clear();
+		hc_->last_exec_page = ~0ull;
+		hc_->img_lo = map_.base;
+		hc_->img_hi = map_.base + map_.size;
+		hc_->image_ptr_writes.clear();
+		hc_->res_hooks.clear();
+		hc_->res_waits.clear();
+		hc_->res_records.clear();
+		if ( hc_->track_writes )
+		{
+			if ( uc_hook_add( uc, &h, UC_HOOK_MEM_WRITE, (void*)on_track_write, hc_.get(), 1, 0 ) != UC_ERR_OK )
+			{
+				error = "uc_hook_add (the written-page record) failed";
+				log_.push_back( "FAILED: " + error );
+				return false;
+			}
+			log_.push_back( "written-page record on: every guest write's page (first write, count) and the image's 8-byte writes of module-area values (P57)" +
+							std::string( po_.stop_written_exec ? "; stop before the first instruction on a written page" : "" ) );
+		}
+		if ( po_.stop_at_given ) log_.push_back( "stop-at: before the first execution of " + hex( po_.stop_at ) + " (P57)" );
+		if ( !po_.dump_dir.empty() && loader_start_ && facts_.files && facts_.files->count( "ntdll.dll" ) )
+		{
+			const auto& nf = facts_.files->at( "ntdll.dll" );
+			pe::image ni;
+			std::vector<pe::export_entry> ex;
+			std::string perr;
+			if ( pe::parse( nf, ni, perr ) && pe::exports( nf, ni, ex, perr ) )
+			{
+				const uint64_t slot = system_image_slot( "ntdll.dll" );
+				for ( const auto& x : ex )
+					if ( !x.forwarder && ( x.name == "LdrGetProcedureAddressForCaller" || x.name == "LdrGetDllHandleEx" || x.name == "LdrLoadDll" ) ) hc_->res_hooks[ slot + x.rva ] = x.name;
+			}
+			for ( const auto& [ va, n ] : hc_->res_hooks )
+				if ( uc_hook_add( uc, &h, UC_HOOK_CODE, (void*)on_res_api, hc_.get(), va, va ) != UC_ERR_OK )
+				{
+					error = "uc_hook_add (the loader look-ups) failed";
+					log_.push_back( "FAILED: " + error );
+					return false;
+				}
+			log_.push_back( "loader look-ups recorded: " + std::to_string( hc_->res_hooks.size() ) +
+							" ntdll exports hooked (LdrGetProcedureAddressForCaller - under GetProcAddress / LdrGetProcedureAddress(Ex) -, LdrGetDllHandleEx - under "
+							"GetModuleHandle / LdrGetDllHandle -, LdrLoadDll); observation only (P57)" );
+		}
 		// 4. the run: until the return sentinel, a stop of the hooks, or the instruction bound (no host time); P49 (U2250): a #PF of the
 		// program (the memory hook stopped the engine at the fault) continues in the exception path's save stub
 		ue = e_->emulate( begin, guest_return_sentinel, po_.max_insns );
@@ -1642,6 +1816,7 @@ namespace emu::win
 				hc_->stop( stop_kind::error, std::string( "emulation ended without a stop reason: " ) + uc_strerror( ue ) + ", rip " + hex( rip ) );
 		}
 		log_.push_back( std::string( "stop: " ) + name_of( r.stop ) + " - " + r.detail );
+		r.written_pages = hc_->written.size();   // P57 (U2373)
 		while ( !hc_->con_waits.empty() )   // P41 (U2084): attempts whose call had not returned when the run stopped
 		{
 			auto w = hc_->con_waits.back();

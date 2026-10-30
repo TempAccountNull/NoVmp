@@ -154,6 +154,11 @@ namespace emu
 				   "  --trace-last N         with --trace: keep only the last N lines (1 .. 4000000), written when the run stops\n"
 				   "  --loader               with --Sys: start in the environment's real ntdll!LdrInitializeThunk (opt-in; stops at the first system\n"
 				   "                         service without a source)\n"
+				   "  --stop-at-written-exec stop before the first instruction on a page the guest wrote (the OEP heuristic; observation only)\n"
+				   "  --stop-at ADDR         stop before the first execution of ADDR\n"
+				   "  --dump-dir DIR         at the stop write the emulated memory as data into the existing folder DIR: the image as in memory,\n"
+				   "                         the other private memory, registers, call stack, memory map, the image's pointer writes and the\n"
+				   "                         loader look-ups (never loaded or run; a sample derivative stays local)\n"
 				   "  exit      0 the guest terminated (NtTerminateProcess), 1 another stop (fault, bound, return from the entry), 2 usage,\n"
 				   "            3 set-up error, 4 an unknown / unimplemented system service or --HLE API (loud stop with a state dump)\n" + common;
 		return "usage: emu-snippet (--hex BYTES | --asm TEXT | --state FILE.json | --batch FILE.jsonl) [state] [stops] [checks] [output] [options]\n"
@@ -323,6 +328,21 @@ namespace emu
 				if ( !o.trace_file.empty() ) return fail( raw + " given twice" );
 				if ( !value( o.trace_file ) || o.trace_file.empty() ) return fail( "missing value for " + raw + " (the trace file)" );
 			}
+			else if ( tool == tool_kind::oep && a == "--stop-at-written-exec" ) o.stop_written_exec = true;   // P57 (U2373)
+			else if ( tool == tool_kind::oep && a == "--stop-at" )
+			{
+				// P57 (U2373): stop before the first execution of ADDRESS
+				std::string v;
+				if ( !value( v ) ) return fail( "missing value for " + raw );
+				if ( o.stop_at_given ) return fail( raw + " given twice" );
+				if ( !parse_u64( v, o.stop_at ) ) return fail( "bad 64-bit number for " + raw + ": \"" + v + "\"" );
+				o.stop_at_given = true;
+			}
+			else if ( tool == tool_kind::oep && a == "--dump-dir" )
+			{
+				if ( !o.dump_dir.empty() ) return fail( raw + " given twice" );
+				if ( !value( o.dump_dir ) || o.dump_dir.empty() ) return fail( "missing value for " + raw + " (an existing folder)" );
+			}
 			else if ( tool == tool_kind::oep && a == "--trace-regs" ) o.trace_regs = true;   // U2040
 			else if ( tool == tool_kind::oep && a == "--trace-last" )
 			{
@@ -415,6 +435,10 @@ namespace emu
 			if ( !o.trace_file.empty() && ( o.trace_regs || o.trace_last_given ) )   // U2040
 				d.push_back( std::string( "trace detail: " ) + ( o.trace_regs ? "registers before each instruction + its memory reads / writes" : "instruction only" ) +
 							 ( o.trace_last_given ? ", the last " + std::to_string( o.trace_last ) + " lines" : ", every line" ) );
+			// P57 (U2373): printed only when given (the lines of a run without them stay as they were)
+			if ( o.stop_written_exec ) d.push_back( "stop-at-written-exec: on (stop before the first instruction on a page the guest wrote - the OEP heuristic)" );
+			if ( o.stop_at_given ) d.push_back( "stop-at: " + hex64( o.stop_at ) + " (stop before its first execution)" );
+			if ( !o.dump_dir.empty() ) d.push_back( "dump-dir: " + o.dump_dir + ( o.dry_run ? " (recorded, not written)" : " (the emulated memory at the stop, as data files)" ) );
 		}
 		else
 		{

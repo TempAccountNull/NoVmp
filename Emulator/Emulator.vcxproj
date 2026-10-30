@@ -100,6 +100,7 @@
     <ClCompile Include="src\sysdll.cpp" />
     <ClCompile Include="src\win_env.cpp" />
     <ClCompile Include="src\win_exception.cpp" />
+    <ClCompile Include="src\win_dump.cpp" />
     <ClCompile Include="src\win_process.cpp" />
     <ClInclude Include="include\emu\assemble.hpp" />
     <ClInclude Include="src\win_env_hooks.hpp" />

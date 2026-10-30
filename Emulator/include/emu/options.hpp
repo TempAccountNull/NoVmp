@@ -101,6 +101,9 @@ namespace emu
 		uint64_t trace_last = 0;               // --trace-last N: keep only the last N lines (written at the stop); 0 = every line
 		bool trace_last_given = false;
 		bool loader = false;                   // U2031: --loader (with --Sys): start in the real ntdll!LdrInitializeThunk (opt-in)
+		// P57 (U2373, plan 5.C 8.4 / 8.5): the OEP stop and the dump at the stop (observation only; emu-oep also takes --stop-at ADDR)
+		bool stop_written_exec = false;        // --stop-at-written-exec: stop before the first instruction on a page the guest wrote
+		std::string dump_dir;                  // --dump-dir DIR (an existing folder): at the stop, the emulated memory as data files
 
 		bool help = false;
 	};

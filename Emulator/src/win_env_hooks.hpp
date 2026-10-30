@@ -11,6 +11,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -99,6 +100,33 @@ namespace emu::win
 		bool pf_pending = false;
 		uint64_t pf_rip = 0, pf_rflags = 0, pf_address = 0;
 		int pf_access = 0;
+
+		// P57 (U2373): the OEP stop and the dump's records (process_options::stop_written_exec / stop_at / dump_dir) - observation only
+		bool track_writes = false;                  // the write hook is on (stop_written_exec or dump_dir)
+		bool stop_written_exec = false, stop_at_on = false;
+		uint64_t stop_at = 0;
+		struct page_write
+		{
+			uint64_t first_insn = 0, first_rip = 0, count = 0;
+		};
+		std::unordered_map<uint64_t, page_write> written;   // page number -> its first guest write, the write count
+		uint64_t last_exec_page = ~0ull;                    // the page of the previous instruction (checked once per page change)
+		uint64_t img_lo = 0, img_hi = 0;                    // the process image's range
+		struct ptr_write
+		{
+			uint64_t value = 0, insn = 0, rip = 0, count = 0;
+		};
+		std::map<uint64_t, ptr_write> image_ptr_writes;     // 8-byte guest writes into the image whose value lies in the module area (last)
+		// the loader look-ups (--Sys --loader): entry hooks on ntdll's LdrGetProcedureAddressForCaller / LdrGetDllHandleEx / LdrLoadDll,
+		// the result read at the return (address = [RSP] at the entry, RSP = the entry RSP + 8)
+		std::map<uint64_t, std::string> res_hooks;
+		struct res_wait
+		{
+			uint64_t ret = 0, rsp = 0, out = 0, insn = 0, caller = 0;
+			std::string api, arg;
+		};
+		std::vector<res_wait> res_waits;
+		std::vector<std::string> res_records;
 
 		void stop( stop_kind k, const std::string& detail )
 		{

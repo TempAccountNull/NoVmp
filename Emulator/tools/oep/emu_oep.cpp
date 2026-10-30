@@ -5,7 +5,8 @@
 // emu::nt answers the services of M5, --HLE binds imports to the API stubs of emu::hle and runs TLS callbacks; --Sys refuses images
 // with imports / TLS (the real LdrInitializeThunk start is not modelled, notes\eread\P35_phase3_m5.md). INPUT is only ever read as a file
 // and written into guest memory: never loaded, mapped executable or run on the host, never under a debugger (AGENT_RULES
-// "Host safety"). Nothing is written or created except the trace file --trace FILE names (U2020) and the console capture (P41, below).
+// "Host safety"). Nothing is written or created except the trace file --trace FILE names (U2020), the console capture (P41, below) and
+// the dump files in the existing folder --dump-dir DIR names (P57, below).
 // U2020 (plan 3.M5 part 2): --counters prints the probe counters (CPUID leaves with the answers, RDTSC / RDTSCP / RDPID, reads
 // of PEB / TEB / KUSER members, system calls, API calls, exceptions) and the last instructions at the stop; --trace FILE writes
 // one line per instruction. Both only observe: the guest sees the same machine with or without them.
@@ -15,7 +16,12 @@
 // Observation only: the program gets the measured "no console" results either way.
 //
 //   emu-oep [--host | --guest | --max] [--Sys | --HLE] [--seeded | --HostSeed] [--max-insns N] [--image-base ADDR]
-//           [--sysdlls DIR] [--dry-run] [--out-dir DIR] [--counters] [--trace FILE [--trace-regs] [--trace-last N]] INPUT
+//           [--sysdlls DIR] [--dry-run] [--out-dir DIR] [--counters] [--trace FILE [--trace-regs] [--trace-last N]]
+//           [--stop-at-written-exec] [--stop-at ADDR] [--dump-dir DIR] INPUT
+// P57 (U2373, plan 5.C 8.4 / 8.5): --stop-at-written-exec stops BEFORE the first instruction on a page the guest wrote (the OEP heuristic),
+// --stop-at ADDR before the first execution of ADDR; --dump-dir DIR (an existing folder) writes the emulated memory at the stop as data files
+// (process::write_dump: the image as in memory, the private memory, registers, call stack, memory map, the image's pointer writes, the
+// loader look-ups). A sample's dump is a derivative of it: it stays local and is only read as data - never loaded, run or debugged.
 //   emu-oep (--guest | --host) [--sysdlls DIR] --syscall-number NAME
 //   exit 0 = the guest terminated through NtTerminateProcess, 1 = another stop (fault, instruction bound, return from the
 //   entry), 2 = usage, 3 = set-up error (input, capture, refused feature), 4 = unknown / unimplemented system service or --HLE
@@ -125,6 +131,10 @@ int main( int argc, char** argv )
 	po.trace_path = o.trace_file;
 	po.trace_regs = o.trace_regs;   // U2040
 	po.trace_last = o.trace_last;
+	po.stop_written_exec = o.stop_written_exec;   // P57 (U2373)
+	po.stop_at_given = o.stop_at_given;
+	po.stop_at = o.stop_at;
+	po.dump_dir = o.dump_dir;
 	{
 		// P41 (U2084): the console capture's folder - --out-dir, else the folder of this executable (the build output)
 		std::error_code ec2;
@@ -155,6 +165,20 @@ int main( int argc, char** argv )
 		for ( auto& l : p->state_dump( rr ) ) std::cout << "[emu-oep] " << l << "\n";
 	for ( auto& l : p->probe_summary( rr ) ) std::cout << "[emu-oep] " << l << "\n";   // U2020: --counters
 	for ( auto& l : p->console_summary( rr ) ) std::cout << "[emu-oep] " << l << "\n";   // P41 (U2084): the console capture
+	if ( rr.stop == emu::win::stop_kind::oep_stop )   // P57 (U2373): the call stack at the OEP stop
+		for ( auto& l : p->call_stack( rr ) ) std::cout << "[emu-oep] " << l << "\n";
+	if ( !o.dump_dir.empty() )   // P57 (U2373): the dump (data files; a sample's dump stays local and is never loaded or run)
+	{
+		std::vector<std::string> dl;
+		std::string derr;
+		const bool dumped = p->write_dump( rr, dl, derr );
+		for ( auto& l : dl ) std::cout << "[emu-oep] " << l << "\n";
+		if ( !dumped )
+		{
+			std::cout << "[emu-oep] error: the dump: " << derr << "\n";
+			return 3;
+		}
+	}
 	if ( rr.stop == emu::win::stop_kind::terminated )
 	{
 		char b[ 128 ];

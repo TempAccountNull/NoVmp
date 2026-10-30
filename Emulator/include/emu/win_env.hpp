@@ -162,9 +162,18 @@ namespace emu::win
 		// created at the first attempt (a run without one creates nothing); at most console_max_bytes (disk rule), then marked truncated
 		std::string console_dir;
 		uint64_t console_max_bytes = 64ull << 20;
+		// P57 (U2373, plan 5.C 8.4 / 8.5): the OEP stop and the dump - observation only (a write hook records which pages the guest's
+		// instructions wrote; nothing the guest sees changes). stop_written_exec: stop BEFORE the first instruction on such a page;
+		// stop_at: stop BEFORE the first execution of that address. dump_dir: at the stop, write the emulated memory as data files into
+		// that existing folder (process::write_dump) - a sample's dump is a derivative of it: it stays local, it is never loaded or run.
+		bool stop_written_exec = false;
+		bool stop_at_given = false;
+		uint64_t stop_at = 0;
+		std::string dump_dir;
+		uint64_t dump_max_bytes = 1ull << 30;   // per file (the disk rule)
 	};
 
-	enum class stop_kind { none, terminated, unknown_syscall, unimplemented_syscall, unimplemented_api, fault, count, returned, error };
+	enum class stop_kind { none, terminated, unknown_syscall, unimplemented_syscall, unimplemented_api, fault, count, returned, error, oep_stop };
 	const char* name_of( stop_kind k );
 
 	struct syscall_record
@@ -284,6 +293,11 @@ namespace emu::win
 		std::string fs_file;                   // "" = none: no access, or no folder
 		bool fs_truncated = false;
 		std::vector<exception_event> exceptions;   // P49 (U2250): the CPU events of the run, in order
+		// P57 (U2373): the OEP stop (stop_kind::oep_stop) - the instruction it stopped before (counted in insns, not executed), how it was
+		// found, and for a written page: the page's first guest write (instruction count, RIP) and its write count
+		uint64_t oep_insn = 0, oep_rip = 0, oep_page_first_insn = 0, oep_page_first_rip = 0, oep_page_writes = 0;
+		std::string oep_how;
+		uint64_t written_pages = 0;            // pages the guest's instructions wrote (with the write hook of stop_written_exec / dump_dir)
 	};
 
 	class process
@@ -321,6 +335,11 @@ namespace emu::win
 		const std::vector<std::string>& environment_lines() const { return env_lines_; }
 		// U2020: the probe-counter summary of a run with process_options::counters ("probe: ..." lines; empty otherwise)
 		std::vector<std::string> probe_summary( const run_result& r ) const;
+		// P57 (U2373): the call stack at the stop (the x64 unwind through each module's .pdata, a leaf = [RSP]) and a return-address scan
+		// of the stack (qwords that point into a module right after a CALL) - text lines
+		std::vector<std::string> call_stack( const run_result& r );
+		// P57 (U2373): process_options::dump_dir - the dump at the stop (files listed in win_env.cpp write_dump); LINES = what was written
+		bool write_dump( const run_result& r, std::vector<std::string>& lines, std::string& error );
 		// P41 (U2084): the console capture's summary (the file, the attempt count, each attempt) and the process parameters' console
 		// fields as the process left them (ConsoleHandle, StandardInput / Output / Error of PEB->ProcessParameters at the stop)
 		std::vector<std::string> console_summary( const run_result& r ) const;
