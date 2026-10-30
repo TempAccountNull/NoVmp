@@ -24,7 +24,9 @@
 //
 // Memory map: map / unmap whole page-aligned regions (4 KiB), named, bounds-checked with 64-bit arithmetic (no overflow, no
 // overlap, total at most config.max_mapped_bytes); read / write only inside mapped regions, at most max_io_bytes per call.
-// regions() is the engine's own table; check_regions() compares it with uc_mem_regions.
+// regions() is the engine's own table; check_regions() compares it with uc_mem_regions. U2350 (P54, user decision 2026-10-29):
+// regions() returns the table by const reference (no copy per call - the traced run called it once per instruction through
+// process::where(), P53 cost #1); a caller that maps / unmaps / protects while it needs the table keeps its own copy (auto x =).
 // emulate( begin, until, count ) = uc_emu_start without a timeout: Unicorn's timeout is host time, and the host-safety rule
 // allows time only from the one virtual time base (milestone M6) - bounds come from the instruction count.
 // Host safety (AGENT_RULES "Host safety"): guest bytes only ever reach Unicorn's guest memory (uc_mem_write); nothing here
@@ -116,7 +118,7 @@ namespace emu
 		bool unmap_range( uint64_t base, uint64_t size, std::string& error );
 		bool accessible( uint64_t address, uint64_t length, uint32_t need ) const;
 		uint64_t mapped_bytes() const { return mapped_bytes_; }
-		std::vector<mapped_region> regions() const { return regions_; }
+		const std::vector<mapped_region>& regions() const { return regions_; }   // U2350: by reference (valid until the next map / unmap / protect)
 		bool check_regions( std::string& error ) const;
 		bool read( uint64_t address, void* out, uint64_t length, std::string& error ) const;
 		bool write( uint64_t address, const void* in, uint64_t length, std::string& error );
