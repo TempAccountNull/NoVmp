@@ -131,10 +131,14 @@ int main( int argc, char** argv )
 	po.trace_path = o.trace_file;
 	po.trace_regs = o.trace_regs;   // U2040
 	po.trace_last = o.trace_last;
+	po.trace_from = o.trace_from;   // P58 (U2383)
 	po.stop_written_exec = o.stop_written_exec;   // P57 (U2373)
 	po.stop_at_given = o.stop_at_given;
 	po.stop_at = o.stop_at;
 	po.dump_dir = o.dump_dir;
+	po.watch_writes = o.watch_writes;   // P58 (U2383)
+	po.watch_value_given = o.watch_value_given;
+	po.watch_value = o.watch_value;
 	{
 		// P41 (U2084): the console capture's folder - --out-dir, else the folder of this executable (the build output)
 		std::error_code ec2;
@@ -165,6 +169,11 @@ int main( int argc, char** argv )
 		for ( auto& l : p->state_dump( rr ) ) std::cout << "[emu-oep] " << l << "\n";
 	for ( auto& l : p->probe_summary( rr ) ) std::cout << "[emu-oep] " << l << "\n";   // U2020: --counters
 	for ( auto& l : p->console_summary( rr ) ) std::cout << "[emu-oep] " << l << "\n";   // P41 (U2084): the console capture
+	if ( !o.watch_writes.empty() )   // P58 (U2383): the writes into the watched ranges
+	{
+		std::cout << "[emu-oep] watch-write: " << rr.watch_records.size() << " write(s) into the watched range(s)" << ( rr.watch_records.size() >= 10000 ? " (the first 10000)" : "" ) << "\n";
+		for ( auto& l : rr.watch_records ) std::cout << "[emu-oep] " << l << "\n";
+	}
 	if ( rr.stop == emu::win::stop_kind::oep_stop )   // P57 (U2373): the call stack at the OEP stop
 		for ( auto& l : p->call_stack( rr ) ) std::cout << "[emu-oep] " << l << "\n";
 	if ( !o.dump_dir.empty() )   // P57 (U2373): the dump (data files; a sample's dump stays local and is never loaded or run)

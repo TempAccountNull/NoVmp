@@ -127,6 +127,10 @@ namespace emu::win
 		};
 		std::vector<res_wait> res_waits;
 		std::vector<std::string> res_records;
+		std::vector<std::pair<uint64_t, uint64_t>> watch;   // P58 (U2383): the watched ranges [at, +len)
+		uint64_t trace_from = 0;                            // P58 (U2383): trace lines only from this instruction count on
+		bool watch_value_on = false;                        // P58 (U2383): --watch-value
+		uint64_t watch_value = 0;
 
 		void stop( stop_kind k, const std::string& detail )
 		{

@@ -99,11 +99,16 @@ namespace emu
 		// U2040 (the #GP investigation, notes/eread/P37_gp_investigation.md): register-level trace lines, both need --trace
 		bool trace_regs = false;               // --trace-regs: + RAX..R15 / RFLAGS before the instruction + its memory reads / writes
 		uint64_t trace_last = 0;               // --trace-last N: keep only the last N lines (written at the stop); 0 = every line
+		uint64_t trace_from = 0;               // P58 (U2383): --trace-from N: trace lines only from instruction N on
 		bool trace_last_given = false;
 		bool loader = false;                   // U2031: --loader (with --Sys): start in the real ntdll!LdrInitializeThunk (opt-in)
 		// P57 (U2373, plan 5.C 8.4 / 8.5): the OEP stop and the dump at the stop (observation only; emu-oep also takes --stop-at ADDR)
 		bool stop_written_exec = false;        // --stop-at-written-exec: stop before the first instruction on a page the guest wrote
 		std::string dump_dir;                  // --dump-dir DIR (an existing folder): at the stop, the emulated memory as data files
+		// P58 (U2383): --watch-write ADDR:LEN (repeatable): record every guest write into [ADDR, +LEN) - observation only
+		std::vector<std::pair<uint64_t, uint64_t>> watch_writes;
+		bool watch_value_given = false;      // P58 (U2383): --watch-value V: only the watched writes whose (low 8 bytes of the) value = V
+		uint64_t watch_value = 0;
 
 		bool help = false;
 	};

@@ -347,7 +347,7 @@ namespace emu::win
 					c.tail_next = ( c.tail_next + 1 ) % c.p->tail_capacity();
 				}
 			}
-			if ( c.trace && !pr.trace_truncated )
+			if ( c.trace && !pr.trace_truncated && c.r->insns >= c.trace_from )   // P58 (U2383): --trace-from N
 			{
 				std::string l = std::to_string( c.r->insns ) + " " + hex( address ) + " " + c.p->where( address ) + " ";
 				for ( uint32_t k = 0; k < n; k++ )
@@ -525,6 +525,31 @@ namespace emu::win
 				p.rip = c.last_insn;
 				p.count++;
 			}
+		}
+
+		// P58 (U2383): a guest write that overlaps a watched range (process_options::watch_writes; the hook runs BEFORE the write; its range
+		// starts 15 bytes early so a wider store that begins below the range is seen, then filtered by overlap): the instruction count, the
+		// writing instruction's RIP (the code hook's last), the size, the old bytes and the new value (the low 8 bytes of a wider store), RSP
+		// and the return addresses on the stack (process::return_scan). Observation only; at most 10000 records.
+		void on_watch_write( uc_engine* uc, uc_mem_type, uint64_t address, int size, int64_t value, void* user )
+		{
+			auto& c = *static_cast<process::hook_ctx*>( user );
+			const uint64_t end = address + uint64_t( size > 0 ? size : 1 );
+			bool hit = false;
+			for ( const auto& [ at, len ] : c.watch )
+				hit = hit || ( address < at + len && end > at );
+			if ( !hit || c.r->watch_records.size() >= 10000 ) return;
+			const int n = size > 0 && size <= 8 ? size : 8;
+			if ( c.watch_value_on && ( uint64_t( value ) & ( n == 8 ? ~0ull : ( 1ull << ( 8 * n ) ) - 1 ) ) != c.watch_value ) return;   // --watch-value
+			uint64_t old = 0;
+			uc_mem_read( uc, address, &old, uint64_t( n ) );
+			const uint64_t mask = n == 8 ? ~0ull : ( 1ull << ( 8 * n ) ) - 1;
+			const uint64_t rsp = read_reg( uc, UC_X86_REG_RSP );
+			std::string l = "watch write #" + std::to_string( c.r->watch_records.size() + 1 ) + ": insn " + std::to_string( c.r->insns ) + " rip " + hex( c.last_insn ) +
+							" " + c.p->where( c.last_insn ) + ", " + std::to_string( size ) + " byte(s) at " + hex( address ) + " " + c.p->where( address ) + ": old " +
+							hex( old & mask ) + " -> new " + hex( uint64_t( value ) & mask ) + ( size > 8 ? " (low 8 bytes)" : "" ) + ", rsp " + hex( rsp ) + "; return addresses:";
+			for ( const auto& s : c.p->return_scan( rsp, 0x800, 8 ) ) l += " |" + s;
+			c.r->watch_records.push_back( l );
 		}
 
 		// P57 (U2373): the OEP stop - BEFORE the instruction at ADDRESS executes (the code hook runs first; uc_emu_stop ends the run there):
@@ -1694,6 +1719,7 @@ namespace emu::win
 			// U2040: register-level lines (observation only: the memory hook reads, never writes guest state) / the ring of the last lines
 			hc_->regs = po_.trace_regs;
 			hc_->last = po_.trace_last;
+			hc_->trace_from = po_.trace_from;   // P58 (U2383)
 			hc_->ring.clear();
 			hc_->ring_next = 0;
 			hc_->have_pending = false;
@@ -1768,6 +1794,21 @@ namespace emu::win
 							std::string( po_.stop_written_exec ? "; stop before the first instruction on a written page" : "" ) );
 		}
 		if ( po_.stop_at_given ) log_.push_back( "stop-at: before the first execution of " + hex( po_.stop_at ) + " (P57)" );
+		// P58 (U2383): the watched ranges
+		hc_->watch.clear();
+		hc_->watch_value_on = po_.watch_value_given;
+		hc_->watch_value = po_.watch_value;
+		for ( const auto& [ at, len ] : po_.watch_writes )
+		{
+			hc_->watch.push_back( { at, len } );
+			if ( uc_hook_add( uc, &h, UC_HOOK_MEM_WRITE, (void*)on_watch_write, hc_.get(), at >= 15 ? at - 15 : 0, at + len - 1 ) != UC_ERR_OK )
+			{
+				error = "uc_hook_add (the watched range) failed";
+				log_.push_back( "FAILED: " + error );
+				return false;
+			}
+			log_.push_back( "watch-write: every guest write into [" + hex( at ) + ", +" + hex( len ) + ") recorded (P58; observation only)" );
+		}
 		if ( !po_.dump_dir.empty() && loader_start_ && facts_.files && facts_.files->count( "ntdll.dll" ) )
 		{
 			const auto& nf = facts_.files->at( "ntdll.dll" );

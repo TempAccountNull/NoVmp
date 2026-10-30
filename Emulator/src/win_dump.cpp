@@ -177,8 +177,26 @@ namespace emu::win
 			}
 		}
 		o.push_back( "stack scan [" + hex( rsp0 ) + ", +1000H): qwords into a module right after a CALL" );
+		for ( auto& l : return_scan( rsp0, 0x1000, 64 ) ) o.push_back( l );
+		return o;
+	}
+
+	// P58 (U2383): the return addresses on the stack [RSP, +SPAN) (below the TEB's StackBase): qwords into a module whose preceding bytes are
+	// a CALL (E8 rel32; FF /2 forms - 253666-093 Vol2A CALL); the module list (all_modules) is cached until the region table changes
+	std::vector<std::string> process::return_scan( uint64_t rsp0, uint64_t span, size_t max_lines )
+	{
+		std::vector<std::string> o;
+		std::string err;
+		if ( scan_regions_ != e_->regions().size() || scan_mods_.empty() )
+		{
+			scan_mods_ = all_modules( modules_, *e_, facts_, nullptr );
+			scan_regions_ = e_->regions().size();
+		}
+		const auto& mods = scan_mods_;
+		uint64_t stack_base = 0;
+		e_->read( guest_teb_va + layout::teb_stack_base, &stack_base, 8, err );
 		size_t found = 0;
-		for ( uint64_t a = rsp0; a < rsp0 + 0x1000 && a + 8 <= stack_base; a += 8 )
+		for ( uint64_t a = rsp0; a < rsp0 + span && a + 8 <= stack_base; a += 8 )
 		{
 			uint64_t v = 0;
 			if ( !e_->read( a, &v, 8, err ) ) break;
@@ -198,7 +216,7 @@ namespace emu::win
 			if ( call.empty() ) continue;
 			const std::string ex = export_near( mods, v );
 			o.push_back( "  [rsp+" + hex( a - rsp0 ) + "] " + hex( v ) + " " + where( v ) + ( ex.empty() ? "" : " (" + ex + ")" ) + " after " + call );
-			if ( ++found >= 64 ) break;
+			if ( ++found >= max_lines ) break;
 		}
 		if ( !found ) o.push_back( "  (none)" );
 		return o;

@@ -152,6 +152,7 @@ namespace emu
 				   "  --trace-regs           with --trace: each line also holds RAX..R15 / RFLAGS before the instruction and its memory reads /\n"
 				   "                         writes (address, size, value)\n"
 				   "  --trace-last N         with --trace: keep only the last N lines (1 .. 4000000), written when the run stops\n"
+				   "  --trace-from N         with --trace: the lines start at instruction N (the instructions before are counted only)\n"
 				   "  --loader               with --Sys: start in the environment's real ntdll!LdrInitializeThunk (opt-in; stops at the first system\n"
 				   "                         service without a source)\n"
 				   "  --stop-at-written-exec stop before the first instruction on a page the guest wrote (the OEP heuristic; observation only)\n"
@@ -159,6 +160,8 @@ namespace emu
 				   "  --dump-dir DIR         at the stop write the emulated memory as data into the existing folder DIR: the image as in memory,\n"
 				   "                         the other private memory, registers, call stack, memory map, the image's pointer writes and the\n"
 				   "                         loader look-ups (never loaded or run; a sample derivative stays local)\n"
+				   "  --watch-write ADDR:LEN record every guest write into [ADDR, +LEN): instruction count, RIP, size, old / new value, the\n"
+				   "                         return addresses on the stack (repeatable, at most 16; observation only)\n"
 				   "  exit      0 the guest terminated (NtTerminateProcess), 1 another stop (fault, bound, return from the entry), 2 usage,\n"
 				   "            3 set-up error, 4 an unknown / unimplemented system service or --HLE API (loud stop with a state dump)\n" + common;
 		return "usage: emu-snippet (--hex BYTES | --asm TEXT | --state FILE.json | --batch FILE.jsonl) [state] [stops] [checks] [output] [options]\n"
@@ -343,7 +346,31 @@ namespace emu
 				if ( !o.dump_dir.empty() ) return fail( raw + " given twice" );
 				if ( !value( o.dump_dir ) || o.dump_dir.empty() ) return fail( "missing value for " + raw + " (an existing folder)" );
 			}
+			else if ( tool == tool_kind::oep && a == "--watch-write" )
+			{
+				// P58 (U2383): ADDR:LEN, LEN 1 .. 10000H, at most 16 ranges
+				std::string v;
+				if ( !value( v ) ) return fail( "missing value for " + raw + " (ADDR:LEN)" );
+				const auto k = v.find( ':' );
+				uint64_t at = 0, len = 0;
+				if ( k == std::string::npos || !parse_u64( v.substr( 0, k ), at ) || !parse_u64( v.substr( k + 1 ), len ) || !len || len > 0x800000000000ull || at + len < at )
+					return fail( raw + " ADDR:LEN (LEN 1 .. 0x800000000000; above 0x10000 only with --watch-value), got \"" + v + "\"" );
+				if ( o.watch_writes.size() >= 16 ) return fail( raw + ": at most 16 ranges" );
+				o.watch_writes.push_back( { at, len } );
+			}
+			else if ( tool == tool_kind::oep && a == "--watch-value" )
+			{
+				std::string v;
+				if ( !value( v ) || o.watch_value_given || !parse_u64( v, o.watch_value ) ) return fail( "--watch-value V (once, a 64-bit number), got \"" + v + "\"" );
+				o.watch_value_given = true;
+			}
 			else if ( tool == tool_kind::oep && a == "--trace-regs" ) o.trace_regs = true;   // U2040
+			else if ( tool == tool_kind::oep && a == "--trace-from" )
+			{
+				// P58 (U2383): with --trace: the lines start at instruction N (the instructions before are counted, not traced)
+				std::string v;
+				if ( !value( v ) || !parse_u64( v, o.trace_from ) ) return fail( "--trace-from N (an instruction count), got \"" + v + "\"" );
+			}
 			else if ( tool == tool_kind::oep && a == "--trace-last" )
 			{
 				// U2040: a ring of the last N lines (memory bound: N <= 4000000)
@@ -387,7 +414,10 @@ namespace emu
 		if ( o.help ) { r.ok = true; return r; }
 		if ( tool == tool_kind::oep && !input_given && o.syscall_query.empty() ) return fail( "missing INPUT" );
 		if ( tool == tool_kind::oep && input_given && !o.syscall_query.empty() ) return fail( "--syscall-number takes no INPUT" );
-		if ( tool == tool_kind::oep && ( o.trace_regs || o.trace_last_given ) && o.trace_file.empty() ) return fail( "--trace-regs / --trace-last need --trace FILE" );   // U2040
+		for ( const auto& [ wat, wlen ] : o.watch_writes )   // P58 (U2383): a wide range only with a value filter
+			if ( wlen > 0x10000 && !o.watch_value_given ) return fail( "--watch-write: a range above 0x10000 bytes needs --watch-value" );
+		if ( tool == tool_kind::oep && o.watch_value_given && o.watch_writes.empty() ) return fail( "--watch-value needs --watch-write" );
+		if ( tool == tool_kind::oep && ( o.trace_regs || o.trace_last_given || o.trace_from ) && o.trace_file.empty() ) return fail( "--trace-regs / --trace-last / --trace-from need --trace FILE" );   // U2040
 		if ( tool == tool_kind::snippet )
 		{
 			if ( !o.batch_file.empty() )
@@ -439,6 +469,9 @@ namespace emu
 			if ( o.stop_written_exec ) d.push_back( "stop-at-written-exec: on (stop before the first instruction on a page the guest wrote - the OEP heuristic)" );
 			if ( o.stop_at_given ) d.push_back( "stop-at: " + hex64( o.stop_at ) + " (stop before its first execution)" );
 			if ( !o.dump_dir.empty() ) d.push_back( "dump-dir: " + o.dump_dir + ( o.dry_run ? " (recorded, not written)" : " (the emulated memory at the stop, as data files)" ) );
+			if ( o.trace_from ) d.push_back( "trace-from: instruction " + std::to_string( o.trace_from ) + " (the trace lines start there; P58)" );
+			for ( const auto& [ at, len ] : o.watch_writes )   // P58 (U2383)
+				d.push_back( "watch-write: [" + hex64( at ) + ", +" + hex64( len ) + ") - every guest write recorded (observation only)" );
 		}
 		else
 		{

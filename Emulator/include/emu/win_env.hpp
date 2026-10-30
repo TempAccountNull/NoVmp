@@ -158,6 +158,7 @@ namespace emu::win
 		// writes; trace_last > 0 keeps only the last trace_last lines in memory and writes them when the run stops
 		bool trace_regs = false;
 		uint64_t trace_last = 0;
+		uint64_t trace_from = 0;   // P58 (U2383): trace lines only from this instruction count on (0 = from the start)
 		// P41 (U2084): the console capture - the folder of console_capture.txt ("" = the attempts are only listed, no file); the file is
 		// created at the first attempt (a run without one creates nothing); at most console_max_bytes (disk rule), then marked truncated
 		std::string console_dir;
@@ -171,6 +172,10 @@ namespace emu::win
 		uint64_t stop_at = 0;
 		std::string dump_dir;
 		uint64_t dump_max_bytes = 1ull << 30;   // per file (the disk rule)
+		// P58 (U2383): watched ranges [address, +length): every guest write into them is recorded in run_result::watch_records (observation)
+		std::vector<std::pair<uint64_t, uint64_t>> watch_writes;
+		bool watch_value_given = false;   // P58 (U2383): record only writes of this value
+		uint64_t watch_value = 0;
 	};
 
 	enum class stop_kind { none, terminated, unknown_syscall, unimplemented_syscall, unimplemented_api, fault, count, returned, error, oep_stop };
@@ -298,6 +303,7 @@ namespace emu::win
 		uint64_t oep_insn = 0, oep_rip = 0, oep_page_first_insn = 0, oep_page_first_rip = 0, oep_page_writes = 0;
 		std::string oep_how;
 		uint64_t written_pages = 0;            // pages the guest's instructions wrote (with the write hook of stop_written_exec / dump_dir)
+		std::vector<std::string> watch_records;   // P58 (U2383): the writes into the watched ranges, in order (at most 10000)
 	};
 
 	class process
@@ -338,6 +344,8 @@ namespace emu::win
 		// P57 (U2373): the call stack at the stop (the x64 unwind through each module's .pdata, a leaf = [RSP]) and a return-address scan
 		// of the stack (qwords that point into a module right after a CALL) - text lines
 		std::vector<std::string> call_stack( const run_result& r );
+		// P58 (U2383): the return addresses on the stack [RSP, +SPAN): qwords pointing into a module right after a CALL (win_dump.cpp)
+		std::vector<std::string> return_scan( uint64_t rsp, uint64_t span, size_t max_lines );
 		// P57 (U2373): process_options::dump_dir - the dump at the stop (files listed in win_env.cpp write_dump); LINES = what was written
 		bool write_dump( const run_result& r, std::vector<std::string>& lines, std::string& error );
 		// P41 (U2084): the console capture's summary (the file, the attempt count, each attempt) and the process parameters' console
@@ -382,6 +390,8 @@ namespace emu::win
 		pe::tls_directory tls_;
 		uint64_t start_va_ = 0;
 		std::vector<module_image> modules_;      // U2025: the process image + the system DLL images, load order
+		std::vector<module_image> scan_mods_;    // P58 (U2383): return_scan's module list (every image view), cached
+		size_t scan_regions_ = 0;
 		process_state pstate_;                   // U2025-U2027: loader data, process parameters, heap
 		bool loader_start_ = false;              // U2031: --Sys through the real ntdll!LdrInitializeThunk
 		uint64_t start_context_ = 0, iretq_stub_ = 0, start_rsp_ = 0, ntdll_base_ = 0;
