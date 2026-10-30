@@ -1873,11 +1873,19 @@ namespace emu::nt
 			// STATUS_SUCCESS, the 12 bytes 09 00 06 00 01 B7 08 00 FF BD 9B BD (AMD64, family 6, model B7H stepping 1, 8 processors, the
 			// feature bits), ReturnLength CH; Length 0 / 8 = STATUS_INFO_LENGTH_MISMATCH, ReturnLength CH, nothing written. The environment
 			// (its CPUID profile: family 6 model B7H stepping 1; 8 processors) is the measured one; other lengths: stop.
-			if ( f_.processors != 8 ) { r = stop_( "SystemProcessorInformation: an environment with " + std::to_string( f_.processors ) + " processors - not measured (8 are)" ); return true; }
+			// P60 (U2386; USER DECISION 2026-10-30 P60 step 3 "run 17b under --host to the OEP" - its stop): the BARE HOST measured too
+			// (tm_nt qsi.1* of host_reg_ref_v2, Emulator/data/nt_measured_bare_host.txt): the same shape and statuses, the 12 bytes
+			// 09 00 06 00 01 B7 14 00 FF BF 9B BD - MaximumProcessors 14H (= the bare-host profile's 20 processors) and feature bits
+			// BD9BBFFFH (bit 9 set on the host); selected by the environment's processor count (8 = the VMware guest, 20 = the bare host);
+			// another count: stop.
+			if ( f_.processors != 8 && f_.processors != 20 ) { r = stop_( "SystemProcessorInformation: an environment with " + std::to_string( f_.processors ) + " processors - not measured (8 / 20 are)" ); return true; }
 			if ( len == 0 || len == 8 ) { finish( status::info_length_mismatch, "SystemProcessorInformation: Length " + hex( len ) + " - STATUS_INFO_LENGTH_MISMATCH, ReturnLength CH (measured: tm_nt qsi.1.0 / .8)", {}, 0xC ); return true; }
 			if ( len != 0xC && len != 0x10 ) { r = stop_( "SystemProcessorInformation: Length " + hex( len ) + " - not measured (0, 8, CH, 10H are)" ); return true; }
-			const std::vector<uint8_t> d = { 0x09, 0x00, 0x06, 0x00, 0x01, 0xB7, 0x08, 0x00, 0xFF, 0xBD, 0x9B, 0xBD };
-			finish( status::success, "SystemProcessorInformation: AMD64, level 6, revision B701H, 8 processors, feature bits BD9BBDFFH (measured: tm_nt qsi.1)", d, 0xC );
+			const bool host = f_.processors == 20;
+			const std::vector<uint8_t> d = { 0x09, 0x00, 0x06, 0x00, 0x01, 0xB7, uint8_t( host ? 0x14 : 0x08 ), 0x00, 0xFF, uint8_t( host ? 0xBF : 0xBD ), 0x9B, 0xBD };
+			finish( status::success, host ? "SystemProcessorInformation: AMD64, level 6, revision B701H, 20 processors, feature bits BD9BBFFFH (measured: tm_nt qsi.1, the bare host)"
+										  : "SystemProcessorInformation: AMD64, level 6, revision B701H, 8 processors, feature bits BD9BBDFFH (measured: tm_nt qsi.1)",
+					d, 0xC );
 			return true;
 		}
 		if ( cls == 0x32 )

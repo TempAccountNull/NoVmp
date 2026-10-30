@@ -368,7 +368,7 @@ HOST_NOT_MEASURED = ['nqit', 'nsit', 'nhfd']
 # P57 (U2382): the bare host vs the VMware guest - every differing item and what the emulator answers for it under --host (code: the P57 review)
 HOST_DIFFS = [
     (r'qsi\.37(r|\.18|\.410)?', 'host value: the node / group mask = the environment\'s active processor mask (data\\platform\\bare_host views\\environment.txt; nt_kernel_measured.cpp query_system_measured)'),
-    (r'qsi\.1(r|\.10)?', 'LOUD STOP under --host: SystemProcessorInformation (1) holds the guest\'s measured bytes and stops for a processor count other than 8 (nt_kernel_measured.cpp) - a host model needs these host lines'),
+    (r'qsi\.1(r|\.10)?', 'host value (P60, U2386): SystemProcessorInformation (1) answers these host bytes for the bare host\'s 20 processors (MaximumProcessors 14H, feature bit 9) - nt_kernel_measured.cpp, selected by the processor count'),
     (r'qsix\.6b\.1\.(50|2000)', 'host value: relationship 1 (RelationProcessorCore) from the profile / processor mask (svc_query_system_information_ex)'),
     (r'qsix\.6b\.(0|2|3|4|ffff)\.(50|2000|0)', 'LOUD STOP: measured, relationship not modelled (svc_query_system_information_ex "measured ... but not modelled yet")'),
     (r'etw\.reg(40|50|54|60)(\.fields)?', 'VOLATILE by shape on each side: the enable state of the running trace sessions differs between the machines'),
