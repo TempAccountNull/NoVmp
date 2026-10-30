@@ -1,7 +1,7 @@
 # Instruction sets supported (Intel + AMD/VIA)
 
-_Generated 2026-10-29 07:52 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `d3704250 Ledger: U2240-U2247, U2250-U2260 (agent/p3m7 objects A / B - the
-exception path, plan 3.M7) and U2280-U2291 (agent/p3cm2 object X1' - the CMApi minimal device, T10 as ahc.45), merged and verified`). Do not edit by hand._
+_Generated 2026-10-29 23:37 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `3d2b2ae3 Ledger: U2350 (regions() by const reference) and U2351 (BSWAP r16
+hardware case cases_bswap16_hw), merged and verified (P54)`). Do not edit by hand._
 
 Every instruction form (mnemonic + encoding) of the Intel SDM / XED list `Emulator/data/isa_manual_forms.tsv`, AMD and VIA forms included: **2912 forms, each
 listed exactly once**, in one of three tables by privilege class (`Emulator/data/isa_privilege.tsv`). Checked against an Intel i5-13600K (Raptor Lake) with
