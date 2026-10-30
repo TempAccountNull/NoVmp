@@ -60,7 +60,9 @@ namespace emu::hle
 								// P49 (U2257): TX5's NtQuerySystemInformation (SystemKernelDebuggerInformation) - the kernel layer's service the same way
 								{ "NtQuerySystemInformation", api::nt_file_service }, { "NtGetContextThread", api::nt_file_service },
 								// P55 (U2363): NtQueryInformationThread (ThreadBasicInformation, measured: tm_nt nqit) - the kernel layer's service the same way
-								{ "NtQueryInformationThread", api::nt_file_service } };
+								{ "NtQueryInformationThread", api::nt_file_service },
+								// P56 (U2367): NtSetInformationThread (class 4 ThreadAffinityMask measured: tm_nt nsit; the other classes as the kernel layer answers them)
+								{ "NtSetInformationThread", api::nt_file_service } };
 		// P47 (U2168): bcrypt.dll's BCryptGenRandom (test PE T9)
 		const known bcrypt[] = { { "BCryptGenRandom", api::bcrypt_gen_random } };
 		// p3cm (U2284): cfgmgr32.dll's CM_Locate_DevNodeW (test PE T10)

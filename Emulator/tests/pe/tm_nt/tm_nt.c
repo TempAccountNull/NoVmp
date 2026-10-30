@@ -4463,7 +4463,57 @@ static void case_nqit( void )
 				(unsigned long)GetPriorityClass( GetCurrentProcess() ) );
 	}
 }
-static const struct tm_case g_cases[] = { { "sat", case_sat }, { "qsi", case_qsi }, { "hvp", case_hvp }, { "qip", case_qip }, { "wcp", case_wcp }, { "qsix", case_qsix }, { "iocp", case_iocp }, { "wkf", case_wkf }, { "tmr2", case_tmr2 }, { "awcp", case_awcp }, { "swf", case_swf }, { "etw", case_etw }, { "kd", case_kd }, { "of", case_of }, { "tls", case_tls }, { "ahc", case_ahc }, { "vmi", case_vmi }, { "csr", case_csr }, { "sec", case_sec }, { "csrc", case_csrc }, { "nls", case_nls }, { "con", case_con }, { "etwt", case_etwt }, { "tok", case_tok }, { "acc", case_acc }, { "bno", case_bno }, { "mut", case_mut }, { "wil", case_wil }, { "wnf", case_wnf }, { "wnfe", case_wnfe }, { "wnfs", case_wnfs }, { "t2s", case_t2s }, { "hku", case_hku }, { "alert", case_alert }, { "term", case_term }, { "time", case_time }, { "sp", case_sp }, { "mit", case_mit }, { "u32", case_u32 }, { "u32k", case_u32k }, { "fs", case_fs }, { "rvm", case_rvm }, { "atom", case_atom }, { "pii", case_pii }, { "reg", case_reg }, { "ksec", case_ksec }, { "cm", case_cm }, { "lic", case_lic }, { "nqit", case_nqit } };
+/* ------------------------------------------------------------------------------------------------ NtSetInformationThread 4
+ * P56 (U2365; sample run 19 system call 831, 28,474 instructions after 830): NtSetInformationThread( NtCurrentThread(), 4 ThreadAffinityMask,
+ * buffer, 8 ). Prototype phnt ntpsapi.h NtSetInformationThread (ThreadHandle, ThreadInformationClass, ThreadInformation,
+ * ThreadInformationLength); ThreadAffinityMask = THREADINFOCLASS 4, a KAFFINITY (8 bytes). Each item sets one mask and reads the thread's
+ * affinity back through ThreadBasicInformation (+20H, case nqit); printed as relations to the process affinity mask (no mask value: the
+ * processor count belongs to the environment): the mask itself, its lowest / highest processor, 0, a processor outside the process mask,
+ * both together; the lengths 4 / 0 / 10H; a NULL buffer; the end restores the process mask. */
+__declspec( dllimport ) TM_NTSTATUS NTAPI NtSetInformationThread( HANDLE ThreadHandle, ULONG ThreadInformationClass, PVOID ThreadInformation,
+																  ULONG ThreadInformationLength );
+static ULONGLONG tm_thread_affinity( void )
+{
+	unsigned char b[ 0x30 ];
+	memset( b, 0, sizeof( b ) );
+	( void )NtQueryInformationThread( (HANDLE)(LONG_PTR)-2, 0, b, 0x30, NULL );
+	return *(ULONGLONG*)( b + 0x20 );
+}
+static void tm_nsit( const char* tag, const char* what, ULONGLONG mask, ULONG len, int nullbuf, ULONGLONG pam )
+{
+	ULONGLONG buf[ 2 ] = { mask, 0xCCCCCCCCCCCCCCCCull }, before = tm_thread_affinity(), after;
+	TM_NTSTATUS st = NtSetInformationThread( (HANDLE)(LONG_PTR)-2, 4, nullbuf ? NULL : buf, len );
+	after = tm_thread_affinity();
+	printf( "tm_nt %s: NtSetInformationThread(NtCurrentThread(), 4 ThreadAffinityMask, %s, Length %lXH) -> status %08lXH; the thread affinity before %s, after %s, buffer %s\n",
+			tag, nullbuf ? "NULL" : what, (unsigned long)len, (unsigned long)st, before == pam ? "= the process mask" : before == mask ? "= the mask" : "<other>",
+			after == pam ? "= the process mask" : after == mask ? "= the mask set" : after == before ? "unchanged" : "<other>",
+			buf[ 0 ] == mask && buf[ 1 ] == 0xCCCCCCCCCCCCCCCCull ? "unchanged" : "changed" );
+}
+static void case_nsit( void )
+{
+	DWORD_PTR pam = 0, sam = 0;
+	ULONGLONG low, high, outside;
+	int k;
+	GetProcessAffinityMask( GetCurrentProcess(), &pam, &sam );
+	low = (ULONGLONG)pam & ( 0 - (ULONGLONG)pam );
+	for ( k = 63, high = 0; k >= 0; k-- ) if ( ( (ULONGLONG)pam >> k ) & 1 ) { high = 1ull << k; break; }
+	outside = high < ( 1ull << 63 ) ? high << 1 : 0;
+	tm_nsit( "nsit.4.all", "&(the process mask)", (ULONGLONG)pam, 8, 0, (ULONGLONG)pam );
+	tm_nsit( "nsit.4.low", "&(its lowest processor)", low, 8, 0, (ULONGLONG)pam );
+	tm_nsit( "nsit.4.high", "&(its highest processor)", high, 8, 0, (ULONGLONG)pam );
+	tm_nsit( "nsit.4.back", "&(the process mask)", (ULONGLONG)pam, 8, 0, (ULONGLONG)pam );
+	tm_nsit( "nsit.4.zero", "&0", 0, 8, 0, (ULONGLONG)pam );
+	tm_nsit( "nsit.4.outside", "&(the processor above the highest)", outside, 8, 0, (ULONGLONG)pam );
+	tm_nsit( "nsit.4.mixed", "&(the process mask + the processor above)", (ULONGLONG)pam | outside, 8, 0, (ULONGLONG)pam );
+	tm_nsit( "nsit.4.len4", "&(the process mask)", (ULONGLONG)pam, 4, 0, (ULONGLONG)pam );
+	tm_nsit( "nsit.4.len0", "&(the process mask)", (ULONGLONG)pam, 0, 0, (ULONGLONG)pam );
+	tm_nsit( "nsit.4.len10", "&(the process mask)", (ULONGLONG)pam, 0x10, 0, (ULONGLONG)pam );
+	tm_nsit( "nsit.4.null", "NULL", (ULONGLONG)pam, 8, 1, (ULONGLONG)pam );
+	tm_nsit( "nsit.4.low2", "&(its lowest processor)", low, 8, 0, (ULONGLONG)pam );
+	tm_nsit( "nsit.4.restore", "&(the process mask)", (ULONGLONG)pam, 8, 0, (ULONGLONG)pam );
+	printf( "tm_nt nsit.mask: the process mask %s, the system mask %s\n", pam == sam ? "= the system mask" : "<other>", pam ? "non-zero" : "0" );
+}
+static const struct tm_case g_cases[] = { { "sat", case_sat }, { "qsi", case_qsi }, { "hvp", case_hvp }, { "qip", case_qip }, { "wcp", case_wcp }, { "qsix", case_qsix }, { "iocp", case_iocp }, { "wkf", case_wkf }, { "tmr2", case_tmr2 }, { "awcp", case_awcp }, { "swf", case_swf }, { "etw", case_etw }, { "kd", case_kd }, { "of", case_of }, { "tls", case_tls }, { "ahc", case_ahc }, { "vmi", case_vmi }, { "csr", case_csr }, { "sec", case_sec }, { "csrc", case_csrc }, { "nls", case_nls }, { "con", case_con }, { "etwt", case_etwt }, { "tok", case_tok }, { "acc", case_acc }, { "bno", case_bno }, { "mut", case_mut }, { "wil", case_wil }, { "wnf", case_wnf }, { "wnfe", case_wnfe }, { "wnfs", case_wnfs }, { "t2s", case_t2s }, { "hku", case_hku }, { "alert", case_alert }, { "term", case_term }, { "time", case_time }, { "sp", case_sp }, { "mit", case_mit }, { "u32", case_u32 }, { "u32k", case_u32k }, { "fs", case_fs }, { "rvm", case_rvm }, { "atom", case_atom }, { "pii", case_pii }, { "reg", case_reg }, { "ksec", case_ksec }, { "cm", case_cm }, { "lic", case_lic }, { "nqit", case_nqit }, { "nsit", case_nsit } };
 
 int main( int argc, char** argv )
 {

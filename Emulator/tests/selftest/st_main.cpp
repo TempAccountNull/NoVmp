@@ -4242,6 +4242,19 @@ namespace
 			CHECK( w5_stop( w5_call( *p, "NtQueryInformationThread", { ct, 1, S, 0x30, 0 } ) ), mode + " another class (1): stop (not measured)" );
 			CHECK( w5_stop( w5_call( *p, "NtQueryInformationThread", { ct, 0, S, 0x40, 0 } ) ), mode + " Length 40H: stop (not measured)" );
 			CHECK( w5_stop( w5_call( *p, "NtQueryInformationThread", { ct, 0, 0x10, 0x30, 0 } ) ), mode + " an unmapped buffer: stop (not measured)" );
+			// P56 (U2368): NtSetInformationThread 4 ThreadAffinityMask (tm_nt nsit.*), read back through ThreadBasicInformation +20H
+			auto set = [ & ]( uint64_t mask, uint64_t len, uint64_t buf ) { w5_put( *p, S + 0x80, mask ); return w5_call( *p, "NtSetInformationThread", { ct, 4, buf, len } ); };
+			auto aff = [ & ]() { w5_call( *p, "NtQueryInformationThread", { ct, 0, S, 0x30, 0 } ); return w4_read( *p, S + 0x20, 8 ); };
+			CHECK( w5_ok( set( 0xFF, 8, S + 0x80 ) ) && aff() == 0xFF, mode + " nsit.4.all: the process mask, STATUS_SUCCESS" );
+			CHECK( w5_ok( set( 0x01, 8, S + 0x80 ) ) && aff() == 0x01, mode + " nsit.4.low: the lowest processor, read back" );
+			CHECK( w5_ok( set( 0x80, 8, S + 0x80 ) ) && aff() == 0x80 && w4_read( *p, S + 0x80, 8 ) == 0x80, mode + " nsit.4.high: the highest processor, read back, the buffer unchanged" );
+			CHECK( w5_status( set( 0, 8, S + 0x80 ), N::status::invalid_parameter ) && aff() == 0x80, mode + " nsit.4.zero: STATUS_INVALID_PARAMETER, unchanged" );
+			CHECK( w5_status( set( 0x100, 8, S + 0x80 ), N::status::invalid_parameter ) && aff() == 0x80, mode + " nsit.4.outside: STATUS_INVALID_PARAMETER, unchanged" );
+			CHECK( w5_ok( set( 0x1FF, 8, S + 0x80 ) ) && aff() == 0xFF, mode + " nsit.4.mixed: the process mask + a processor above it = the process mask" );
+			for ( uint64_t len : { 0ull, 4ull, 0x10ull } )
+				CHECK( w5_status( set( 0x01, len, S + 0x80 ), N::status::info_length_mismatch ) && aff() == 0xFF, mode + " nsit.4.len" + std::to_string( len ) + ": STATUS_INFO_LENGTH_MISMATCH, unchanged" );
+			CHECK( w5_status( set( 0x01, 8, 0 ), N::status::access_violation ) && aff() == 0xFF, mode + " nsit.4.null: STATUS_ACCESS_VIOLATION, unchanged" );
+			CHECK( w5_stop( w5_call( *p, "NtSetInformationThread", { N::current_process, 4, S + 0x80, 8 } ) ), mode + " NtSetInformationThread 4 on another handle: stop (not measured)" );
 		}
 	}
 

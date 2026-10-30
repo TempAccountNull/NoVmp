@@ -388,6 +388,7 @@ namespace emu::nt
 		if ( c.name == "NtQueryVirtualMemory" ) return svc_query_virtual_memory( c );
 		if ( c.name == "NtQueryInformationProcess" ) return svc_query_information_process( c );
 		if ( c.name == "NtQueryInformationThread" ) return svc_query_information_thread( c );   // P55 (U2362): sample run 18 system call 830
+		if ( c.name == "NtSetInformationThread" && uint32_t( c.args[ 1 ] ) == 4 ) return svc_set_thread_affinity( c );   // P56 (U2366): sample run 19 system call 831
 		if ( c.name == "NtContinue" )
 		{
 			// U2030: NtContinue( ContextRecord, TestAlert ) - continue at the CONTEXT (Wine 11.0 dlls/ntdll/signal_x86_64.c:1039-1043:
@@ -750,7 +751,8 @@ namespace emu::nt
 		uint8_t b[ 0x30 ] = {};
 		const uint32_t exit_status = status::pending, rl = 0x30;
 		const int32_t priority = 9, base_priority = 0;
-		const uint64_t aff = f_.active_processor_mask;
+		// P56 (U2366): the thread's affinity as NtSetInformationThread 4 left it (measured: tm_nt nsit.* read it back through this class)
+		const uint64_t aff = thread_affinity_ ? thread_affinity_ : f_.active_processor_mask;
 		std::memcpy( b + 0x00, &exit_status, 4 );
 		std::memcpy( b + 0x08, &f_.teb, 8 );
 		std::memcpy( b + 0x10, &f_.process_id, 8 );
@@ -763,5 +765,34 @@ namespace emu::nt
 												 ( pret ? "" : "n" ) + ")" );
 		if ( !put( out, b, 0x30, r ) || ( pret && !put( pret, &rl, 4, r ) ) ) return stopped( "writing the result failed after the probe" );
 		return r;
+	}
+
+	// P56 (U2366; sample run 19 system call 831: NtSetInformationThread( NtCurrentThread(), 4, buffer, 8 ) from the protector, 28,474
+	// instructions after 830). Prototype phnt ntpsapi.h NtSetInformationThread (ThreadHandle, ThreadInformationClass, ThreadInformation,
+	// ThreadInformationLength); class 4 = ThreadAffinityMask (phnt THREADINFOCLASS), a KAFFINITY. MEASURED natively (tm_nt nsit, each set
+	// read back through ThreadBasicInformation +20H): Length 8 -> the thread's affinity becomes the value AND the process affinity mask
+	// (nsit.4.all / .low / .high / .back / .restore: STATUS_SUCCESS; nsit.4.mixed: the process mask + a processor above it -> STATUS_SUCCESS,
+	// the affinity = the process mask); a result of 0 -> STATUS_INVALID_PARAMETER, the affinity unchanged (nsit.4.zero: 0, nsit.4.outside:
+	// only a processor outside the process mask); Length 0 / 4 / 10H -> STATUS_INFO_LENGTH_MISMATCH, unchanged (nsit.4.len0 / .len4 / .len10);
+	// a NULL buffer -> STATUS_ACCESS_VIOLATION (nsit.4.null); the buffer is never written. The emulated processors: the environment's
+	// active processor mask (the process affinity). Other handles: not measured - a loud stop.
+	reply kernel::svc_set_thread_affinity( const call& c )
+	{
+		const uint64_t h = c.args[ 0 ], in = c.args[ 2 ];
+		const uint32_t len = uint32_t( c.args[ 3 ] );
+		if ( h != current_thread ) return stopped( "NtSetInformationThread 4 for ThreadHandle " + hex( h ) + ": only NtCurrentThread() is measured (tm_nt nsit)" );
+		if ( len != 8 ) return answered( status::info_length_mismatch, "ThreadAffinityMask, Length " + hex( len ) + ": STATUS_INFO_LENGTH_MISMATCH, the affinity unchanged "
+																			"(measured: tm_nt nsit.4.len0 / .len4 / .len10)" );
+		if ( !user_buffer( in, 8, UC_PROT_READ ) )
+			return answered( status::access_violation, "ThreadAffinityMask " + hex( in ) + ": not readable user memory - STATUS_ACCESS_VIOLATION (measured: tm_nt nsit.4.null)" );
+		uint64_t mask = 0;
+		if ( !get64( in, mask ) ) return stopped( "ThreadAffinityMask: reading the value failed after the probe" );
+		const uint64_t pam = f_.active_processor_mask, nm = mask & pam;
+		if ( !nm )
+			return answered( status::invalid_parameter, "ThreadAffinityMask " + hex( mask ) + ": no processor of the process mask " + hex( pam ) +
+															" - STATUS_INVALID_PARAMETER, the affinity unchanged (measured: tm_nt nsit.4.zero / .outside)" );
+		thread_affinity_ = nm;
+		return answered( status::success, "ThreadAffinityMask " + hex( mask ) + " AND the process mask " + hex( pam ) + " = " + hex( nm ) +
+											  ": the main thread's affinity (measured: tm_nt nsit.4.*" + std::string( nm != mask ? ", .mixed" : "" ) + ")" );
 	}
 }

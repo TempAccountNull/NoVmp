@@ -63,7 +63,8 @@ CASES = ['sat', 'qsi', 'hvp', 'qip', 'wcp', 'qsix', 'iocp', 'wkf', 'tmr2', 'awcp
          'reg',   # P46 (U2151, sample run 11 exploration x11 system call 660): the HKLM handle's tags (NtSetInformationKey 5, combase's start)
          'ksec',   # P47 (U2165, sample run 11 system call 759): \Device\KsecDD as bcrypt's DllMain opens it, the device requests bcrypt sends
          'cm', 'lic',   # p3cm (U2280 / U2283, sample run 13 system call 798): \Device\DeviceApi\CMApi as cfgmgr32's DllMain opens it; its NtQueryLicenseValue
-         'nqit']   # P55 (U2360, sample run 18 system call 830): NtQueryInformationThread(NtCurrentThread(), ThreadBasicInformation)
+         'nqit',   # P55 (U2360, sample run 18 system call 830): NtQueryInformationThread(NtCurrentThread(), ThreadBasicInformation)
+         'nsit']   # P56 (U2365, sample run 19 system call 831): NtSetInformationThread(NtCurrentThread(), 4 ThreadAffinityMask)
 # P41 (U2068): case term ends the process with exit code 2BH (its NtTerminateProcess( NULL, 2BH ) fixes the process' exit status)
 EXIT_CODE = {'term': 0x2B}
 # hex constants (9 .. 16 digits) that may appear: system constants and the pre-set fill pattern - never an address of the run
