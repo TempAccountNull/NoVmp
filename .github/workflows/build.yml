@@ -1,0 +1,70 @@
+
+name: Build NoVmp (Windows x64)
+
+on:
+  push:
+    branches:
+      - novmp-emu
+  pull_request:
+    branches:
+      - novmp-emu
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Release x64
+    runs-on: windows-2022
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify Visual Studio 2022
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+
+          if (-not (Test-Path $vswhere)) {
+            throw "vswhere.exe not found"
+          }
+
+          & $vswhere -version "[17.0,18.0)" -latest `
+            -products * `
+            -requires Microsoft.Component.MSBuild `
+            -property installationPath
+
+      - name: Build NoVmp
+        shell: cmd
+        run: call build.cmd --release
+
+      - name: Verify executable
+        shell: pwsh
+        run: |
+          $exe = "build\x64\Release\NoVmp.exe"
+
+          if (-not (Test-Path $exe)) {
+            throw "Build finished but $exe was not found"
+          }
+
+          Get-Item $exe | Format-List Name,Length,FullName
+
+      - name: Upload NoVmp binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: NoVmp-windows-x64-Release
+          path: build/x64/Release/NoVmp.exe
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: NoVmp-build-log
+          path: build/msbuild_Release.log
+          if-no-files-found: ignore
+          retention-days: 14
